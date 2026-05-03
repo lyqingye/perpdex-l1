@@ -30,6 +30,15 @@ service Query {
   rpc Params(QueryParamsRequest) returns (QueryParamsResponse) {
     option (google.api.http).get = "/perpdex/account/v1/params";
   }
+  rpc PublicPoolInfo(QueryPublicPoolInfoRequest) returns (QueryPublicPoolInfoResponse) {
+    option (google.api.http).get = "/perpdex/account/v1/public_pool/{account_index}";
+  }
+  rpc PublicPoolShares(QueryPublicPoolSharesRequest) returns (QueryPublicPoolSharesResponse) {
+    option (google.api.http).get = "/perpdex/account/v1/public_pool_shares/{account_index}";
+  }
+  rpc SharesToUSDCValue(QuerySharesToUSDCValueRequest) returns (QuerySharesToUSDCValueResponse) {
+    option (google.api.http).get = "/perpdex/account/v1/public_pool/{pool_account_index}/value";
+  }
 }
 
 message QueryAccountRequest { uint64 account_index = 1; }
@@ -58,3 +67,25 @@ message QueryAccountPositionResponse { AccountPosition position = 1 [(gogoproto.
 
 message QueryParamsRequest {}
 message QueryParamsResponse { Params params = 1 [(gogoproto.nullable) = false]; }
+
+message QueryPublicPoolInfoRequest { uint64 account_index = 1; }
+message QueryPublicPoolInfoResponse { PublicPoolInfo info = 1 [(gogoproto.nullable) = false]; }
+
+message QueryPublicPoolSharesRequest { uint64 account_index = 1; }
+message QueryPublicPoolSharesResponse {
+  repeated PublicPoolShare shares = 1 [(gogoproto.nullable) = false];
+}
+
+message QuerySharesToUSDCValueRequest {
+  uint64 pool_account_index = 1;
+  string share_amount = 2 [
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+}
+message QuerySharesToUSDCValueResponse {
+  string usdc_amount = 1 [
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+}

@@ -22,6 +22,14 @@ service Query {
   rpc LiquidationFlags(QueryLiquidationFlagsRequest) returns (QueryLiquidationFlagsResponse) {
     option (google.api.http).get = "/perpdex/liquidation/v1/flags/{account_index}";
   }
+  // ADLQueue returns counterparties on the requested side of `market_index`
+  // ranked by `profit_ratio * leverage` descending. Keeper bots use it
+  // to pre-select counterparties before submitting MsgDeleverage. The
+  // EndBlocker uses the same builder when the insurance fund cannot
+  // absorb a bankrupt account.
+  rpc ADLQueue(QueryADLQueueRequest) returns (QueryADLQueueResponse) {
+    option (google.api.http).get = "/perpdex/liquidation/v1/adl_queue/{market_index}";
+  }
 }
 
 message QueryParamsRequest {}
@@ -42,4 +50,37 @@ message QueryLiquidationFlagsRequest {
 }
 message QueryLiquidationFlagsResponse {
   repeated LiquidationFlag flags = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryADLQueueRequest {
+  uint32 market_index = 1;
+  // opposite_is_long picks the side of the queue. Set true when the
+  // bankrupt victim is short (so the queue must contain longs).
+  bool opposite_is_long = 2;
+  // limit caps the response. 0 means use the chain's
+  // MaxAdlCandidatesPerVictim param.
+  uint32 limit = 3;
+}
+message QueryADLQueueResponse {
+  repeated ADLCandidate candidates = 1 [(gogoproto.nullable) = false];
+}
+
+// ADLCandidate is one entry in the ADL queue. `position_size` is the
+// candidate's signed perp position; `unrealized_pnl` is positive at the
+// current mark price; `score` is the ranking metric (higher = closer to
+// the front of the queue).
+message ADLCandidate {
+  uint64 account_index = 1;
+  string position_size = 2 [
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+  string unrealized_pnl = 3 [
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+  string score = 4 [
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
 }

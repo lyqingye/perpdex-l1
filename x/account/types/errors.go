@@ -20,4 +20,18 @@ var (
 	ErrAccountIndexExceed  = errors.Register(ModuleName, 16, "account index exceeded maximum")
 	ErrRiskRegression      = errors.Register(ModuleName, 17, "risk would regress")
 	ErrInvalidTradingMode  = errors.Register(ModuleName, 18, "invalid trading mode")
+
+	// Public pool errors.
+	ErrPoolFrozen             = errors.Register(ModuleName, 30, "public pool is frozen")
+	ErrPoolNotActive          = errors.Register(ModuleName, 31, "public pool is not active")
+	ErrCooldownNotElapsed     = errors.Register(ModuleName, 32, "burn cooldown period has not elapsed")
+	ErrOperatorRateViolation  = errors.Register(ModuleName, 33, "min operator share rate violation")
+	ErrNotInsuranceFund       = errors.Register(ModuleName, 34, "operation restricted to insurance fund pools")
+	ErrInvalidStrategyIdx     = errors.Register(ModuleName, 35, "invalid strategy index")
+	ErrPoolMustBeEmpty        = errors.Register(ModuleName, 36, "pool must be healthy with no positions or open orders")
+	ErrSharesListFull         = errors.Register(ModuleName, 37, "user public pool shares list is full")
+	ErrInsufficientShares     = errors.Register(ModuleName, 38, "insufficient public pool shares")
+	ErrInvalidPoolUpdate      = errors.Register(ModuleName, 39, "invalid public pool update")
+	ErrInvalidPoolAccount     = errors.Register(ModuleName, 40, "account is not a public pool")
+	ErrPoolCannotPlaceOrder   = errors.Register(ModuleName, 41, "public pool / insurance fund cannot place orders directly")
 )

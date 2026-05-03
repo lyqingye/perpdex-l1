@@ -27,6 +27,8 @@ type MarketKeeper interface {
 type RiskKeeper interface {
 	GetHealthStatus(ctx context.Context, accountIdx uint64) (uint32, error)
 	GetPositionZeroPrice(ctx context.Context, accountIdx uint64, marketIdx uint32) (uint32, error)
+	GetPositionMarkValue(ctx context.Context, accountIdx uint64, marketIdx uint32) (math.Int, error)
+	GetPositionUnrealizedPnL(ctx context.Context, accountIdx uint64, marketIdx uint32) (math.Int, error)
 }
 
 type TradeKeeper interface {

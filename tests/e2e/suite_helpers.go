@@ -167,6 +167,16 @@ func (s *PerpdexTestSuite) Deleverage(
 	s.Require().NoError(err)
 }
 
+// DeleverageExpectErr asserts MsgDeleverage fails. Used to verify ADL
+// invariant rejections (same-side, oversized, victim-as-deleverager).
+func (s *PerpdexTestSuite) DeleverageExpectErr(
+	caller TestUser, victim, deleverager uint64, marketIndex uint32, baseAmount uint64,
+) error {
+	_, err := msg.Deleverage(s.App, s.Ctx, caller, victim, deleverager, marketIndex, baseAmount)
+	s.Require().Error(err)
+	return err
+}
+
 // ---------- query shims ----------
 
 // QueryAsset reads an asset and fails the test on error.
@@ -257,4 +267,141 @@ func (s *PerpdexTestSuite) QueryLiquidationFlag(
 	flag, ok, err := query.LiquidationFlag(s.App, s.Ctx, accIdx, marketIdx)
 	s.Require().NoError(err)
 	return flag, ok
+}
+
+// ---------- public pool shims ----------
+
+// CreatePublicPool spawns a regular PUBLIC_POOL sub-account under the
+// signer's master and returns its index.
+func (s *PerpdexTestSuite) CreatePublicPool(
+	signer TestUser, masterIdx, initialTotalShares uint64,
+	operatorFee, minOperatorShareRate uint32,
+) uint64 {
+	resp, err := msg.CreatePublicPool(s.App, s.Ctx, signer, masterIdx, initialTotalShares, operatorFee, minOperatorShareRate)
+	s.Require().NoError(err)
+	return resp.PoolAccountIndex
+}
+
+// CreatePublicPoolExpectErr asserts CreatePublicPool fails.
+func (s *PerpdexTestSuite) CreatePublicPoolExpectErr(
+	signer TestUser, masterIdx, initialTotalShares uint64,
+	operatorFee, minOperatorShareRate uint32,
+) error {
+	_, err := msg.CreatePublicPool(s.App, s.Ctx, signer, masterIdx, initialTotalShares, operatorFee, minOperatorShareRate)
+	s.Require().Error(err)
+	return err
+}
+
+// UpdatePublicPool flips the pool's status / fee / min_rate.
+func (s *PerpdexTestSuite) UpdatePublicPool(
+	sender string, poolIdx uint64, newStatus, newFee, newMinRate uint32,
+) {
+	_, err := msg.UpdatePublicPool(s.App, s.Ctx, sender, poolIdx, newStatus, newFee, newMinRate)
+	s.Require().NoError(err)
+}
+
+// UpdatePublicPoolExpectErr asserts UpdatePublicPool fails.
+func (s *PerpdexTestSuite) UpdatePublicPoolExpectErr(
+	sender string, poolIdx uint64, newStatus, newFee, newMinRate uint32,
+) error {
+	_, err := msg.UpdatePublicPool(s.App, s.Ctx, sender, poolIdx, newStatus, newFee, newMinRate)
+	s.Require().Error(err)
+	return err
+}
+
+// MintShares burns USDC from sender's master into pool shares; returns
+// the share amount minted.
+func (s *PerpdexTestSuite) MintShares(
+	signer TestUser, poolIdx, principalAmount uint64,
+) math.Int {
+	resp, err := msg.MintShares(s.App, s.Ctx, signer, poolIdx, principalAmount)
+	s.Require().NoError(err)
+	return resp.ShareAmount
+}
+
+// MintSharesExpectErr asserts MintShares fails.
+func (s *PerpdexTestSuite) MintSharesExpectErr(
+	signer TestUser, poolIdx, principalAmount uint64,
+) error {
+	_, err := msg.MintShares(s.App, s.Ctx, signer, poolIdx, principalAmount)
+	s.Require().Error(err)
+	return err
+}
+
+// BurnShares redeems share_amount → uusdc.
+func (s *PerpdexTestSuite) BurnShares(
+	signer TestUser, poolIdx uint64, shareAmount math.Int,
+) uint64 {
+	resp, err := msg.BurnShares(s.App, s.Ctx, signer, poolIdx, shareAmount)
+	s.Require().NoError(err)
+	return resp.UsdcAmount
+}
+
+// BurnSharesExpectErr asserts BurnShares fails.
+func (s *PerpdexTestSuite) BurnSharesExpectErr(
+	signer TestUser, poolIdx uint64, shareAmount math.Int,
+) error {
+	_, err := msg.BurnShares(s.App, s.Ctx, signer, poolIdx, shareAmount)
+	s.Require().Error(err)
+	return err
+}
+
+// StrategyTransfer reallocates IF strategy buckets.
+func (s *PerpdexTestSuite) StrategyTransfer(
+	sender string, poolIdx uint64, from, to uint32, amount math.Int,
+) {
+	_, err := msg.StrategyTransfer(s.App, s.Ctx, sender, poolIdx, from, to, amount)
+	s.Require().NoError(err)
+}
+
+// StrategyTransferExpectErr asserts StrategyTransfer fails.
+func (s *PerpdexTestSuite) StrategyTransferExpectErr(
+	sender string, poolIdx uint64, from, to uint32, amount math.Int,
+) error {
+	_, err := msg.StrategyTransfer(s.App, s.Ctx, sender, poolIdx, from, to, amount)
+	s.Require().Error(err)
+	return err
+}
+
+// ForceBurnShares is gov-authority break-glass burn for the LLP pool.
+func (s *PerpdexTestSuite) ForceBurnShares(
+	poolIdx, depositorIdx uint64, shareAmount math.Int,
+) uint64 {
+	resp, err := msg.ForceBurnShares(s.App, s.Ctx, s.GovAddress, poolIdx, depositorIdx, shareAmount)
+	s.Require().NoError(err)
+	return resp.UsdcAmount
+}
+
+// QueryPublicPoolInfo returns (info, ok). ok==false when the account is
+// not a pool.
+func (s *PerpdexTestSuite) QueryPublicPoolInfo(idx uint64) (accounttypes.PublicPoolInfo, bool) {
+	info, ok, err := query.PublicPoolInfo(s.App, s.Ctx, idx)
+	s.Require().NoError(err)
+	return info, ok
+}
+
+// QueryPublicPoolShares lists the LP entries on a master account.
+func (s *PerpdexTestSuite) QueryPublicPoolShares(idx uint64) []accounttypes.PublicPoolShare {
+	out, err := query.PublicPoolShares(s.App, s.Ctx, idx)
+	s.Require().NoError(err)
+	return out
+}
+
+// QuerySharesToUSDCValue exposes the NAV math for assertions.
+func (s *PerpdexTestSuite) QuerySharesToUSDCValue(poolIdx uint64, shareAmount math.Int) math.Int {
+	v, err := query.SharesToUSDCValue(s.App, s.Ctx, poolIdx, shareAmount)
+	s.Require().NoError(err)
+	return v
+}
+
+// QueryADLQueue returns the profit-ranked ADL counterparty queue for
+// the given (market, opposite_side). `oppositeIsLong=true` selects long
+// candidates (the queue used when victims are short). `limit=0` defers
+// to the chain's `MaxAdlCandidatesPerVictim` param.
+func (s *PerpdexTestSuite) QueryADLQueue(
+	marketIdx uint32, oppositeIsLong bool, limit uint32,
+) []liquidationtypes.ADLCandidate {
+	cands, err := query.ADLQueue(s.App, s.Ctx, marketIdx, oppositeIsLong, limit)
+	s.Require().NoError(err)
+	return cands
 }

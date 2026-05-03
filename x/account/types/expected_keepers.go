@@ -34,4 +34,10 @@ type FundingKeeper interface {
 type RiskKeeper interface {
 	IsValidRiskChange(ctx context.Context, accountIndex uint64) (bool, error)
 	GetAvailableCollateral(ctx context.Context, accountIndex uint64) (math.Int, error)
+	// GetTotalAccountValue returns TAV (collateral + signed unrealized PnL)
+	// across every market. Used for share NAV calculations.
+	GetTotalAccountValue(ctx context.Context, accountIndex uint64) (math.Int, error)
+	// GetHealthStatus mirrors x/risk health classification used by the
+	// freeze invariants (freeze requires HEALTHY).
+	GetHealthStatus(ctx context.Context, accountIndex uint64) (uint32, error)
 }

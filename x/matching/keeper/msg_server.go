@@ -25,6 +25,16 @@ func (m msgServer) CreateOrder(ctx context.Context, msg *types.MsgCreateOrder) (
 	} else if !ok {
 		return nil, types.ErrUnauthorized
 	}
+	// Public pools and the Insurance Fund cannot place orders directly;
+	// their fills come exclusively from the liquidation / ADL paths
+	// (lighter parity: l2_create_order rejects PUBLIC_POOL_ACCOUNT_TYPE
+	// and INSURANCE_FUND_ACCOUNT_TYPE up front).
+	if acc, err := m.accountKeeper.GetAccount(ctx, msg.AccountIndex); err == nil {
+		if acc.AccountType == perptypes.PublicPoolAccountType ||
+			acc.AccountType == perptypes.InsuranceFundAccountType {
+			return nil, types.ErrPoolCannotPlaceOrder
+		}
+	}
 	market, err := m.marketKeeper.GetMarket(ctx, msg.MarketIndex)
 	if err != nil {
 		return nil, err

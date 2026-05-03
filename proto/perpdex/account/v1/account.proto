@@ -21,6 +21,57 @@ message Account {
   int64 total_non_cross_order_count = 8;
   int64 cancel_all_time = 9;
   int64 created_at = 10;
+  // public_pool_shares lists this account's LP positions across pools
+  // (one entry per pool the account has minted into). Capped by
+  // SharesListSize on the keeper write path.
+  repeated PublicPoolShare public_pool_shares = 11 [(gogoproto.nullable) = false];
+  // public_pool_info is set only when account_type is PUBLIC_POOL or
+  // INSURANCE_FUND; nil for regular master/sub accounts.
+  PublicPoolInfo public_pool_info = 12;
+}
+
+// PublicPoolShare is one LP entry on a regular account (mint/burn record).
+message PublicPoolShare {
+  uint64 public_pool_index = 1;
+  string share_amount = 2 [
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+  // principal_amount is the cumulative USDC the LP has deposited into
+  // this pool (operator-fee profit math compares burn proceeds against
+  // this value). Subsequent mints add; partial burns reduce
+  // proportionally to share fraction burnt.
+  string principal_amount = 3 [
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+  // entry_timestamp is overwritten on every successful non-operator
+  // mint with the block time. Used for the LLP burn cooldown gate.
+  int64 entry_timestamp = 4;
+}
+
+// PublicPoolInfo lives on the pool's sub-account itself. operator_fee
+// and min_operator_share_rate are fee-tick / share-tick quantised.
+message PublicPoolInfo {
+  uint32 status = 1;                  // 0=ACTIVE, 1=FROZEN
+  uint32 operator_fee = 2;            // FeeTick precision
+  uint32 min_operator_share_rate = 3; // ShareTick precision
+  string total_shares = 4 [
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+  string operator_shares = 5 [
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+  // strategies is a fixed-length bookkeeping array for INSURANCE_FUND
+  // accounts. Length is always NbStrategies on write; keeper enforces
+  // the invariant. Strategies live INSIDE the pool's collateral pool;
+  // sum may be less than collateral (the residual is "unbucketed").
+  repeated string strategies = 6 [
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
 }
 
 // AccountAsset stores spot asset balances per (account, asset).
@@ -77,6 +128,15 @@ message Params {
   uint64 insurance_fund_account_index = 2;
   uint64 min_partial_transfer_amount = 3;
   uint64 min_partial_withdraw_amount = 4;
+  // liquidity_pool_index is the canonical liquidity pool subject to
+  // burn-cooldown gating. Mirrors lighter system_config.liquidity_pool_index.
+  // Defaults to InsuranceFundOperatorAccountIdx; cleared if that pool
+  // is later frozen via MsgUpdatePublicPool.
+  uint64 liquidity_pool_index = 5;
+  // liquidity_pool_cooldown_period_ms is the minimum elapsed wall-clock
+  // (ms) between a non-operator mint and the matching burn for the LLP
+  // pool. Mirrors lighter system_config.liquidity_pool_cooldown_period.
+  int64 liquidity_pool_cooldown_period_ms = 6;
 }
 
 // Counters keeps next-available account indexes.

@@ -16,4 +16,5 @@ var (
 	ErrOrderNotFound      = errors.Register(ModuleName, 12, "order not found")
 	ErrTriggerInactive    = errors.Register(ModuleName, 13, "trigger order not yet active")
 	ErrReduceOnlyViolated = errors.Register(ModuleName, 14, "reduce-only invariant violated")
+	ErrPoolCannotPlaceOrder = errors.Register(ModuleName, 15, "public pool / insurance fund cannot place orders directly")
 )

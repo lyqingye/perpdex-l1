@@ -115,3 +115,39 @@ func (q Querier) Params(ctx context.Context, _ *types.QueryParamsRequest) (*type
 	}
 	return &types.QueryParamsResponse{Params: p}, nil
 }
+
+func (q Querier) PublicPoolInfo(ctx context.Context, req *types.QueryPublicPoolInfoRequest) (*types.QueryPublicPoolInfoResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "empty request")
+	}
+	a, err := q.k.GetAccount(ctx, req.AccountIndex)
+	if err != nil {
+		return nil, status.Error(codes.NotFound, err.Error())
+	}
+	if a.PublicPoolInfo == nil {
+		return nil, status.Errorf(codes.NotFound, "account %d is not a public pool", req.AccountIndex)
+	}
+	return &types.QueryPublicPoolInfoResponse{Info: *a.PublicPoolInfo}, nil
+}
+
+func (q Querier) PublicPoolShares(ctx context.Context, req *types.QueryPublicPoolSharesRequest) (*types.QueryPublicPoolSharesResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "empty request")
+	}
+	a, err := q.k.GetAccount(ctx, req.AccountIndex)
+	if err != nil {
+		return nil, status.Error(codes.NotFound, err.Error())
+	}
+	return &types.QueryPublicPoolSharesResponse{Shares: a.PublicPoolShares}, nil
+}
+
+func (q Querier) SharesToUSDCValue(ctx context.Context, req *types.QuerySharesToUSDCValueRequest) (*types.QuerySharesToUSDCValueResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "empty request")
+	}
+	usdc, err := q.k.SharesToUSDCValue(ctx, req.PoolAccountIndex, req.ShareAmount)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	return &types.QuerySharesToUSDCValueResponse{UsdcAmount: usdc}, nil
+}

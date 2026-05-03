@@ -27,8 +27,9 @@ func DefaultGenesis() *GenesisState {
 				MasterAccountIndex: perptypes.NilMasterAccountIndex,
 				OwnerAddress:       "",
 				AccountType:        perptypes.InsuranceFundAccountType,
-				AccountTradingMode: perptypes.AccountTradingModeSimple,
+				AccountTradingMode: perptypes.AccountTradingModeUnified,
 				Collateral:         math.ZeroInt(),
+				PublicPoolInfo:     DefaultInsurancePoolInfo(),
 			},
 		},
 	}

@@ -1,0 +1,28 @@
+version: "2"
+
+run:
+  timeout: 10m
+  tests: true
+  modules-download-mode: readonly
+  relative-path-mode: gomod
+
+linters:
+  default: none
+  enable:
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+  exclusions:
+    generated: lax
+    presets:
+      - common-false-positives
+      - legacy
+    rules:
+      - linters:
+          - staticcheck
+        text: "SA1019:"
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

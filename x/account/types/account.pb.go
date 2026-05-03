@@ -37,6 +37,13 @@ type Account struct {
 	TotalNonCrossOrderCount int64                 `protobuf:"varint,8,opt,name=total_non_cross_order_count,json=totalNonCrossOrderCount,proto3" json:"total_non_cross_order_count,omitempty"`
 	CancelAllTime           int64                 `protobuf:"varint,9,opt,name=cancel_all_time,json=cancelAllTime,proto3" json:"cancel_all_time,omitempty"`
 	CreatedAt               int64                 `protobuf:"varint,10,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	// public_pool_shares lists this account's LP positions across pools
+	// (one entry per pool the account has minted into). Capped by
+	// SharesListSize on the keeper write path.
+	PublicPoolShares []PublicPoolShare `protobuf:"bytes,11,rep,name=public_pool_shares,json=publicPoolShares,proto3" json:"public_pool_shares"`
+	// public_pool_info is set only when account_type is PUBLIC_POOL or
+	// INSURANCE_FUND; nil for regular master/sub accounts.
+	PublicPoolInfo *PublicPoolInfo `protobuf:"bytes,12,opt,name=public_pool_info,json=publicPoolInfo,proto3" json:"public_pool_info,omitempty"`
 }
 
 func (m *Account) Reset()         { *m = Account{} }
@@ -135,6 +142,150 @@ func (m *Account) GetCreatedAt() int64 {
 	return 0
 }
 
+func (m *Account) GetPublicPoolShares() []PublicPoolShare {
+	if m != nil {
+		return m.PublicPoolShares
+	}
+	return nil
+}
+
+func (m *Account) GetPublicPoolInfo() *PublicPoolInfo {
+	if m != nil {
+		return m.PublicPoolInfo
+	}
+	return nil
+}
+
+// PublicPoolShare is one LP entry on a regular account (mint/burn record).
+type PublicPoolShare struct {
+	PublicPoolIndex uint64                `protobuf:"varint,1,opt,name=public_pool_index,json=publicPoolIndex,proto3" json:"public_pool_index,omitempty"`
+	ShareAmount     cosmossdk_io_math.Int `protobuf:"bytes,2,opt,name=share_amount,json=shareAmount,proto3,customtype=cosmossdk.io/math.Int" json:"share_amount"`
+	// principal_amount is the cumulative USDC the LP has deposited into
+	// this pool (operator-fee profit math compares burn proceeds against
+	// this value). Subsequent mints add; partial burns reduce
+	// proportionally to share fraction burnt.
+	PrincipalAmount cosmossdk_io_math.Int `protobuf:"bytes,3,opt,name=principal_amount,json=principalAmount,proto3,customtype=cosmossdk.io/math.Int" json:"principal_amount"`
+	// entry_timestamp is overwritten on every successful non-operator
+	// mint with the block time. Used for the LLP burn cooldown gate.
+	EntryTimestamp int64 `protobuf:"varint,4,opt,name=entry_timestamp,json=entryTimestamp,proto3" json:"entry_timestamp,omitempty"`
+}
+
+func (m *PublicPoolShare) Reset()         { *m = PublicPoolShare{} }
+func (m *PublicPoolShare) String() string { return proto.CompactTextString(m) }
+func (*PublicPoolShare) ProtoMessage()    {}
+func (*PublicPoolShare) Descriptor() ([]byte, []int) {
+	return fileDescriptor_28681ab6b21ee085, []int{1}
+}
+func (m *PublicPoolShare) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *PublicPoolShare) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_PublicPoolShare.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *PublicPoolShare) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_PublicPoolShare.Merge(m, src)
+}
+func (m *PublicPoolShare) XXX_Size() int {
+	return m.Size()
+}
+func (m *PublicPoolShare) XXX_DiscardUnknown() {
+	xxx_messageInfo_PublicPoolShare.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_PublicPoolShare proto.InternalMessageInfo
+
+func (m *PublicPoolShare) GetPublicPoolIndex() uint64 {
+	if m != nil {
+		return m.PublicPoolIndex
+	}
+	return 0
+}
+
+func (m *PublicPoolShare) GetEntryTimestamp() int64 {
+	if m != nil {
+		return m.EntryTimestamp
+	}
+	return 0
+}
+
+// PublicPoolInfo lives on the pool's sub-account itself. operator_fee
+// and min_operator_share_rate are fee-tick / share-tick quantised.
+type PublicPoolInfo struct {
+	Status               uint32                `protobuf:"varint,1,opt,name=status,proto3" json:"status,omitempty"`
+	OperatorFee          uint32                `protobuf:"varint,2,opt,name=operator_fee,json=operatorFee,proto3" json:"operator_fee,omitempty"`
+	MinOperatorShareRate uint32                `protobuf:"varint,3,opt,name=min_operator_share_rate,json=minOperatorShareRate,proto3" json:"min_operator_share_rate,omitempty"`
+	TotalShares          cosmossdk_io_math.Int `protobuf:"bytes,4,opt,name=total_shares,json=totalShares,proto3,customtype=cosmossdk.io/math.Int" json:"total_shares"`
+	OperatorShares       cosmossdk_io_math.Int `protobuf:"bytes,5,opt,name=operator_shares,json=operatorShares,proto3,customtype=cosmossdk.io/math.Int" json:"operator_shares"`
+	// strategies is a fixed-length bookkeeping array for INSURANCE_FUND
+	// accounts. Length is always NbStrategies on write; keeper enforces
+	// the invariant. Strategies live INSIDE the pool's collateral pool;
+	// sum may be less than collateral (the residual is "unbucketed").
+	Strategies []cosmossdk_io_math.Int `protobuf:"bytes,6,rep,name=strategies,proto3,customtype=cosmossdk.io/math.Int" json:"strategies"`
+}
+
+func (m *PublicPoolInfo) Reset()         { *m = PublicPoolInfo{} }
+func (m *PublicPoolInfo) String() string { return proto.CompactTextString(m) }
+func (*PublicPoolInfo) ProtoMessage()    {}
+func (*PublicPoolInfo) Descriptor() ([]byte, []int) {
+	return fileDescriptor_28681ab6b21ee085, []int{2}
+}
+func (m *PublicPoolInfo) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *PublicPoolInfo) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_PublicPoolInfo.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *PublicPoolInfo) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_PublicPoolInfo.Merge(m, src)
+}
+func (m *PublicPoolInfo) XXX_Size() int {
+	return m.Size()
+}
+func (m *PublicPoolInfo) XXX_DiscardUnknown() {
+	xxx_messageInfo_PublicPoolInfo.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_PublicPoolInfo proto.InternalMessageInfo
+
+func (m *PublicPoolInfo) GetStatus() uint32 {
+	if m != nil {
+		return m.Status
+	}
+	return 0
+}
+
+func (m *PublicPoolInfo) GetOperatorFee() uint32 {
+	if m != nil {
+		return m.OperatorFee
+	}
+	return 0
+}
+
+func (m *PublicPoolInfo) GetMinOperatorShareRate() uint32 {
+	if m != nil {
+		return m.MinOperatorShareRate
+	}
+	return 0
+}
+
 // AccountAsset stores spot asset balances per (account, asset).
 type AccountAsset struct {
 	AccountIndex  uint64                `protobuf:"varint,1,opt,name=account_index,json=accountIndex,proto3" json:"account_index,omitempty"`
@@ -148,7 +299,7 @@ func (m *AccountAsset) Reset()         { *m = AccountAsset{} }
 func (m *AccountAsset) String() string { return proto.CompactTextString(m) }
 func (*AccountAsset) ProtoMessage()    {}
 func (*AccountAsset) Descriptor() ([]byte, []int) {
-	return fileDescriptor_28681ab6b21ee085, []int{1}
+	return fileDescriptor_28681ab6b21ee085, []int{3}
 }
 func (m *AccountAsset) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -217,7 +368,7 @@ func (m *AccountPosition) Reset()         { *m = AccountPosition{} }
 func (m *AccountPosition) String() string { return proto.CompactTextString(m) }
 func (*AccountPosition) ProtoMessage()    {}
 func (*AccountPosition) Descriptor() ([]byte, []int) {
-	return fileDescriptor_28681ab6b21ee085, []int{2}
+	return fileDescriptor_28681ab6b21ee085, []int{4}
 }
 func (m *AccountPosition) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -305,7 +456,7 @@ func (m *AccountMeta) Reset()         { *m = AccountMeta{} }
 func (m *AccountMeta) String() string { return proto.CompactTextString(m) }
 func (*AccountMeta) ProtoMessage()    {}
 func (*AccountMeta) Descriptor() ([]byte, []int) {
-	return fileDescriptor_28681ab6b21ee085, []int{3}
+	return fileDescriptor_28681ab6b21ee085, []int{5}
 }
 func (m *AccountMeta) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -354,13 +505,22 @@ type Params struct {
 	InsuranceFundAccountIndex uint64 `protobuf:"varint,2,opt,name=insurance_fund_account_index,json=insuranceFundAccountIndex,proto3" json:"insurance_fund_account_index,omitempty"`
 	MinPartialTransferAmount  uint64 `protobuf:"varint,3,opt,name=min_partial_transfer_amount,json=minPartialTransferAmount,proto3" json:"min_partial_transfer_amount,omitempty"`
 	MinPartialWithdrawAmount  uint64 `protobuf:"varint,4,opt,name=min_partial_withdraw_amount,json=minPartialWithdrawAmount,proto3" json:"min_partial_withdraw_amount,omitempty"`
+	// liquidity_pool_index is the canonical liquidity pool subject to
+	// burn-cooldown gating. Mirrors lighter system_config.liquidity_pool_index.
+	// Defaults to InsuranceFundOperatorAccountIdx; cleared if that pool
+	// is later frozen via MsgUpdatePublicPool.
+	LiquidityPoolIndex uint64 `protobuf:"varint,5,opt,name=liquidity_pool_index,json=liquidityPoolIndex,proto3" json:"liquidity_pool_index,omitempty"`
+	// liquidity_pool_cooldown_period_ms is the minimum elapsed wall-clock
+	// (ms) between a non-operator mint and the matching burn for the LLP
+	// pool. Mirrors lighter system_config.liquidity_pool_cooldown_period.
+	LiquidityPoolCooldownPeriodMs int64 `protobuf:"varint,6,opt,name=liquidity_pool_cooldown_period_ms,json=liquidityPoolCooldownPeriodMs,proto3" json:"liquidity_pool_cooldown_period_ms,omitempty"`
 }
 
 func (m *Params) Reset()         { *m = Params{} }
 func (m *Params) String() string { return proto.CompactTextString(m) }
 func (*Params) ProtoMessage()    {}
 func (*Params) Descriptor() ([]byte, []int) {
-	return fileDescriptor_28681ab6b21ee085, []int{4}
+	return fileDescriptor_28681ab6b21ee085, []int{6}
 }
 func (m *Params) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -417,6 +577,20 @@ func (m *Params) GetMinPartialWithdrawAmount() uint64 {
 	return 0
 }
 
+func (m *Params) GetLiquidityPoolIndex() uint64 {
+	if m != nil {
+		return m.LiquidityPoolIndex
+	}
+	return 0
+}
+
+func (m *Params) GetLiquidityPoolCooldownPeriodMs() int64 {
+	if m != nil {
+		return m.LiquidityPoolCooldownPeriodMs
+	}
+	return 0
+}
+
 // Counters keeps next-available account indexes.
 type Counters struct {
 	NextMasterAccountIndex uint64 `protobuf:"varint,1,opt,name=next_master_account_index,json=nextMasterAccountIndex,proto3" json:"next_master_account_index,omitempty"`
@@ -427,7 +601,7 @@ func (m *Counters) Reset()         { *m = Counters{} }
 func (m *Counters) String() string { return proto.CompactTextString(m) }
 func (*Counters) ProtoMessage()    {}
 func (*Counters) Descriptor() ([]byte, []int) {
-	return fileDescriptor_28681ab6b21ee085, []int{5}
+	return fileDescriptor_28681ab6b21ee085, []int{7}
 }
 func (m *Counters) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -472,6 +646,8 @@ func (m *Counters) GetNextSubAccountIndex() uint64 {
 
 func init() {
 	proto.RegisterType((*Account)(nil), "perpdex.account.v1.Account")
+	proto.RegisterType((*PublicPoolShare)(nil), "perpdex.account.v1.PublicPoolShare")
+	proto.RegisterType((*PublicPoolInfo)(nil), "perpdex.account.v1.PublicPoolInfo")
 	proto.RegisterType((*AccountAsset)(nil), "perpdex.account.v1.AccountAsset")
 	proto.RegisterType((*AccountPosition)(nil), "perpdex.account.v1.AccountPosition")
 	proto.RegisterType((*AccountMeta)(nil), "perpdex.account.v1.AccountMeta")
@@ -482,61 +658,80 @@ func init() {
 func init() { proto.RegisterFile("perpdex/account/v1/account.proto", fileDescriptor_28681ab6b21ee085) }
 
 var fileDescriptor_28681ab6b21ee085 = []byte{
-	// 853 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x8c, 0x55, 0x5b, 0x6f, 0x1b, 0x45,
-	0x14, 0xce, 0x62, 0x93, 0xcb, 0x71, 0x4c, 0x60, 0x49, 0x9b, 0x2d, 0x6d, 0x6d, 0xd7, 0x95, 0x50,
-	0x84, 0x54, 0x9b, 0xa8, 0x5c, 0x54, 0x89, 0x82, 0x9c, 0x54, 0x85, 0x3e, 0x04, 0x82, 0x1b, 0x09,
-	0x09, 0x09, 0x8d, 0xc6, 0xbb, 0x13, 0x67, 0x94, 0xd9, 0x99, 0x65, 0x66, 0xb6, 0x49, 0xf8, 0x15,
-	0xfc, 0xac, 0x8a, 0xa7, 0x3e, 0x22, 0x1e, 0x2a, 0x94, 0x3c, 0xf0, 0x07, 0x78, 0x45, 0x42, 0x73,
-	0x66, 0x36, 0xb5, 0x5d, 0x4b, 0xf1, 0x93, 0xad, 0xef, 0x72, 0x66, 0xce, 0x6d, 0x07, 0x3a, 0x05,
-	0xd3, 0x45, 0xc6, 0xce, 0xfa, 0x34, 0x4d, 0x55, 0x29, 0x6d, 0xff, 0xc5, 0x4e, 0xf5, 0xb7, 0x57,
-	0x68, 0x65, 0x55, 0x1c, 0x07, 0x45, 0xaf, 0x82, 0x5f, 0xec, 0x7c, 0xb4, 0x39, 0x56, 0x63, 0x85,
-	0x74, 0xdf, 0xfd, 0xf3, 0xca, 0xee, 0x1f, 0x35, 0x58, 0x19, 0x78, 0x51, 0x7c, 0x1f, 0x9a, 0x41,
-	0x4f, 0xb8, 0xcc, 0xd8, 0x59, 0x12, 0x75, 0xa2, 0xed, 0xfa, 0x70, 0x3d, 0x80, 0xcf, 0x1c, 0x16,
-	0x7f, 0x0a, 0x9b, 0x39, 0x35, 0x96, 0x69, 0x32, 0xad, 0x7d, 0x07, 0xb5, 0xb1, 0xe7, 0x06, 0x93,
-	0x8e, 0xfb, 0xd0, 0x54, 0xa7, 0xd2, 0x19, 0xb2, 0x4c, 0x33, 0x63, 0x92, 0x5a, 0x27, 0xda, 0x5e,
-	0x1b, 0xae, 0x23, 0x38, 0xf0, 0x58, 0x7c, 0x0f, 0xaa, 0x63, 0x88, 0x3d, 0x2f, 0x58, 0x52, 0xef,
-	0x44, 0xdb, 0xcd, 0x61, 0x23, 0x60, 0x87, 0xe7, 0x05, 0x73, 0x27, 0x5f, 0x49, 0x34, 0xcd, 0xb8,
-	0x1c, 0x93, 0x5c, 0x65, 0x2c, 0x79, 0x17, 0xa5, 0x71, 0x25, 0xf5, 0xd4, 0xbe, 0xca, 0x58, 0xfc,
-	0x18, 0x20, 0x55, 0x42, 0x50, 0xcb, 0x34, 0x15, 0xc9, 0xb2, 0x3b, 0x76, 0xf7, 0xee, 0xcb, 0xd7,
-	0xed, 0xa5, 0xbf, 0x5e, 0xb7, 0x6f, 0xa4, 0xca, 0xe4, 0xca, 0x98, 0xec, 0xa4, 0xc7, 0x55, 0x3f,
-	0xa7, 0xf6, 0xb8, 0xf7, 0x4c, 0xda, 0xe1, 0x84, 0x21, 0xfe, 0x04, 0x3e, 0xb0, 0xca, 0x52, 0x41,
-	0x94, 0xce, 0x98, 0x26, 0x18, 0x3e, 0x59, 0xe9, 0x44, 0xdb, 0xb5, 0xe1, 0x06, 0x12, 0x3f, 0x38,
-	0x7c, 0x0f, 0x6b, 0xf7, 0x15, 0xdc, 0xf6, 0x5a, 0xa9, 0x24, 0x49, 0xb5, 0x32, 0x66, 0xca, 0xb5,
-	0x8a, 0xae, 0x2d, 0x94, 0x7c, 0xaf, 0xe4, 0x9e, 0x13, 0x4c, 0xb8, 0x3f, 0x86, 0x8d, 0x94, 0xca,
-	0x94, 0x09, 0x42, 0x85, 0x20, 0x96, 0xe7, 0x2c, 0x59, 0x43, 0x47, 0xd3, 0xc3, 0x03, 0x21, 0x0e,
-	0x79, 0xce, 0xe2, 0xbb, 0x00, 0xa9, 0x66, 0xd4, 0xb2, 0x8c, 0x50, 0x9b, 0x00, 0x4a, 0xd6, 0x02,
-	0x32, 0xb0, 0xdd, 0x7f, 0x23, 0x58, 0x0f, 0xa5, 0x1f, 0x18, 0xc3, 0x16, 0xec, 0x68, 0x1b, 0x1a,
-	0xd4, 0xa9, 0x27, 0x1a, 0xd9, 0x1c, 0x02, 0x42, 0x5e, 0xf0, 0x25, 0xac, 0x8c, 0xa8, 0x70, 0x17,
-	0xf1, 0xad, 0xbb, 0xae, 0x86, 0x95, 0x3a, 0x7e, 0x02, 0xef, 0x09, 0x95, 0x9e, 0xb0, 0x8c, 0x54,
-	0xfe, 0xfa, 0x22, 0xfe, 0xa6, 0x37, 0xed, 0x86, 0x28, 0x6d, 0x68, 0xe4, 0x54, 0x8f, 0xb9, 0x9c,
-	0x6c, 0x37, 0x78, 0xc8, 0xb5, 0xb9, 0xfb, 0x4f, 0x1d, 0x36, 0x42, 0xda, 0x07, 0xca, 0x70, 0xcb,
-	0x95, 0x5c, 0x2c, 0xf3, 0x7b, 0xb0, 0x9e, 0x53, 0x7d, 0x32, 0x93, 0x7a, 0xc3, 0x63, 0x5e, 0xf2,
-	0x08, 0x56, 0x8b, 0x10, 0x73, 0xb1, 0xe4, 0xaf, 0xe4, 0xf1, 0xd7, 0xd0, 0x60, 0xd2, 0xea, 0x73,
-	0xf2, 0x6b, 0xa9, 0xec, 0x82, 0xa9, 0x03, 0x3a, 0x7e, 0x74, 0x86, 0xf8, 0x17, 0xb8, 0x23, 0xa8,
-	0xb1, 0xe4, 0xa8, 0x94, 0x38, 0xec, 0x9a, 0x5a, 0x46, 0x0a, 0xcd, 0x8e, 0xf8, 0x19, 0x31, 0x65,
-	0x8e, 0x85, 0xb8, 0x36, 0x60, 0xe2, 0x42, 0x3c, 0xf5, 0x11, 0x86, 0xd4, 0xb2, 0x03, 0xf4, 0x3f,
-	0x2f, 0xf3, 0xf8, 0x0b, 0xd8, 0xe2, 0x92, 0x5b, 0x4e, 0x05, 0x09, 0xe5, 0x3d, 0xd2, 0x34, 0xc5,
-	0x44, 0x97, 0xb1, 0x0e, 0x37, 0x02, 0xbd, 0x8f, 0xec, 0xd3, 0x40, 0xce, 0xb6, 0x63, 0x65, 0xb6,
-	0x1d, 0xf1, 0x77, 0xf0, 0x3e, 0x15, 0x42, 0xa5, 0x38, 0xa6, 0x1e, 0xc7, 0xf9, 0xbf, 0xf6, 0xae,
-	0x1b, 0x57, 0x36, 0x7f, 0xe4, 0xfc, 0x05, 0x5c, 0x9b, 0xbf, 0x80, 0x4f, 0xa0, 0xed, 0xb5, 0x55,
-	0xfd, 0x89, 0xe5, 0x2c, 0x9b, 0x72, 0xfa, 0x7d, 0xf1, 0x7b, 0x5a, 0x0d, 0xca, 0x21, 0x67, 0xd9,
-	0x44, 0x94, 0xe9, 0x05, 0x6b, 0xcc, 0x2e, 0x18, 0x87, 0x46, 0x18, 0xb4, 0x7d, 0x66, 0xe9, 0x62,
-	0x43, 0xf6, 0x39, 0x6c, 0x49, 0x76, 0x66, 0x49, 0x2a, 0x38, 0x93, 0x36, 0x5c, 0xe8, 0xcd, 0xbc,
-	0xd5, 0x86, 0x9b, 0x8e, 0xde, 0x43, 0x16, 0x6f, 0x82, 0xb6, 0xee, 0x7f, 0x11, 0x2c, 0x1f, 0x50,
-	0x4d, 0x73, 0x13, 0x7f, 0x06, 0x37, 0xad, 0x66, 0xd4, 0x94, 0xfa, 0x9c, 0xcc, 0x3b, 0x6f, 0xb3,
-	0x62, 0xa7, 0x3e, 0xbb, 0xdf, 0xc0, 0x1d, 0x2e, 0x4d, 0xa9, 0xdd, 0x0e, 0xe1, 0x0c, 0xcd, 0xfd,
-	0x60, 0xdf, 0xba, 0xd2, 0xb8, 0x21, 0x99, 0x0a, 0xf0, 0x18, 0x6e, 0xe7, 0x5c, 0x92, 0x82, 0x6a,
-	0x1c, 0x12, 0xab, 0xa9, 0x34, 0x47, 0xee, 0x33, 0x9e, 0x63, 0x35, 0x6b, 0xe8, 0x4f, 0x72, 0x2e,
-	0x0f, 0xbc, 0xe2, 0x30, 0x08, 0x06, 0xc8, 0xcf, 0xda, 0x4f, 0xb9, 0x3d, 0xce, 0x34, 0x3d, 0xad,
-	0xec, 0xf5, 0x59, 0xfb, 0x4f, 0x41, 0xe0, 0xed, 0xdd, 0xdf, 0x60, 0x15, 0x5b, 0xc2, 0xb4, 0x89,
-	0x1f, 0xc1, 0x2d, 0x2c, 0xe1, 0xdc, 0x87, 0xc7, 0xd7, 0xe0, 0xa6, 0x13, 0xec, 0xbf, 0xfd, 0xf8,
-	0x3c, 0x04, 0x64, 0x88, 0x29, 0x47, 0x73, 0xf3, 0xff, 0xd0, 0xb1, 0xcf, 0xcb, 0xd1, 0xa4, 0x69,
-	0xf7, 0xdb, 0x97, 0x17, 0xad, 0xe8, 0xd5, 0x45, 0x2b, 0xfa, 0xfb, 0xa2, 0x15, 0xfd, 0x7e, 0xd9,
-	0x5a, 0x7a, 0x75, 0xd9, 0x5a, 0xfa, 0xf3, 0xb2, 0xb5, 0xf4, 0xf3, 0x83, 0x31, 0xb7, 0xc7, 0xe5,
-	0xa8, 0x97, 0xaa, 0xbc, 0x5f, 0xbd, 0xc2, 0xe1, 0xf7, 0x81, 0xd8, 0xe9, 0xbf, 0x79, 0x92, 0xdd,
-	0x23, 0x66, 0x46, 0xcb, 0xf8, 0xc8, 0x3e, 0xfc, 0x3f, 0x00, 0x00, 0xff, 0xff, 0x40, 0x2c, 0x48,
-	0x33, 0xb2, 0x07, 0x00, 0x00,
+	// 1159 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x8c, 0x56, 0xdf, 0x6f, 0x1b, 0x45,
+	0x10, 0x8e, 0x63, 0x37, 0x69, 0xe6, 0xe2, 0xb8, 0x1c, 0x69, 0x73, 0xa5, 0x6d, 0xe2, 0xba, 0x12,
+	0x44, 0x48, 0x75, 0xfa, 0x83, 0x82, 0x2a, 0x51, 0xc0, 0x49, 0x15, 0x5a, 0x89, 0x50, 0x73, 0x8d,
+	0x54, 0x09, 0x09, 0xad, 0xd6, 0x77, 0x6b, 0x67, 0xd5, 0xbb, 0xdd, 0xeb, 0xee, 0x5e, 0x93, 0xf0,
+	0x57, 0xf0, 0x67, 0x55, 0xe2, 0xa5, 0x8f, 0x88, 0x87, 0x0a, 0x35, 0x0f, 0x3c, 0x83, 0x78, 0xe1,
+	0x0d, 0xed, 0x8f, 0xb3, 0x7d, 0xae, 0x45, 0xef, 0x29, 0xf1, 0xcc, 0xf7, 0xcd, 0xde, 0xcc, 0x7e,
+	0x3b, 0x33, 0xd0, 0xce, 0x88, 0xc8, 0x62, 0x72, 0xb2, 0x83, 0xa3, 0x88, 0xe7, 0x4c, 0xed, 0xbc,
+	0xbc, 0x5d, 0xfc, 0xdb, 0xcd, 0x04, 0x57, 0xdc, 0xf7, 0x1d, 0xa2, 0x5b, 0x98, 0x5f, 0xde, 0xfe,
+	0x68, 0x7d, 0xc4, 0x47, 0xdc, 0xb8, 0x77, 0xf4, 0x7f, 0x16, 0xd9, 0xf9, 0xab, 0x01, 0xcb, 0x3d,
+	0x0b, 0xf2, 0x6f, 0x40, 0xd3, 0xe1, 0x11, 0x65, 0x31, 0x39, 0x09, 0x6a, 0xed, 0xda, 0x76, 0x23,
+	0x5c, 0x75, 0xc6, 0xc7, 0xda, 0xe6, 0xdf, 0x82, 0xf5, 0x14, 0x4b, 0x45, 0x04, 0x2a, 0x63, 0x17,
+	0x0d, 0xd6, 0xb7, 0xbe, 0xde, 0x34, 0xe3, 0x06, 0x34, 0xf9, 0x31, 0xd3, 0x84, 0x38, 0x16, 0x44,
+	0xca, 0xa0, 0xde, 0xae, 0x6d, 0xaf, 0x84, 0xab, 0xc6, 0xd8, 0xb3, 0x36, 0xff, 0x3a, 0x14, 0xc7,
+	0x20, 0x75, 0x9a, 0x91, 0xa0, 0xd1, 0xae, 0x6d, 0x37, 0x43, 0xcf, 0xd9, 0x0e, 0x4f, 0x33, 0xa2,
+	0x4f, 0x1e, 0x43, 0x04, 0x8e, 0x29, 0x1b, 0xa1, 0x94, 0xc7, 0x24, 0x38, 0x67, 0xa0, 0x7e, 0x01,
+	0xb5, 0xae, 0x03, 0x1e, 0x13, 0xff, 0x01, 0x40, 0xc4, 0x93, 0x04, 0x2b, 0x22, 0x70, 0x12, 0x2c,
+	0xe9, 0x63, 0x77, 0xaf, 0xbd, 0x7a, 0xb3, 0xb5, 0xf0, 0xfb, 0x9b, 0xad, 0x8b, 0x11, 0x97, 0x29,
+	0x97, 0x32, 0x7e, 0xde, 0xa5, 0x7c, 0x27, 0xc5, 0xea, 0xa8, 0xfb, 0x98, 0xa9, 0x70, 0x8a, 0xe0,
+	0x7f, 0x0a, 0x1f, 0x28, 0xae, 0x70, 0x82, 0xb8, 0x88, 0x89, 0x40, 0x26, 0x7c, 0xb0, 0xdc, 0xae,
+	0x6d, 0xd7, 0xc3, 0x96, 0x71, 0x3c, 0xd1, 0xf6, 0x3d, 0x53, 0xbb, 0x2f, 0xe1, 0x8a, 0xc5, 0x32,
+	0xce, 0x50, 0x24, 0xb8, 0x94, 0x25, 0xd6, 0x79, 0xc3, 0xda, 0x30, 0x90, 0xef, 0x39, 0xdb, 0xd3,
+	0x80, 0x29, 0xf6, 0xc7, 0xd0, 0x8a, 0x30, 0x8b, 0x48, 0x82, 0x70, 0x92, 0x20, 0x45, 0x53, 0x12,
+	0xac, 0x18, 0x46, 0xd3, 0x9a, 0x7b, 0x49, 0x72, 0x48, 0x53, 0xe2, 0x5f, 0x03, 0x88, 0x04, 0xc1,
+	0x8a, 0xc4, 0x08, 0xab, 0x00, 0x0c, 0x64, 0xc5, 0x59, 0x7a, 0xca, 0x7f, 0x06, 0x7e, 0x96, 0x0f,
+	0x12, 0x1a, 0xa1, 0x8c, 0xf3, 0x04, 0xc9, 0x23, 0x2c, 0x88, 0x0c, 0xbc, 0x76, 0x7d, 0xdb, 0xbb,
+	0x73, 0xa3, 0xfb, 0xae, 0x26, 0xba, 0x7d, 0x83, 0xee, 0x73, 0x9e, 0x3c, 0xd5, 0xd8, 0xdd, 0x86,
+	0x2e, 0x4e, 0x78, 0x21, 0x2b, 0x9b, 0xa5, 0xff, 0x1d, 0x5c, 0x98, 0x0e, 0x4c, 0xd9, 0x90, 0x07,
+	0xab, 0xed, 0xda, 0xb6, 0x77, 0xa7, 0xf3, 0xff, 0x61, 0x1f, 0xb3, 0x21, 0x0f, 0xd7, 0xb2, 0xd2,
+	0xef, 0xce, 0xdf, 0x35, 0x68, 0xcd, 0x9c, 0xac, 0x6b, 0x5d, 0x3e, 0x61, 0xa2, 0xbf, 0xd6, 0x34,
+	0x5d, 0x0b, 0xea, 0x1b, 0x58, 0x35, 0xa9, 0x21, 0x9c, 0x9a, 0xe2, 0x2e, 0x56, 0xb9, 0x58, 0xcf,
+	0x50, 0x7a, 0x86, 0xe1, 0x3f, 0x82, 0x0b, 0x99, 0xa0, 0x2c, 0xa2, 0x19, 0x4e, 0x8a, 0x28, 0xf5,
+	0x2a, 0x51, 0x5a, 0x63, 0x9a, 0x8b, 0xf4, 0x09, 0xb4, 0x08, 0x53, 0xe2, 0xd4, 0x5c, 0x9a, 0x54,
+	0x38, 0xcd, 0x8c, 0x74, 0xeb, 0xe1, 0x9a, 0x31, 0x1f, 0x16, 0xd6, 0xce, 0xaf, 0x8b, 0xb0, 0x56,
+	0xae, 0x8b, 0x7f, 0x09, 0x96, 0xa4, 0xc2, 0x2a, 0x97, 0x26, 0xd1, 0x66, 0xe8, 0x7e, 0xe9, 0xb7,
+	0xc0, 0x33, 0x22, 0xb0, 0xe2, 0x02, 0x0d, 0x09, 0x31, 0xf9, 0x35, 0x43, 0xaf, 0xb0, 0xed, 0x13,
+	0xe2, 0xdf, 0x83, 0x8d, 0x94, 0x32, 0x34, 0x86, 0xd9, 0x7a, 0x08, 0xac, 0x88, 0xc9, 0xa3, 0x19,
+	0xae, 0xa7, 0x94, 0x3d, 0x71, 0x5e, 0x53, 0xe1, 0x10, 0x2b, 0xa2, 0x2b, 0x67, 0x55, 0xea, 0xa4,
+	0xd1, 0xa8, 0x54, 0x39, 0x43, 0x71, 0x4a, 0xd8, 0x87, 0x56, 0xf9, 0x50, 0x69, 0xde, 0xdf, 0x7b,
+	0x83, 0xac, 0xf1, 0xe9, 0x8f, 0x91, 0xfa, 0x69, 0x4a, 0xa5, 0xbf, 0x77, 0x44, 0x89, 0x0c, 0x96,
+	0xda, 0xf5, 0x0a, 0x4f, 0x73, 0x42, 0xe8, 0xfc, 0x53, 0x83, 0x55, 0xd7, 0x64, 0x7a, 0x52, 0x92,
+	0x8a, 0xbd, 0x6b, 0x0b, 0x3c, 0xac, 0xd1, 0x53, 0x2d, 0xab, 0x19, 0x82, 0x31, 0x59, 0xc0, 0x17,
+	0xb0, 0x3c, 0xc0, 0x89, 0x7e, 0x72, 0xd5, 0xe4, 0x50, 0xa0, 0xfd, 0x87, 0xb0, 0x96, 0xf0, 0xe8,
+	0x39, 0x89, 0x51, 0xc1, 0xaf, 0x54, 0xda, 0xa6, 0x25, 0xed, 0xba, 0x28, 0x5b, 0xe0, 0xa5, 0x58,
+	0x8c, 0x28, 0x9b, 0x6e, 0x6c, 0x60, 0x4d, 0xba, 0xa1, 0x75, 0xfe, 0x6c, 0x40, 0xcb, 0xa5, 0xdd,
+	0xe7, 0x92, 0x2a, 0xca, 0x59, 0xb5, 0xcc, 0xaf, 0xc3, 0x6a, 0x8a, 0xc5, 0xf3, 0x99, 0xd4, 0x3d,
+	0x6b, 0xb3, 0x90, 0xfb, 0x70, 0x3e, 0x73, 0x31, 0xab, 0x25, 0x3f, 0x86, 0xfb, 0x5f, 0x81, 0x67,
+	0x1f, 0xc1, 0x8b, 0x9c, 0xab, 0x8a, 0xa9, 0x83, 0x61, 0xfc, 0xa0, 0x09, 0xfe, 0x4f, 0x70, 0x35,
+	0xc1, 0x52, 0xa1, 0x61, 0xce, 0x4c, 0x5b, 0xd7, 0xd7, 0x8c, 0x32, 0x41, 0x86, 0xf4, 0x04, 0xc9,
+	0x3c, 0xad, 0xa6, 0xb0, 0x40, 0x87, 0xd8, 0xb7, 0x11, 0xb4, 0xd8, 0xfb, 0x86, 0xff, 0x34, 0x4f,
+	0xfd, 0xcf, 0x61, 0x83, 0x32, 0xaa, 0x28, 0x4e, 0x90, 0x2b, 0xef, 0x50, 0xe0, 0xc8, 0x24, 0xba,
+	0x64, 0xea, 0x70, 0xd1, 0xb9, 0x0f, 0x8c, 0x77, 0xdf, 0x39, 0x67, 0xaf, 0x63, 0x79, 0xf6, 0x3a,
+	0x74, 0x1b, 0xc1, 0x49, 0xc2, 0x23, 0xd3, 0x90, 0xad, 0xdd, 0x74, 0xfa, 0xf7, 0xb7, 0x91, 0x31,
+	0xcd, 0x1e, 0x39, 0x7f, 0xd4, 0xac, 0xcc, 0x1f, 0x35, 0x0f, 0x61, 0xcb, 0x62, 0x8b, 0xfa, 0x23,
+	0x45, 0x49, 0x5c, 0x62, 0xda, 0xc9, 0x60, 0x27, 0x52, 0x21, 0x94, 0x43, 0x4a, 0xe2, 0xa9, 0x28,
+	0xe5, 0x51, 0xe2, 0xcd, 0x8c, 0x92, 0x0e, 0x05, 0xcf, 0x09, 0xed, 0x80, 0x28, 0x5c, 0x4d, 0x64,
+	0xf7, 0x60, 0x83, 0x91, 0x13, 0x85, 0xa2, 0x84, 0x12, 0xa6, 0xdc, 0x07, 0x4d, 0xf4, 0x56, 0x0f,
+	0xd7, 0xb5, 0x7b, 0xcf, 0x78, 0xcd, 0x97, 0x18, 0x5a, 0xe7, 0xdf, 0x45, 0x58, 0xea, 0x63, 0x81,
+	0x53, 0xe9, 0x7f, 0x06, 0x97, 0x94, 0x20, 0x58, 0xe6, 0xe2, 0x14, 0xcd, 0x3b, 0x6f, 0xbd, 0xf0,
+	0x96, 0x16, 0x8c, 0xaf, 0xe1, 0x2a, 0x65, 0x32, 0x17, 0xfa, 0x0d, 0x19, 0x0d, 0xcd, 0x5d, 0x4d,
+	0x2e, 0x8f, 0x31, 0x5a, 0x24, 0xa5, 0x00, 0x0f, 0xe0, 0x8a, 0xee, 0xa6, 0x19, 0x16, 0x46, 0x24,
+	0x4a, 0x60, 0x26, 0x87, 0x7a, 0x61, 0x99, 0x4c, 0x86, 0x46, 0x18, 0xa4, 0x94, 0xf5, 0x2d, 0xe2,
+	0xd0, 0x01, 0xdc, 0x0c, 0x98, 0xa1, 0x1f, 0x53, 0x75, 0x14, 0x0b, 0x7c, 0x5c, 0xd0, 0x1b, 0xb3,
+	0xf4, 0x67, 0x0e, 0xe0, 0xe8, 0xb7, 0x60, 0x3d, 0xa1, 0x2f, 0x72, 0x1a, 0x53, 0x75, 0x3a, 0x3d,
+	0xfd, 0xce, 0xd9, 0x8d, 0x6a, 0xec, 0x9b, 0x0c, 0xc0, 0x47, 0x70, 0x7d, 0x86, 0x11, 0x71, 0x9e,
+	0xc4, 0xfc, 0x98, 0xa1, 0x8c, 0x08, 0xca, 0x63, 0x94, 0x4a, 0x23, 0xed, 0x7a, 0x78, 0xad, 0x44,
+	0xdf, 0x73, 0xb0, 0xbe, 0x41, 0x1d, 0xc8, 0xce, 0xcf, 0x70, 0xde, 0xc8, 0x81, 0x08, 0xe9, 0xdf,
+	0x87, 0xcb, 0xe6, 0xfa, 0xe6, 0xae, 0x77, 0xb6, 0xfe, 0x97, 0x34, 0xe0, 0xe0, 0xdd, 0x15, 0xef,
+	0x2e, 0x18, 0x0f, 0x92, 0xf9, 0x60, 0x6e, 0xed, 0x3f, 0xd4, 0xde, 0xa7, 0xf9, 0x60, 0x9a, 0xb4,
+	0xfb, 0xed, 0xab, 0xb7, 0x9b, 0xb5, 0xd7, 0x6f, 0x37, 0x6b, 0x7f, 0xbc, 0xdd, 0xac, 0xfd, 0x72,
+	0xb6, 0xb9, 0xf0, 0xfa, 0x6c, 0x73, 0xe1, 0xb7, 0xb3, 0xcd, 0x85, 0x1f, 0x6f, 0x8e, 0xa8, 0x3a,
+	0xca, 0x07, 0xdd, 0x88, 0xa7, 0x3b, 0xc5, 0xae, 0xeb, 0xfe, 0xde, 0x4c, 0x6e, 0xef, 0x4c, 0x16,
+	0x5f, 0xbd, 0x2a, 0xca, 0xc1, 0x92, 0x59, 0x65, 0xef, 0xfe, 0x17, 0x00, 0x00, 0xff, 0xff, 0xe7,
+	0xcd, 0x37, 0x81, 0x18, 0x0b, 0x00, 0x00,
 }
 
 func (m *Account) Marshal() (dAtA []byte, err error) {
@@ -559,6 +754,32 @@ func (m *Account) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if m.PublicPoolInfo != nil {
+		{
+			size, err := m.PublicPoolInfo.MarshalToSizedBuffer(dAtA[:i])
+			if err != nil {
+				return 0, err
+			}
+			i -= size
+			i = encodeVarintAccount(dAtA, i, uint64(size))
+		}
+		i--
+		dAtA[i] = 0x62
+	}
+	if len(m.PublicPoolShares) > 0 {
+		for iNdEx := len(m.PublicPoolShares) - 1; iNdEx >= 0; iNdEx-- {
+			{
+				size, err := m.PublicPoolShares[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+				if err != nil {
+					return 0, err
+				}
+				i -= size
+				i = encodeVarintAccount(dAtA, i, uint64(size))
+			}
+			i--
+			dAtA[i] = 0x5a
+		}
+	}
 	if m.CreatedAt != 0 {
 		i = encodeVarintAccount(dAtA, i, uint64(m.CreatedAt))
 		i--
@@ -613,6 +834,131 @@ func (m *Account) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	}
 	if m.AccountIndex != 0 {
 		i = encodeVarintAccount(dAtA, i, uint64(m.AccountIndex))
+		i--
+		dAtA[i] = 0x8
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *PublicPoolShare) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *PublicPoolShare) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *PublicPoolShare) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.EntryTimestamp != 0 {
+		i = encodeVarintAccount(dAtA, i, uint64(m.EntryTimestamp))
+		i--
+		dAtA[i] = 0x20
+	}
+	{
+		size := m.PrincipalAmount.Size()
+		i -= size
+		if _, err := m.PrincipalAmount.MarshalTo(dAtA[i:]); err != nil {
+			return 0, err
+		}
+		i = encodeVarintAccount(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0x1a
+	{
+		size := m.ShareAmount.Size()
+		i -= size
+		if _, err := m.ShareAmount.MarshalTo(dAtA[i:]); err != nil {
+			return 0, err
+		}
+		i = encodeVarintAccount(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0x12
+	if m.PublicPoolIndex != 0 {
+		i = encodeVarintAccount(dAtA, i, uint64(m.PublicPoolIndex))
+		i--
+		dAtA[i] = 0x8
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *PublicPoolInfo) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *PublicPoolInfo) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *PublicPoolInfo) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if len(m.Strategies) > 0 {
+		for iNdEx := len(m.Strategies) - 1; iNdEx >= 0; iNdEx-- {
+			{
+				size := m.Strategies[iNdEx].Size()
+				i -= size
+				if _, err := m.Strategies[iNdEx].MarshalTo(dAtA[i:]); err != nil {
+					return 0, err
+				}
+				i = encodeVarintAccount(dAtA, i, uint64(size))
+			}
+			i--
+			dAtA[i] = 0x32
+		}
+	}
+	{
+		size := m.OperatorShares.Size()
+		i -= size
+		if _, err := m.OperatorShares.MarshalTo(dAtA[i:]); err != nil {
+			return 0, err
+		}
+		i = encodeVarintAccount(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0x2a
+	{
+		size := m.TotalShares.Size()
+		i -= size
+		if _, err := m.TotalShares.MarshalTo(dAtA[i:]); err != nil {
+			return 0, err
+		}
+		i = encodeVarintAccount(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0x22
+	if m.MinOperatorShareRate != 0 {
+		i = encodeVarintAccount(dAtA, i, uint64(m.MinOperatorShareRate))
+		i--
+		dAtA[i] = 0x18
+	}
+	if m.OperatorFee != 0 {
+		i = encodeVarintAccount(dAtA, i, uint64(m.OperatorFee))
+		i--
+		dAtA[i] = 0x10
+	}
+	if m.Status != 0 {
+		i = encodeVarintAccount(dAtA, i, uint64(m.Status))
 		i--
 		dAtA[i] = 0x8
 	}
@@ -828,6 +1174,16 @@ func (m *Params) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if m.LiquidityPoolCooldownPeriodMs != 0 {
+		i = encodeVarintAccount(dAtA, i, uint64(m.LiquidityPoolCooldownPeriodMs))
+		i--
+		dAtA[i] = 0x30
+	}
+	if m.LiquidityPoolIndex != 0 {
+		i = encodeVarintAccount(dAtA, i, uint64(m.LiquidityPoolIndex))
+		i--
+		dAtA[i] = 0x28
+	}
 	if m.MinPartialWithdrawAmount != 0 {
 		i = encodeVarintAccount(dAtA, i, uint64(m.MinPartialWithdrawAmount))
 		i--
@@ -931,6 +1287,63 @@ func (m *Account) Size() (n int) {
 	if m.CreatedAt != 0 {
 		n += 1 + sovAccount(uint64(m.CreatedAt))
 	}
+	if len(m.PublicPoolShares) > 0 {
+		for _, e := range m.PublicPoolShares {
+			l = e.Size()
+			n += 1 + l + sovAccount(uint64(l))
+		}
+	}
+	if m.PublicPoolInfo != nil {
+		l = m.PublicPoolInfo.Size()
+		n += 1 + l + sovAccount(uint64(l))
+	}
+	return n
+}
+
+func (m *PublicPoolShare) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	if m.PublicPoolIndex != 0 {
+		n += 1 + sovAccount(uint64(m.PublicPoolIndex))
+	}
+	l = m.ShareAmount.Size()
+	n += 1 + l + sovAccount(uint64(l))
+	l = m.PrincipalAmount.Size()
+	n += 1 + l + sovAccount(uint64(l))
+	if m.EntryTimestamp != 0 {
+		n += 1 + sovAccount(uint64(m.EntryTimestamp))
+	}
+	return n
+}
+
+func (m *PublicPoolInfo) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	if m.Status != 0 {
+		n += 1 + sovAccount(uint64(m.Status))
+	}
+	if m.OperatorFee != 0 {
+		n += 1 + sovAccount(uint64(m.OperatorFee))
+	}
+	if m.MinOperatorShareRate != 0 {
+		n += 1 + sovAccount(uint64(m.MinOperatorShareRate))
+	}
+	l = m.TotalShares.Size()
+	n += 1 + l + sovAccount(uint64(l))
+	l = m.OperatorShares.Size()
+	n += 1 + l + sovAccount(uint64(l))
+	if len(m.Strategies) > 0 {
+		for _, e := range m.Strategies {
+			l = e.Size()
+			n += 1 + l + sovAccount(uint64(l))
+		}
+	}
 	return n
 }
 
@@ -1026,6 +1439,12 @@ func (m *Params) Size() (n int) {
 	}
 	if m.MinPartialWithdrawAmount != 0 {
 		n += 1 + sovAccount(uint64(m.MinPartialWithdrawAmount))
+	}
+	if m.LiquidityPoolIndex != 0 {
+		n += 1 + sovAccount(uint64(m.LiquidityPoolIndex))
+	}
+	if m.LiquidityPoolCooldownPeriodMs != 0 {
+		n += 1 + sovAccount(uint64(m.LiquidityPoolCooldownPeriodMs))
 	}
 	return n
 }
@@ -1298,6 +1717,443 @@ func (m *Account) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
+		case 11:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field PublicPoolShares", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowAccount
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthAccount
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthAccount
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.PublicPoolShares = append(m.PublicPoolShares, PublicPoolShare{})
+			if err := m.PublicPoolShares[len(m.PublicPoolShares)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 12:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field PublicPoolInfo", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowAccount
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthAccount
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthAccount
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.PublicPoolInfo == nil {
+				m.PublicPoolInfo = &PublicPoolInfo{}
+			}
+			if err := m.PublicPoolInfo.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipAccount(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthAccount
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *PublicPoolShare) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowAccount
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: PublicPoolShare: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: PublicPoolShare: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field PublicPoolIndex", wireType)
+			}
+			m.PublicPoolIndex = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowAccount
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.PublicPoolIndex |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ShareAmount", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowAccount
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthAccount
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthAccount
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.ShareAmount.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field PrincipalAmount", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowAccount
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthAccount
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthAccount
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.PrincipalAmount.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 4:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field EntryTimestamp", wireType)
+			}
+			m.EntryTimestamp = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowAccount
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.EntryTimestamp |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		default:
+			iNdEx = preIndex
+			skippy, err := skipAccount(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthAccount
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *PublicPoolInfo) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowAccount
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: PublicPoolInfo: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: PublicPoolInfo: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Status", wireType)
+			}
+			m.Status = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowAccount
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.Status |= uint32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field OperatorFee", wireType)
+			}
+			m.OperatorFee = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowAccount
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.OperatorFee |= uint32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 3:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field MinOperatorShareRate", wireType)
+			}
+			m.MinOperatorShareRate = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowAccount
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.MinOperatorShareRate |= uint32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 4:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field TotalShares", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowAccount
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthAccount
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthAccount
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.TotalShares.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 5:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field OperatorShares", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowAccount
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthAccount
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthAccount
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.OperatorShares.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 6:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Strategies", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowAccount
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthAccount
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthAccount
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			var v cosmossdk_io_math.Int
+			m.Strategies = append(m.Strategies, v)
+			if err := m.Strategies[len(m.Strategies)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
 			skippy, err := skipAccount(dAtA[iNdEx:])
@@ -2002,6 +2858,44 @@ func (m *Params) Unmarshal(dAtA []byte) error {
 				b := dAtA[iNdEx]
 				iNdEx++
 				m.MinPartialWithdrawAmount |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 5:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field LiquidityPoolIndex", wireType)
+			}
+			m.LiquidityPoolIndex = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowAccount
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.LiquidityPoolIndex |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 6:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field LiquidityPoolCooldownPeriodMs", wireType)
+			}
+			m.LiquidityPoolCooldownPeriodMs = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowAccount
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.LiquidityPoolCooldownPeriodMs |= int64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}

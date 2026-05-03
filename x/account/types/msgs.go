@@ -15,6 +15,12 @@ var (
 	_ sdk.Msg = (*MsgUpdateMargin)(nil)
 	_ sdk.Msg = (*MsgUpdateLeverage)(nil)
 	_ sdk.Msg = (*MsgUpdateParams)(nil)
+	_ sdk.Msg = (*MsgCreatePublicPool)(nil)
+	_ sdk.Msg = (*MsgUpdatePublicPool)(nil)
+	_ sdk.Msg = (*MsgMintShares)(nil)
+	_ sdk.Msg = (*MsgBurnShares)(nil)
+	_ sdk.Msg = (*MsgStrategyTransfer)(nil)
+	_ sdk.Msg = (*MsgForceBurnShares)(nil)
 )
 
 func mustValidAddr(s string) error {
@@ -96,4 +102,63 @@ func (m *MsgUpdateParams) ValidateBasic() error {
 		return err
 	}
 	return m.Params.Validate()
+}
+
+// ---------- public pool msgs ----------
+
+func (m *MsgCreatePublicPool) ValidateBasic() error {
+	if err := mustValidAddr(m.Sender); err != nil {
+		return err
+	}
+	if m.InitialTotalShares == 0 {
+		return ErrInvalidParams.Wrap("initial_total_shares must be > 0")
+	}
+	return nil
+}
+
+func (m *MsgUpdatePublicPool) ValidateBasic() error {
+	return mustValidAddr(m.Sender)
+}
+
+func (m *MsgMintShares) ValidateBasic() error {
+	if err := mustValidAddr(m.Sender); err != nil {
+		return err
+	}
+	if m.PrincipalAmount == 0 {
+		return ErrAmountTooSmall
+	}
+	return nil
+}
+
+func (m *MsgBurnShares) ValidateBasic() error {
+	if err := mustValidAddr(m.Sender); err != nil {
+		return err
+	}
+	if m.ShareAmount.IsNil() || !m.ShareAmount.IsPositive() {
+		return ErrInvalidParams.Wrap("share_amount must be positive")
+	}
+	return nil
+}
+
+func (m *MsgStrategyTransfer) ValidateBasic() error {
+	if err := mustValidAddr(m.Sender); err != nil {
+		return err
+	}
+	if m.FromStrategy == m.ToStrategy {
+		return ErrInvalidParams.Wrap("from and to strategy must differ")
+	}
+	if m.Amount.IsNil() || !m.Amount.IsPositive() {
+		return ErrInvalidParams.Wrap("amount must be positive")
+	}
+	return nil
+}
+
+func (m *MsgForceBurnShares) ValidateBasic() error {
+	if err := mustValidAddr(m.Authority); err != nil {
+		return err
+	}
+	if m.ShareAmount.IsNil() || !m.ShareAmount.IsPositive() {
+		return ErrInvalidParams.Wrap("share_amount must be positive")
+	}
+	return nil
 }
