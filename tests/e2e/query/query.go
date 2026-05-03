@@ -158,3 +158,70 @@ func HealthStatus(
 ) (uint32, error) {
 	return app.RiskKeeper.GetHealthStatus(ctx, accountIdx)
 }
+
+// PublicPoolInfo returns the pool info on a sub-account; second return
+// is false when the account is not a public pool.
+func PublicPoolInfo(app *perp.PerpDEXApp, ctx sdk.Context, idx uint64) (accounttypes.PublicPoolInfo, bool, error) {
+	a, err := app.PerpAccountKeeper.GetAccount(ctx, idx)
+	if err != nil {
+		return accounttypes.PublicPoolInfo{}, false, err
+	}
+	if a.PublicPoolInfo == nil {
+		return accounttypes.PublicPoolInfo{}, false, nil
+	}
+	return *a.PublicPoolInfo, true, nil
+}
+
+// PublicPoolShares returns the LP entries on a master account.
+func PublicPoolShares(app *perp.PerpDEXApp, ctx sdk.Context, idx uint64) ([]accounttypes.PublicPoolShare, error) {
+	a, err := app.PerpAccountKeeper.GetAccount(ctx, idx)
+	if err != nil {
+		return nil, err
+	}
+	return a.PublicPoolShares, nil
+}
+
+// SharesToUSDCValue runs the keeper helper used by burn pricing.
+func SharesToUSDCValue(
+	app *perp.PerpDEXApp, ctx sdk.Context, poolIdx uint64, shareAmount math.Int,
+) (math.Int, error) {
+	return app.PerpAccountKeeper.SharesToUSDCValue(ctx, poolIdx, shareAmount)
+}
+
+// ADLQueue returns the profit-ranked counterparty queue for a given
+// (market, opposite-side). `limit=0` defers to the chain's
+// `MaxAdlCandidatesPerVictim` parameter.
+func ADLQueue(
+	app *perp.PerpDEXApp,
+	ctx sdk.Context,
+	marketIdx uint32,
+	oppositeIsLong bool,
+	limit uint32,
+) ([]liquidationtypes.ADLCandidate, error) {
+	q := app.LiquidationKeeper
+	resolvedLimit := limit
+	if resolvedLimit == 0 {
+		params, err := q.Params.Get(ctx)
+		if err != nil {
+			return nil, err
+		}
+		resolvedLimit = params.MaxAdlCandidatesPerVictim
+		if resolvedLimit == 0 {
+			resolvedLimit = liquidationtypes.DefaultMaxADLCandidatesPerVictim
+		}
+	}
+	cands, err := q.BuildADLQueue(ctx, marketIdx, oppositeIsLong, resolvedLimit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]liquidationtypes.ADLCandidate, 0, len(cands))
+	for _, c := range cands {
+		out = append(out, liquidationtypes.ADLCandidate{
+			AccountIndex:  c.AccountIndex,
+			PositionSize:  c.PositionSize,
+			UnrealizedPnl: c.UnrealizedPnL,
+			Score:         c.Score,
+		})
+	}
+	return out, nil
+}

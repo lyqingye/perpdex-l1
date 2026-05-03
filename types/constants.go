@@ -100,6 +100,18 @@ const (
 	AccountTradingModeUnified = uint32(1)
 )
 
+// Public pool constants. Mirrors lighter-prover circuit/src/types/constants.rs
+// `INITIAL_POOL_SHARE_VALUE`, `NB_STRATEGIES`, `SHARES_LIST_SIZE` and the
+// PUBLIC_POOL status enum.
+const (
+	NbStrategies              = 8
+	SharesListSize            = 16
+	InitialPoolShareValue     = uint64(1_000) // 0.001 USDC
+	PublicPoolStatusActive    = uint32(0)
+	PublicPoolStatusFrozen    = uint32(1)
+	DefaultLLPCooldownPeriodMs = int64(7 * 24 * 60 * 60 * 1000) // 7 days
+)
+
 // Market types & status.
 const (
 	MarketTypePerps    = uint32(0)

@@ -10,4 +10,12 @@ message LiquidationFlag {
   int64 flagged_at_time = 4;
 }
 
-message Params {}
+message Params {
+  // max_adl_attempts_per_block caps how many counterparty fills the
+  // EndBlocker auto-ADL loop is allowed to push through in one block.
+  uint32 max_adl_attempts_per_block = 1;
+  // max_adl_candidates_per_victim caps how many ranked counterparties
+  // BuildADLQueue returns per (market, side). Larger queues cost more
+  // CPU per block.
+  uint32 max_adl_candidates_per_victim = 2;
+}

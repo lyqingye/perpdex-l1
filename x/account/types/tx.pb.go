@@ -992,6 +992,673 @@ func (m *MsgUpdateParamsResponse) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_MsgUpdateParamsResponse proto.InternalMessageInfo
 
+// MsgCreatePublicPool initialises a new sub-account as a Public Pool /
+// Insurance Fund. Sender must be the master's owner. The master's
+// collateral funds the initial total_shares at INITIAL_POOL_SHARE_VALUE
+// each. account_type must be PUBLIC_POOL or INSURANCE_FUND. When the
+// master is the canonical InsuranceFundOperatorAccountIdx, the new pool
+// is forced to INSURANCE_FUND + UNIFIED trading_mode (lighter parity).
+type MsgCreatePublicPool struct {
+	Sender               string `protobuf:"bytes,1,opt,name=sender,proto3" json:"sender,omitempty"`
+	MasterAccountIndex   uint64 `protobuf:"varint,2,opt,name=master_account_index,json=masterAccountIndex,proto3" json:"master_account_index,omitempty"`
+	AccountType          uint32 `protobuf:"varint,3,opt,name=account_type,json=accountType,proto3" json:"account_type,omitempty"`
+	InitialTotalShares   uint64 `protobuf:"varint,4,opt,name=initial_total_shares,json=initialTotalShares,proto3" json:"initial_total_shares,omitempty"`
+	OperatorFee          uint32 `protobuf:"varint,5,opt,name=operator_fee,json=operatorFee,proto3" json:"operator_fee,omitempty"`
+	MinOperatorShareRate uint32 `protobuf:"varint,6,opt,name=min_operator_share_rate,json=minOperatorShareRate,proto3" json:"min_operator_share_rate,omitempty"`
+}
+
+func (m *MsgCreatePublicPool) Reset()         { *m = MsgCreatePublicPool{} }
+func (m *MsgCreatePublicPool) String() string { return proto.CompactTextString(m) }
+func (*MsgCreatePublicPool) ProtoMessage()    {}
+func (*MsgCreatePublicPool) Descriptor() ([]byte, []int) {
+	return fileDescriptor_f8af1d6ebeb89995, []int{18}
+}
+func (m *MsgCreatePublicPool) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *MsgCreatePublicPool) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_MsgCreatePublicPool.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *MsgCreatePublicPool) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MsgCreatePublicPool.Merge(m, src)
+}
+func (m *MsgCreatePublicPool) XXX_Size() int {
+	return m.Size()
+}
+func (m *MsgCreatePublicPool) XXX_DiscardUnknown() {
+	xxx_messageInfo_MsgCreatePublicPool.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_MsgCreatePublicPool proto.InternalMessageInfo
+
+func (m *MsgCreatePublicPool) GetSender() string {
+	if m != nil {
+		return m.Sender
+	}
+	return ""
+}
+
+func (m *MsgCreatePublicPool) GetMasterAccountIndex() uint64 {
+	if m != nil {
+		return m.MasterAccountIndex
+	}
+	return 0
+}
+
+func (m *MsgCreatePublicPool) GetAccountType() uint32 {
+	if m != nil {
+		return m.AccountType
+	}
+	return 0
+}
+
+func (m *MsgCreatePublicPool) GetInitialTotalShares() uint64 {
+	if m != nil {
+		return m.InitialTotalShares
+	}
+	return 0
+}
+
+func (m *MsgCreatePublicPool) GetOperatorFee() uint32 {
+	if m != nil {
+		return m.OperatorFee
+	}
+	return 0
+}
+
+func (m *MsgCreatePublicPool) GetMinOperatorShareRate() uint32 {
+	if m != nil {
+		return m.MinOperatorShareRate
+	}
+	return 0
+}
+
+type MsgCreatePublicPoolResponse struct {
+	PoolAccountIndex uint64 `protobuf:"varint,1,opt,name=pool_account_index,json=poolAccountIndex,proto3" json:"pool_account_index,omitempty"`
+}
+
+func (m *MsgCreatePublicPoolResponse) Reset()         { *m = MsgCreatePublicPoolResponse{} }
+func (m *MsgCreatePublicPoolResponse) String() string { return proto.CompactTextString(m) }
+func (*MsgCreatePublicPoolResponse) ProtoMessage()    {}
+func (*MsgCreatePublicPoolResponse) Descriptor() ([]byte, []int) {
+	return fileDescriptor_f8af1d6ebeb89995, []int{19}
+}
+func (m *MsgCreatePublicPoolResponse) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *MsgCreatePublicPoolResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_MsgCreatePublicPoolResponse.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *MsgCreatePublicPoolResponse) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MsgCreatePublicPoolResponse.Merge(m, src)
+}
+func (m *MsgCreatePublicPoolResponse) XXX_Size() int {
+	return m.Size()
+}
+func (m *MsgCreatePublicPoolResponse) XXX_DiscardUnknown() {
+	xxx_messageInfo_MsgCreatePublicPoolResponse.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_MsgCreatePublicPoolResponse proto.InternalMessageInfo
+
+func (m *MsgCreatePublicPoolResponse) GetPoolAccountIndex() uint64 {
+	if m != nil {
+		return m.PoolAccountIndex
+	}
+	return 0
+}
+
+// MsgUpdatePublicPool flips status / lowers operator_fee / changes
+// min_operator_share_rate. Sender must be the pool's master owner. The
+// pool must be ACTIVE; freezing requires HEALTHY + no positions + no
+// open orders. operator_fee can only DECREASE.
+type MsgUpdatePublicPool struct {
+	Sender                  string `protobuf:"bytes,1,opt,name=sender,proto3" json:"sender,omitempty"`
+	PoolAccountIndex        uint64 `protobuf:"varint,2,opt,name=pool_account_index,json=poolAccountIndex,proto3" json:"pool_account_index,omitempty"`
+	NewStatus               uint32 `protobuf:"varint,3,opt,name=new_status,json=newStatus,proto3" json:"new_status,omitempty"`
+	NewOperatorFee          uint32 `protobuf:"varint,4,opt,name=new_operator_fee,json=newOperatorFee,proto3" json:"new_operator_fee,omitempty"`
+	NewMinOperatorShareRate uint32 `protobuf:"varint,5,opt,name=new_min_operator_share_rate,json=newMinOperatorShareRate,proto3" json:"new_min_operator_share_rate,omitempty"`
+}
+
+func (m *MsgUpdatePublicPool) Reset()         { *m = MsgUpdatePublicPool{} }
+func (m *MsgUpdatePublicPool) String() string { return proto.CompactTextString(m) }
+func (*MsgUpdatePublicPool) ProtoMessage()    {}
+func (*MsgUpdatePublicPool) Descriptor() ([]byte, []int) {
+	return fileDescriptor_f8af1d6ebeb89995, []int{20}
+}
+func (m *MsgUpdatePublicPool) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *MsgUpdatePublicPool) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_MsgUpdatePublicPool.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *MsgUpdatePublicPool) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MsgUpdatePublicPool.Merge(m, src)
+}
+func (m *MsgUpdatePublicPool) XXX_Size() int {
+	return m.Size()
+}
+func (m *MsgUpdatePublicPool) XXX_DiscardUnknown() {
+	xxx_messageInfo_MsgUpdatePublicPool.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_MsgUpdatePublicPool proto.InternalMessageInfo
+
+func (m *MsgUpdatePublicPool) GetSender() string {
+	if m != nil {
+		return m.Sender
+	}
+	return ""
+}
+
+func (m *MsgUpdatePublicPool) GetPoolAccountIndex() uint64 {
+	if m != nil {
+		return m.PoolAccountIndex
+	}
+	return 0
+}
+
+func (m *MsgUpdatePublicPool) GetNewStatus() uint32 {
+	if m != nil {
+		return m.NewStatus
+	}
+	return 0
+}
+
+func (m *MsgUpdatePublicPool) GetNewOperatorFee() uint32 {
+	if m != nil {
+		return m.NewOperatorFee
+	}
+	return 0
+}
+
+func (m *MsgUpdatePublicPool) GetNewMinOperatorShareRate() uint32 {
+	if m != nil {
+		return m.NewMinOperatorShareRate
+	}
+	return 0
+}
+
+type MsgUpdatePublicPoolResponse struct {
+}
+
+func (m *MsgUpdatePublicPoolResponse) Reset()         { *m = MsgUpdatePublicPoolResponse{} }
+func (m *MsgUpdatePublicPoolResponse) String() string { return proto.CompactTextString(m) }
+func (*MsgUpdatePublicPoolResponse) ProtoMessage()    {}
+func (*MsgUpdatePublicPoolResponse) Descriptor() ([]byte, []int) {
+	return fileDescriptor_f8af1d6ebeb89995, []int{21}
+}
+func (m *MsgUpdatePublicPoolResponse) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *MsgUpdatePublicPoolResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_MsgUpdatePublicPoolResponse.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *MsgUpdatePublicPoolResponse) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MsgUpdatePublicPoolResponse.Merge(m, src)
+}
+func (m *MsgUpdatePublicPoolResponse) XXX_Size() int {
+	return m.Size()
+}
+func (m *MsgUpdatePublicPoolResponse) XXX_DiscardUnknown() {
+	xxx_messageInfo_MsgUpdatePublicPoolResponse.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_MsgUpdatePublicPoolResponse proto.InternalMessageInfo
+
+// MsgMintShares deposits USDC collateral from sender's master account
+// into the pool, increasing total_shares (and operator_shares iff
+// sender is the pool operator). principal_amount is in uusdc.
+type MsgMintShares struct {
+	Sender           string `protobuf:"bytes,1,opt,name=sender,proto3" json:"sender,omitempty"`
+	PoolAccountIndex uint64 `protobuf:"varint,2,opt,name=pool_account_index,json=poolAccountIndex,proto3" json:"pool_account_index,omitempty"`
+	PrincipalAmount  uint64 `protobuf:"varint,3,opt,name=principal_amount,json=principalAmount,proto3" json:"principal_amount,omitempty"`
+}
+
+func (m *MsgMintShares) Reset()         { *m = MsgMintShares{} }
+func (m *MsgMintShares) String() string { return proto.CompactTextString(m) }
+func (*MsgMintShares) ProtoMessage()    {}
+func (*MsgMintShares) Descriptor() ([]byte, []int) {
+	return fileDescriptor_f8af1d6ebeb89995, []int{22}
+}
+func (m *MsgMintShares) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *MsgMintShares) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_MsgMintShares.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *MsgMintShares) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MsgMintShares.Merge(m, src)
+}
+func (m *MsgMintShares) XXX_Size() int {
+	return m.Size()
+}
+func (m *MsgMintShares) XXX_DiscardUnknown() {
+	xxx_messageInfo_MsgMintShares.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_MsgMintShares proto.InternalMessageInfo
+
+func (m *MsgMintShares) GetSender() string {
+	if m != nil {
+		return m.Sender
+	}
+	return ""
+}
+
+func (m *MsgMintShares) GetPoolAccountIndex() uint64 {
+	if m != nil {
+		return m.PoolAccountIndex
+	}
+	return 0
+}
+
+func (m *MsgMintShares) GetPrincipalAmount() uint64 {
+	if m != nil {
+		return m.PrincipalAmount
+	}
+	return 0
+}
+
+type MsgMintSharesResponse struct {
+	ShareAmount cosmossdk_io_math.Int `protobuf:"bytes,1,opt,name=share_amount,json=shareAmount,proto3,customtype=cosmossdk.io/math.Int" json:"share_amount"`
+}
+
+func (m *MsgMintSharesResponse) Reset()         { *m = MsgMintSharesResponse{} }
+func (m *MsgMintSharesResponse) String() string { return proto.CompactTextString(m) }
+func (*MsgMintSharesResponse) ProtoMessage()    {}
+func (*MsgMintSharesResponse) Descriptor() ([]byte, []int) {
+	return fileDescriptor_f8af1d6ebeb89995, []int{23}
+}
+func (m *MsgMintSharesResponse) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *MsgMintSharesResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_MsgMintSharesResponse.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *MsgMintSharesResponse) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MsgMintSharesResponse.Merge(m, src)
+}
+func (m *MsgMintSharesResponse) XXX_Size() int {
+	return m.Size()
+}
+func (m *MsgMintSharesResponse) XXX_DiscardUnknown() {
+	xxx_messageInfo_MsgMintSharesResponse.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_MsgMintSharesResponse proto.InternalMessageInfo
+
+// MsgBurnShares redeems shares back to USDC at the current NAV.
+// Subject to LLP cooldown when the pool is the system liquidity pool
+// and sender is non-operator. operator_fee_share is split out of the
+// realized profit and credited to operator_shares.
+type MsgBurnShares struct {
+	Sender           string                `protobuf:"bytes,1,opt,name=sender,proto3" json:"sender,omitempty"`
+	PoolAccountIndex uint64                `protobuf:"varint,2,opt,name=pool_account_index,json=poolAccountIndex,proto3" json:"pool_account_index,omitempty"`
+	ShareAmount      cosmossdk_io_math.Int `protobuf:"bytes,3,opt,name=share_amount,json=shareAmount,proto3,customtype=cosmossdk.io/math.Int" json:"share_amount"`
+}
+
+func (m *MsgBurnShares) Reset()         { *m = MsgBurnShares{} }
+func (m *MsgBurnShares) String() string { return proto.CompactTextString(m) }
+func (*MsgBurnShares) ProtoMessage()    {}
+func (*MsgBurnShares) Descriptor() ([]byte, []int) {
+	return fileDescriptor_f8af1d6ebeb89995, []int{24}
+}
+func (m *MsgBurnShares) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *MsgBurnShares) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_MsgBurnShares.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *MsgBurnShares) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MsgBurnShares.Merge(m, src)
+}
+func (m *MsgBurnShares) XXX_Size() int {
+	return m.Size()
+}
+func (m *MsgBurnShares) XXX_DiscardUnknown() {
+	xxx_messageInfo_MsgBurnShares.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_MsgBurnShares proto.InternalMessageInfo
+
+func (m *MsgBurnShares) GetSender() string {
+	if m != nil {
+		return m.Sender
+	}
+	return ""
+}
+
+func (m *MsgBurnShares) GetPoolAccountIndex() uint64 {
+	if m != nil {
+		return m.PoolAccountIndex
+	}
+	return 0
+}
+
+type MsgBurnSharesResponse struct {
+	UsdcAmount uint64 `protobuf:"varint,1,opt,name=usdc_amount,json=usdcAmount,proto3" json:"usdc_amount,omitempty"`
+}
+
+func (m *MsgBurnSharesResponse) Reset()         { *m = MsgBurnSharesResponse{} }
+func (m *MsgBurnSharesResponse) String() string { return proto.CompactTextString(m) }
+func (*MsgBurnSharesResponse) ProtoMessage()    {}
+func (*MsgBurnSharesResponse) Descriptor() ([]byte, []int) {
+	return fileDescriptor_f8af1d6ebeb89995, []int{25}
+}
+func (m *MsgBurnSharesResponse) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *MsgBurnSharesResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_MsgBurnSharesResponse.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *MsgBurnSharesResponse) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MsgBurnSharesResponse.Merge(m, src)
+}
+func (m *MsgBurnSharesResponse) XXX_Size() int {
+	return m.Size()
+}
+func (m *MsgBurnSharesResponse) XXX_DiscardUnknown() {
+	xxx_messageInfo_MsgBurnSharesResponse.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_MsgBurnSharesResponse proto.InternalMessageInfo
+
+func (m *MsgBurnSharesResponse) GetUsdcAmount() uint64 {
+	if m != nil {
+		return m.UsdcAmount
+	}
+	return 0
+}
+
+// MsgStrategyTransfer reallocates collateral between the IF's strategy
+// buckets. Sender must be the pool master owner; pool must be IF and
+// not frozen; from != to; strategy[from] must hold >= amount.
+type MsgStrategyTransfer struct {
+	Sender           string                `protobuf:"bytes,1,opt,name=sender,proto3" json:"sender,omitempty"`
+	PoolAccountIndex uint64                `protobuf:"varint,2,opt,name=pool_account_index,json=poolAccountIndex,proto3" json:"pool_account_index,omitempty"`
+	FromStrategy     uint32                `protobuf:"varint,3,opt,name=from_strategy,json=fromStrategy,proto3" json:"from_strategy,omitempty"`
+	ToStrategy       uint32                `protobuf:"varint,4,opt,name=to_strategy,json=toStrategy,proto3" json:"to_strategy,omitempty"`
+	Amount           cosmossdk_io_math.Int `protobuf:"bytes,5,opt,name=amount,proto3,customtype=cosmossdk.io/math.Int" json:"amount"`
+}
+
+func (m *MsgStrategyTransfer) Reset()         { *m = MsgStrategyTransfer{} }
+func (m *MsgStrategyTransfer) String() string { return proto.CompactTextString(m) }
+func (*MsgStrategyTransfer) ProtoMessage()    {}
+func (*MsgStrategyTransfer) Descriptor() ([]byte, []int) {
+	return fileDescriptor_f8af1d6ebeb89995, []int{26}
+}
+func (m *MsgStrategyTransfer) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *MsgStrategyTransfer) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_MsgStrategyTransfer.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *MsgStrategyTransfer) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MsgStrategyTransfer.Merge(m, src)
+}
+func (m *MsgStrategyTransfer) XXX_Size() int {
+	return m.Size()
+}
+func (m *MsgStrategyTransfer) XXX_DiscardUnknown() {
+	xxx_messageInfo_MsgStrategyTransfer.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_MsgStrategyTransfer proto.InternalMessageInfo
+
+func (m *MsgStrategyTransfer) GetSender() string {
+	if m != nil {
+		return m.Sender
+	}
+	return ""
+}
+
+func (m *MsgStrategyTransfer) GetPoolAccountIndex() uint64 {
+	if m != nil {
+		return m.PoolAccountIndex
+	}
+	return 0
+}
+
+func (m *MsgStrategyTransfer) GetFromStrategy() uint32 {
+	if m != nil {
+		return m.FromStrategy
+	}
+	return 0
+}
+
+func (m *MsgStrategyTransfer) GetToStrategy() uint32 {
+	if m != nil {
+		return m.ToStrategy
+	}
+	return 0
+}
+
+type MsgStrategyTransferResponse struct {
+}
+
+func (m *MsgStrategyTransferResponse) Reset()         { *m = MsgStrategyTransferResponse{} }
+func (m *MsgStrategyTransferResponse) String() string { return proto.CompactTextString(m) }
+func (*MsgStrategyTransferResponse) ProtoMessage()    {}
+func (*MsgStrategyTransferResponse) Descriptor() ([]byte, []int) {
+	return fileDescriptor_f8af1d6ebeb89995, []int{27}
+}
+func (m *MsgStrategyTransferResponse) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *MsgStrategyTransferResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_MsgStrategyTransferResponse.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *MsgStrategyTransferResponse) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MsgStrategyTransferResponse.Merge(m, src)
+}
+func (m *MsgStrategyTransferResponse) XXX_Size() int {
+	return m.Size()
+}
+func (m *MsgStrategyTransferResponse) XXX_DiscardUnknown() {
+	xxx_messageInfo_MsgStrategyTransferResponse.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_MsgStrategyTransferResponse proto.InternalMessageInfo
+
+// MsgForceBurnShares is the gov-authority break-glass burn used by the
+// LLP system. Bypasses the cooldown gate. Pool must be the configured
+// LLP and INSURANCE_FUND.
+type MsgForceBurnShares struct {
+	Authority             string                `protobuf:"bytes,1,opt,name=authority,proto3" json:"authority,omitempty"`
+	PoolAccountIndex      uint64                `protobuf:"varint,2,opt,name=pool_account_index,json=poolAccountIndex,proto3" json:"pool_account_index,omitempty"`
+	DepositorAccountIndex uint64                `protobuf:"varint,3,opt,name=depositor_account_index,json=depositorAccountIndex,proto3" json:"depositor_account_index,omitempty"`
+	ShareAmount           cosmossdk_io_math.Int `protobuf:"bytes,4,opt,name=share_amount,json=shareAmount,proto3,customtype=cosmossdk.io/math.Int" json:"share_amount"`
+}
+
+func (m *MsgForceBurnShares) Reset()         { *m = MsgForceBurnShares{} }
+func (m *MsgForceBurnShares) String() string { return proto.CompactTextString(m) }
+func (*MsgForceBurnShares) ProtoMessage()    {}
+func (*MsgForceBurnShares) Descriptor() ([]byte, []int) {
+	return fileDescriptor_f8af1d6ebeb89995, []int{28}
+}
+func (m *MsgForceBurnShares) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *MsgForceBurnShares) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_MsgForceBurnShares.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *MsgForceBurnShares) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MsgForceBurnShares.Merge(m, src)
+}
+func (m *MsgForceBurnShares) XXX_Size() int {
+	return m.Size()
+}
+func (m *MsgForceBurnShares) XXX_DiscardUnknown() {
+	xxx_messageInfo_MsgForceBurnShares.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_MsgForceBurnShares proto.InternalMessageInfo
+
+func (m *MsgForceBurnShares) GetAuthority() string {
+	if m != nil {
+		return m.Authority
+	}
+	return ""
+}
+
+func (m *MsgForceBurnShares) GetPoolAccountIndex() uint64 {
+	if m != nil {
+		return m.PoolAccountIndex
+	}
+	return 0
+}
+
+func (m *MsgForceBurnShares) GetDepositorAccountIndex() uint64 {
+	if m != nil {
+		return m.DepositorAccountIndex
+	}
+	return 0
+}
+
+type MsgForceBurnSharesResponse struct {
+	UsdcAmount uint64 `protobuf:"varint,1,opt,name=usdc_amount,json=usdcAmount,proto3" json:"usdc_amount,omitempty"`
+}
+
+func (m *MsgForceBurnSharesResponse) Reset()         { *m = MsgForceBurnSharesResponse{} }
+func (m *MsgForceBurnSharesResponse) String() string { return proto.CompactTextString(m) }
+func (*MsgForceBurnSharesResponse) ProtoMessage()    {}
+func (*MsgForceBurnSharesResponse) Descriptor() ([]byte, []int) {
+	return fileDescriptor_f8af1d6ebeb89995, []int{29}
+}
+func (m *MsgForceBurnSharesResponse) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *MsgForceBurnSharesResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_MsgForceBurnSharesResponse.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *MsgForceBurnSharesResponse) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MsgForceBurnSharesResponse.Merge(m, src)
+}
+func (m *MsgForceBurnSharesResponse) XXX_Size() int {
+	return m.Size()
+}
+func (m *MsgForceBurnSharesResponse) XXX_DiscardUnknown() {
+	xxx_messageInfo_MsgForceBurnSharesResponse.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_MsgForceBurnSharesResponse proto.InternalMessageInfo
+
+func (m *MsgForceBurnSharesResponse) GetUsdcAmount() uint64 {
+	if m != nil {
+		return m.UsdcAmount
+	}
+	return 0
+}
+
 func init() {
 	proto.RegisterType((*MsgDeposit)(nil), "perpdex.account.v1.MsgDeposit")
 	proto.RegisterType((*MsgDepositResponse)(nil), "perpdex.account.v1.MsgDepositResponse")
@@ -1011,75 +1678,116 @@ func init() {
 	proto.RegisterType((*MsgUpdateLeverageResponse)(nil), "perpdex.account.v1.MsgUpdateLeverageResponse")
 	proto.RegisterType((*MsgUpdateParams)(nil), "perpdex.account.v1.MsgUpdateParams")
 	proto.RegisterType((*MsgUpdateParamsResponse)(nil), "perpdex.account.v1.MsgUpdateParamsResponse")
+	proto.RegisterType((*MsgCreatePublicPool)(nil), "perpdex.account.v1.MsgCreatePublicPool")
+	proto.RegisterType((*MsgCreatePublicPoolResponse)(nil), "perpdex.account.v1.MsgCreatePublicPoolResponse")
+	proto.RegisterType((*MsgUpdatePublicPool)(nil), "perpdex.account.v1.MsgUpdatePublicPool")
+	proto.RegisterType((*MsgUpdatePublicPoolResponse)(nil), "perpdex.account.v1.MsgUpdatePublicPoolResponse")
+	proto.RegisterType((*MsgMintShares)(nil), "perpdex.account.v1.MsgMintShares")
+	proto.RegisterType((*MsgMintSharesResponse)(nil), "perpdex.account.v1.MsgMintSharesResponse")
+	proto.RegisterType((*MsgBurnShares)(nil), "perpdex.account.v1.MsgBurnShares")
+	proto.RegisterType((*MsgBurnSharesResponse)(nil), "perpdex.account.v1.MsgBurnSharesResponse")
+	proto.RegisterType((*MsgStrategyTransfer)(nil), "perpdex.account.v1.MsgStrategyTransfer")
+	proto.RegisterType((*MsgStrategyTransferResponse)(nil), "perpdex.account.v1.MsgStrategyTransferResponse")
+	proto.RegisterType((*MsgForceBurnShares)(nil), "perpdex.account.v1.MsgForceBurnShares")
+	proto.RegisterType((*MsgForceBurnSharesResponse)(nil), "perpdex.account.v1.MsgForceBurnSharesResponse")
 }
 
 func init() { proto.RegisterFile("perpdex/account/v1/tx.proto", fileDescriptor_f8af1d6ebeb89995) }
 
 var fileDescriptor_f8af1d6ebeb89995 = []byte{
-	// 993 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xc4, 0x57, 0x4b, 0x6f, 0x23, 0x45,
-	0x10, 0xce, 0x24, 0x8e, 0x97, 0x94, 0xf3, 0xda, 0x4e, 0x76, 0xd7, 0x99, 0x68, 0x1d, 0x93, 0x68,
-	0x97, 0x28, 0x10, 0xcf, 0x26, 0x88, 0x57, 0x24, 0x0e, 0xce, 0x22, 0x90, 0x25, 0x2c, 0x81, 0x37,
-	0x08, 0x89, 0x8b, 0x69, 0x7b, 0xda, 0x93, 0xd1, 0x66, 0xba, 0xad, 0xee, 0x76, 0x9c, 0xdc, 0x00,
-	0x21, 0xce, 0x48, 0xf0, 0x0f, 0x90, 0x38, 0xef, 0x81, 0x1f, 0xb1, 0xe2, 0xb4, 0xe2, 0x84, 0x38,
-	0x2c, 0x28, 0x39, 0xe4, 0xcc, 0x3f, 0x40, 0xd3, 0xdd, 0x33, 0x7e, 0x8d, 0x1f, 0x1b, 0x29, 0xe2,
-	0x64, 0x4f, 0xd5, 0xd7, 0x5d, 0xf5, 0x7d, 0x55, 0xd5, 0x3d, 0x03, 0xeb, 0x4d, 0xc2, 0x9b, 0x2e,
-	0x39, 0x73, 0x70, 0xbd, 0xce, 0x5a, 0x54, 0x3a, 0xa7, 0x7b, 0x8e, 0x3c, 0x2b, 0x34, 0x39, 0x93,
-	0x0c, 0x21, 0xe3, 0x2c, 0x18, 0x67, 0xe1, 0x74, 0xcf, 0xbe, 0x57, 0x67, 0x22, 0x60, 0xc2, 0x09,
-	0x84, 0x17, 0x62, 0x03, 0xe1, 0x69, 0xb0, 0xbd, 0xa6, 0x1d, 0x55, 0xf5, 0xe4, 0xe8, 0x07, 0xe3,
-	0x5a, 0xf5, 0x98, 0xc7, 0xb4, 0x3d, 0xfc, 0x67, 0xac, 0xf9, 0x84, 0xd0, 0x51, 0x20, 0x85, 0xd8,
-	0xfc, 0xdb, 0x02, 0x28, 0x0b, 0xef, 0x23, 0xd2, 0x64, 0xc2, 0x97, 0xe8, 0x11, 0xa4, 0x05, 0xa1,
-	0x2e, 0xe1, 0x59, 0x2b, 0x6f, 0x6d, 0xcf, 0x1d, 0x66, 0xff, 0xf8, 0x6d, 0x77, 0xd5, 0x04, 0x2a,
-	0xba, 0x2e, 0x27, 0x42, 0x3c, 0x91, 0xdc, 0xa7, 0x5e, 0xc5, 0xe0, 0xd0, 0x01, 0x64, 0x6a, 0x84,
-	0x92, 0x86, 0x5f, 0xf7, 0x31, 0x3f, 0xcf, 0x4e, 0x8f, 0x59, 0xd6, 0x0d, 0x46, 0x1b, 0x90, 0xc1,
-	0x42, 0x10, 0x59, 0xf5, 0xa9, 0x4b, 0xce, 0xb2, 0x33, 0x79, 0x6b, 0x7b, 0xa1, 0x02, 0xca, 0x54,
-	0x0a, 0x2d, 0xe8, 0x3e, 0x00, 0x67, 0x2d, 0x49, 0xaa, 0xf2, 0xbc, 0x49, 0xb2, 0x29, 0xe5, 0x9f,
-	0x53, 0x96, 0xa3, 0xf3, 0x26, 0x41, 0x77, 0x21, 0x8d, 0x83, 0x90, 0x4c, 0x76, 0x36, 0x6f, 0x6d,
-	0xa7, 0x2a, 0xe6, 0xe9, 0x20, 0xf3, 0xdd, 0xd5, 0xb3, 0x1d, 0x93, 0xe0, 0xe6, 0x07, 0x80, 0x3a,
-	0x04, 0x2b, 0x44, 0x34, 0x19, 0x15, 0x04, 0x6d, 0xc1, 0x82, 0x11, 0xc2, 0x04, 0xb7, 0xd4, 0x0e,
-	0xf3, 0xc6, 0xa8, 0xc2, 0x6f, 0xfe, 0x3c, 0x0d, 0x99, 0xb2, 0xf0, 0xbe, 0xf4, 0xe5, 0xb1, 0xcb,
-	0x71, 0xfb, 0x1a, 0xea, 0x0c, 0x84, 0x99, 0x1e, 0x0c, 0x73, 0x53, 0x32, 0xa0, 0x12, 0xac, 0xb8,
-	0x44, 0x48, 0x9f, 0x62, 0xe9, 0x33, 0x5a, 0xc5, 0x3a, 0xc3, 0x6c, 0x7a, 0x4c, 0xee, 0xa8, 0x6b,
-	0x91, 0xf1, 0xf4, 0x2a, 0x7a, 0x07, 0x56, 0xba, 0x54, 0x89, 0x24, 0xdd, 0xfc, 0xc1, 0x52, 0xf6,
-	0xc7, 0x9c, 0x60, 0x49, 0x9e, 0xb4, 0x6a, 0x45, 0xcd, 0xf1, 0x1a, 0xaa, 0x3d, 0x82, 0xd5, 0x00,
-	0x0b, 0x49, 0x78, 0x35, 0x49, 0x3c, 0xa4, 0x7d, 0xc5, 0x2e, 0x09, 0x7b, 0xf3, 0x2b, 0xc1, 0x7a,
-	0x42, 0x1e, 0x71, 0xe9, 0x77, 0xe0, 0xb6, 0x68, 0xd5, 0xaa, 0x49, 0xe5, 0x5f, 0x12, 0x31, 0x5c,
-	0x77, 0xc0, 0xaf, 0x16, 0xdc, 0x2d, 0x0b, 0xef, 0x8b, 0xa6, 0x8b, 0x25, 0x31, 0x9e, 0xc7, 0x8c,
-	0x36, 0x7c, 0xef, 0xa6, 0x9a, 0x61, 0x1b, 0x96, 0x29, 0x69, 0x57, 0x25, 0xc7, 0xae, 0x4f, 0xbd,
-	0x6a, 0xc0, 0x5c, 0x62, 0x3a, 0x62, 0x91, 0x92, 0xf6, 0x91, 0x36, 0x97, 0x99, 0x4b, 0x7a, 0x39,
-	0xe7, 0x21, 0x97, 0x9c, 0x67, 0x5c, 0x9e, 0xdf, 0x2d, 0x25, 0x4b, 0x0f, 0xa4, 0x18, 0xf6, 0xd8,
-	0xcd, 0xf2, 0x19, 0xdb, 0xdc, 0x0f, 0x61, 0x29, 0x24, 0x1c, 0x60, 0xee, 0xf9, 0x54, 0xf3, 0xd5,
-	0x1d, 0xbe, 0x40, 0x49, 0xbb, 0xac, 0xac, 0x83, 0x74, 0x1f, 0xc0, 0xd6, 0x08, 0x2e, 0x31, 0xe7,
-	0x7f, 0x2d, 0x35, 0xc0, 0x47, 0x1c, 0x53, 0xd1, 0x50, 0x8d, 0xf5, 0xaa, 0x1c, 0xdf, 0x02, 0xd4,
-	0xe0, 0x2c, 0x48, 0x6c, 0xc4, 0xe5, 0xd0, 0x53, 0xec, 0x2b, 0x9e, 0x64, 0x7d, 0xd8, 0x19, 0x85,
-	0x5d, 0x94, 0xac, 0x38, 0x42, 0x96, 0xd4, 0x80, 0x2c, 0xc3, 0x86, 0x1a, 0x41, 0x2a, 0x20, 0x01,
-	0x53, 0x53, 0x3c, 0x5f, 0x51, 0xff, 0x93, 0xa6, 0x33, 0xa2, 0x1c, 0x4b, 0x71, 0x65, 0xc1, 0x52,
-	0x2c, 0x99, 0x96, 0xf5, 0xa6, 0x4a, 0xfe, 0x3a, 0xcc, 0x07, 0x98, 0x3f, 0xed, 0xab, 0x79, 0x46,
-	0xdb, 0x3a, 0xec, 0xea, 0xe1, 0x01, 0x63, 0x98, 0x9b, 0x27, 0xf4, 0x4e, 0x0f, 0xeb, 0xb9, 0xc3,
-	0xfb, 0xcf, 0x5f, 0x6e, 0x4c, 0xfd, 0xf5, 0x72, 0xe3, 0x8e, 0xce, 0x4a, 0xb8, 0x4f, 0x0b, 0x3e,
-	0x73, 0x02, 0x2c, 0x8f, 0x0b, 0x25, 0x2a, 0x93, 0x0f, 0xfc, 0x35, 0xb8, 0xd7, 0x47, 0x34, 0x16,
-	0xe1, 0xdb, 0x69, 0xb8, 0x1d, 0xfb, 0x3e, 0x25, 0xa7, 0x84, 0x63, 0x8f, 0xfc, 0x8f, 0x32, 0x7c,
-	0x08, 0xeb, 0x61, 0xef, 0xfb, 0xd4, 0x97, 0x3e, 0x3e, 0x89, 0x66, 0xa0, 0xc1, 0x7b, 0xb4, 0xc9,
-	0x52, 0xd2, 0x2e, 0x69, 0x84, 0xa6, 0xf3, 0xb1, 0xf1, 0x27, 0x8d, 0xce, 0xec, 0xd8, 0xd1, 0x59,
-	0x87, 0xb5, 0x01, 0x09, 0x62, 0x81, 0x7e, 0xea, 0xee, 0x92, 0xcf, 0x30, 0xc7, 0x81, 0x40, 0xef,
-	0xc2, 0x1c, 0x6e, 0xc9, 0x63, 0xc6, 0x7d, 0x79, 0x3e, 0x56, 0xa1, 0x0e, 0x14, 0xbd, 0x0f, 0xe9,
-	0xa6, 0xda, 0x41, 0xa9, 0x93, 0xd9, 0xb7, 0x0b, 0x83, 0xef, 0x3a, 0x05, 0x1d, 0xe3, 0x30, 0x15,
-	0xd6, 0xb9, 0x62, 0xf0, 0x07, 0x8b, 0x61, 0xbe, 0x9d, 0x9d, 0x7a, 0x2a, 0xaa, 0x17, 0x44, 0x09,
-	0xef, 0xff, 0x72, 0x0b, 0x66, 0xca, 0xc2, 0x43, 0x9f, 0xc3, 0xad, 0xe8, 0x1d, 0x26, 0x97, 0x14,
-	0xa7, 0xf3, 0x0a, 0x60, 0x3f, 0x1c, 0xed, 0x8f, 0xef, 0x89, 0x23, 0x78, 0x2d, 0xbe, 0xf9, 0x37,
-	0x86, 0xac, 0x89, 0x00, 0xf6, 0x1b, 0x63, 0x00, 0xf1, 0xae, 0x27, 0xb0, 0x3c, 0x70, 0x43, 0x0e,
-	0x5b, 0xdc, 0x0f, 0xb4, 0x9d, 0x09, 0x81, 0x71, 0xb4, 0x16, 0xac, 0x24, 0xdd, 0x5d, 0x3b, 0x43,
-	0xf6, 0x49, 0xc0, 0xda, 0xfb, 0x93, 0x63, 0xe3, 0xb0, 0xdf, 0x5b, 0x90, 0x1d, 0x7a, 0xd1, 0x38,
-	0x93, 0x6c, 0xd8, 0xb5, 0xc0, 0x7e, 0xef, 0x15, 0x17, 0x74, 0x57, 0x30, 0x3e, 0xfa, 0x87, 0x55,
-	0x30, 0x02, 0x0c, 0xad, 0x60, 0xff, 0x49, 0x8a, 0xbe, 0x86, 0xf9, 0x9e, 0x53, 0x74, 0x6b, 0x64,
-	0x7a, 0x1a, 0x64, 0xbf, 0x39, 0x01, 0x28, 0x8e, 0xd0, 0x80, 0xc5, 0xbe, 0x23, 0xea, 0xc1, 0xc8,
-	0xe5, 0x11, 0xcc, 0xde, 0x9d, 0x08, 0x36, 0xc8, 0xc4, 0x4c, 0xfa, 0x68, 0x26, 0x1a, 0x34, 0x86,
-	0x49, 0xef, 0x78, 0xda, 0xb3, 0xdf, 0x5c, 0x3d, 0xdb, 0xb1, 0x0e, 0x3f, 0x79, 0x7e, 0x91, 0xb3,
-	0x5e, 0x5c, 0xe4, 0xac, 0x7f, 0x2e, 0x72, 0xd6, 0x8f, 0x97, 0xb9, 0xa9, 0x17, 0x97, 0xb9, 0xa9,
-	0x3f, 0x2f, 0x73, 0x53, 0x5f, 0xed, 0x7a, 0xbe, 0x3c, 0x6e, 0xd5, 0x0a, 0x75, 0x16, 0x38, 0xd1,
-	0xc7, 0x8a, 0xf9, 0xdd, 0x3d, 0xd9, 0x73, 0x3a, 0x5f, 0x2e, 0xe1, 0xab, 0xaf, 0xa8, 0xa5, 0xd5,
-	0x57, 0xcb, 0xdb, 0xff, 0x05, 0x00, 0x00, 0xff, 0xff, 0x19, 0x69, 0x40, 0xde, 0x54, 0x0d, 0x00,
-	0x00,
+	// 1463 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xc4, 0x58, 0x41, 0x6f, 0x1b, 0x45,
+	0x14, 0xce, 0x3a, 0x6e, 0x20, 0xcf, 0x4e, 0xe2, 0x6e, 0x93, 0xc6, 0xdd, 0xa8, 0x4e, 0x9a, 0xa8,
+	0x6d, 0x1a, 0x1a, 0xbb, 0x2d, 0x6a, 0x29, 0x15, 0x95, 0x70, 0x8a, 0x8a, 0x22, 0xb0, 0x5a, 0x9c,
+	0x20, 0x44, 0x2f, 0x66, 0xe2, 0x1d, 0x6f, 0x56, 0xf5, 0xee, 0x58, 0x33, 0xe3, 0xa6, 0xb9, 0x01,
+	0xaa, 0x90, 0xb8, 0x55, 0x82, 0xdf, 0x00, 0xd7, 0x1e, 0xe0, 0xca, 0xb9, 0xe2, 0x54, 0x71, 0x42,
+	0x1c, 0x0a, 0x6a, 0x0f, 0x3d, 0xf3, 0x0b, 0x40, 0x3b, 0x33, 0xbb, 0xde, 0x5d, 0xef, 0xda, 0x4e,
+	0x4b, 0xca, 0x29, 0xd9, 0xf7, 0xbe, 0x99, 0xf7, 0xde, 0xf7, 0xde, 0xcc, 0x7b, 0x63, 0x58, 0xe8,
+	0x60, 0xda, 0x31, 0xf1, 0xfd, 0x0a, 0x6a, 0x36, 0x49, 0xd7, 0xe5, 0x95, 0x7b, 0x17, 0x2b, 0xfc,
+	0x7e, 0xb9, 0x43, 0x09, 0x27, 0xba, 0xae, 0x94, 0x65, 0xa5, 0x2c, 0xdf, 0xbb, 0x68, 0xcc, 0x37,
+	0x09, 0x73, 0x08, 0xab, 0x38, 0xcc, 0xf2, 0xb0, 0x0e, 0xb3, 0x24, 0xd8, 0x38, 0x21, 0x15, 0x0d,
+	0xf1, 0x55, 0x91, 0x1f, 0x4a, 0x35, 0x6b, 0x11, 0x8b, 0x48, 0xb9, 0xf7, 0x9f, 0x92, 0x2e, 0x25,
+	0x98, 0xf6, 0x0d, 0x09, 0xc4, 0xf2, 0x9f, 0x1a, 0x40, 0x8d, 0x59, 0x1f, 0xe0, 0x0e, 0x61, 0x36,
+	0xd7, 0x2f, 0xc0, 0x04, 0xc3, 0xae, 0x89, 0x69, 0x51, 0x5b, 0xd2, 0x56, 0x27, 0x37, 0x8a, 0xbf,
+	0xfd, 0xb4, 0x3e, 0xab, 0x0c, 0x55, 0x4d, 0x93, 0x62, 0xc6, 0xb6, 0x38, 0xb5, 0x5d, 0xab, 0xae,
+	0x70, 0xfa, 0x35, 0xc8, 0xed, 0x60, 0x17, 0xb7, 0xec, 0xa6, 0x8d, 0xe8, 0x7e, 0x31, 0x33, 0x64,
+	0x59, 0x18, 0xac, 0x2f, 0x42, 0x0e, 0x31, 0x86, 0x79, 0xc3, 0x76, 0x4d, 0x7c, 0xbf, 0x38, 0xbe,
+	0xa4, 0xad, 0x4e, 0xd5, 0x41, 0x88, 0x36, 0x3d, 0x89, 0x7e, 0x12, 0x80, 0x92, 0x2e, 0xc7, 0x0d,
+	0xbe, 0xdf, 0xc1, 0xc5, 0xac, 0xd0, 0x4f, 0x0a, 0xc9, 0xf6, 0x7e, 0x07, 0xeb, 0xc7, 0x61, 0x02,
+	0x39, 0x5e, 0x30, 0xc5, 0x23, 0x4b, 0xda, 0x6a, 0xb6, 0xae, 0xbe, 0xae, 0xe5, 0xbe, 0x7e, 0xf1,
+	0x68, 0x4d, 0x39, 0xb8, 0xfc, 0x2e, 0xe8, 0xbd, 0x00, 0xeb, 0x98, 0x75, 0x88, 0xcb, 0xb0, 0xbe,
+	0x02, 0x53, 0x8a, 0x08, 0x65, 0x5c, 0x13, 0x3b, 0xe4, 0x95, 0x50, 0x98, 0x5f, 0xfe, 0x3e, 0x03,
+	0xb9, 0x1a, 0xb3, 0x3e, 0xb3, 0xf9, 0xae, 0x49, 0xd1, 0xde, 0x4b, 0xb0, 0xd3, 0x67, 0x26, 0xd3,
+	0x6f, 0xe6, 0xb0, 0x68, 0xd0, 0x37, 0xe1, 0x98, 0x89, 0x19, 0xb7, 0x5d, 0xc4, 0x6d, 0xe2, 0x36,
+	0x90, 0xf4, 0xb0, 0x38, 0x31, 0xc4, 0x77, 0x3d, 0xb4, 0x48, 0x69, 0xa2, 0x8c, 0xce, 0xc1, 0xb1,
+	0x10, 0x2b, 0x3e, 0xa5, 0xcb, 0xdf, 0x68, 0x42, 0x7e, 0x83, 0x62, 0xc4, 0xf1, 0x56, 0x77, 0xa7,
+	0x2a, 0x63, 0x7c, 0x09, 0xd6, 0x2e, 0xc0, 0xac, 0x83, 0x18, 0xc7, 0xb4, 0x91, 0x44, 0x9e, 0x2e,
+	0x75, 0xd5, 0x10, 0x85, 0x51, 0xff, 0x36, 0x61, 0x21, 0xc1, 0x8f, 0x20, 0xf5, 0x6b, 0x70, 0x94,
+	0x75, 0x77, 0x1a, 0x49, 0xe9, 0x9f, 0x61, 0x01, 0x5c, 0x56, 0xc0, 0x0f, 0x1a, 0x1c, 0xaf, 0x31,
+	0xeb, 0xd3, 0x8e, 0x89, 0x38, 0x56, 0x9a, 0x1b, 0xc4, 0x6d, 0xd9, 0xd6, 0x61, 0x15, 0xc3, 0x2a,
+	0x14, 0x5c, 0xbc, 0xd7, 0xe0, 0x14, 0x99, 0xb6, 0x6b, 0x35, 0x1c, 0x62, 0x62, 0x55, 0x11, 0xd3,
+	0x2e, 0xde, 0xdb, 0x96, 0xe2, 0x1a, 0x31, 0x71, 0x34, 0xe6, 0x25, 0x28, 0x25, 0xfb, 0x19, 0xa4,
+	0xe7, 0x57, 0x4d, 0xd0, 0x12, 0x81, 0x54, 0xbd, 0x1a, 0x3b, 0xdc, 0x78, 0x86, 0x16, 0xf7, 0x19,
+	0x98, 0xf1, 0x02, 0x76, 0x10, 0xb5, 0x6c, 0x57, 0xc6, 0x2b, 0x2b, 0x7c, 0xca, 0xc5, 0x7b, 0x35,
+	0x21, 0xed, 0x0f, 0xf7, 0x34, 0xac, 0x0c, 0x88, 0x25, 0x88, 0xf9, 0x6f, 0x4d, 0x1c, 0xe0, 0x6d,
+	0x8a, 0x5c, 0xd6, 0x12, 0x85, 0x75, 0xd0, 0x18, 0xcf, 0x83, 0xde, 0xa2, 0xc4, 0x49, 0x2c, 0xc4,
+	0x82, 0xa7, 0xa9, 0xc6, 0x92, 0xc7, 0x49, 0x0c, 0x3b, 0x2e, 0xb0, 0xd3, 0x9c, 0x54, 0x07, 0xd0,
+	0x92, 0xed, 0xa3, 0x25, 0xed, 0x50, 0xeb, 0x90, 0x75, 0xb0, 0x43, 0xc4, 0x29, 0xce, 0xd7, 0xc5,
+	0xff, 0x49, 0xa7, 0xd3, 0x0f, 0x39, 0xa0, 0xe2, 0x85, 0x06, 0x33, 0x01, 0x65, 0x92, 0xd6, 0xc3,
+	0x4a, 0xf9, 0x29, 0xc8, 0x3b, 0x88, 0xde, 0x8d, 0xe5, 0x3c, 0x27, 0x65, 0xbd, 0xe8, 0x9a, 0xde,
+	0x05, 0xa3, 0x22, 0x57, 0x5f, 0xfa, 0xe5, 0x48, 0xd4, 0x93, 0x1b, 0x27, 0x1f, 0x3f, 0x5d, 0x1c,
+	0xfb, 0xe3, 0xe9, 0xe2, 0x9c, 0xf4, 0x8a, 0x99, 0x77, 0xcb, 0x36, 0xa9, 0x38, 0x88, 0xef, 0x96,
+	0x37, 0x5d, 0x9e, 0x7c, 0xe1, 0x9f, 0x80, 0xf9, 0x58, 0xa0, 0x01, 0x09, 0x5f, 0x65, 0xe0, 0x68,
+	0xa0, 0xfb, 0x18, 0xdf, 0xc3, 0x14, 0x59, 0xf8, 0x7f, 0xa4, 0xe1, 0x3a, 0x2c, 0x78, 0xb5, 0x6f,
+	0xbb, 0x36, 0xb7, 0x51, 0xdb, 0x3f, 0x03, 0x2d, 0x1a, 0xe1, 0xa6, 0xe8, 0xe2, 0xbd, 0x4d, 0x89,
+	0x90, 0xe1, 0xdc, 0x54, 0xfa, 0xa4, 0xa3, 0x73, 0x64, 0xe8, 0xd1, 0x59, 0x80, 0x13, 0x7d, 0x14,
+	0x04, 0x04, 0x7d, 0x17, 0xae, 0x92, 0xdb, 0x88, 0x22, 0x87, 0xe9, 0x57, 0x60, 0x12, 0x75, 0xf9,
+	0x2e, 0xa1, 0x36, 0xdf, 0x1f, 0xca, 0x50, 0x0f, 0xaa, 0x5f, 0x85, 0x89, 0x8e, 0xd8, 0x41, 0xb0,
+	0x93, 0xbb, 0x64, 0x94, 0xfb, 0x67, 0x9d, 0xb2, 0xb4, 0xb1, 0x91, 0xf5, 0xf2, 0x5c, 0x57, 0xf8,
+	0x6b, 0xd3, 0x9e, 0xbf, 0xbd, 0x9d, 0x22, 0x19, 0x95, 0x0b, 0x02, 0x87, 0x7f, 0xce, 0x84, 0x9a,
+	0xce, 0xed, 0xee, 0x4e, 0xdb, 0x6e, 0xde, 0x26, 0xa4, 0xfd, 0x3a, 0x9a, 0x8e, 0x97, 0x60, 0x1f,
+	0x2a, 0x1a, 0xb3, 0x4a, 0xb0, 0x92, 0x89, 0xd6, 0x7c, 0x01, 0x66, 0xfd, 0xe4, 0x72, 0xc2, 0x51,
+	0xbb, 0xc1, 0x76, 0x11, 0xc5, 0x4c, 0x64, 0x36, 0x5b, 0xd7, 0x95, 0x6e, 0xdb, 0x53, 0x6d, 0x09,
+	0x8d, 0xb7, 0x29, 0xe9, 0x60, 0x8a, 0x38, 0xa1, 0x8d, 0x16, 0xf6, 0x13, 0x9a, 0xf3, 0x65, 0x37,
+	0x31, 0xd6, 0x2f, 0xc3, 0xbc, 0x63, 0xbb, 0x8d, 0x00, 0x26, 0xf6, 0x6c, 0x50, 0xc4, 0xb1, 0xb8,
+	0x15, 0xa6, 0xea, 0xb3, 0x8e, 0xed, 0xde, 0x52, 0x5a, 0xb1, 0x6d, 0x1d, 0xf1, 0x58, 0x15, 0x7c,
+	0x14, 0xea, 0x91, 0x3d, 0xda, 0x82, 0x1e, 0x79, 0x1e, 0xf4, 0x0e, 0x21, 0xed, 0xc4, 0x26, 0x59,
+	0xf0, 0x34, 0x91, 0x2e, 0xf9, 0xad, 0x4c, 0x82, 0x4a, 0xd0, 0xab, 0x24, 0x21, 0xd9, 0x6e, 0x26,
+	0xd9, 0xae, 0x37, 0x17, 0x79, 0xf5, 0xcf, 0x38, 0xe2, 0x5d, 0xa6, 0xe8, 0x9f, 0x74, 0xf1, 0xde,
+	0x96, 0x10, 0xf8, 0xad, 0x34, 0x42, 0x67, 0x36, 0x68, 0xa5, 0xb7, 0x42, 0x8c, 0xbe, 0x27, 0xcf,
+	0x61, 0x1a, 0xab, 0x32, 0x07, 0xf3, 0xde, 0xa1, 0x1a, 0x4a, 0xec, 0xc9, 0x50, 0x97, 0xed, 0x27,
+	0x76, 0xf9, 0x47, 0x0d, 0xa6, 0x6a, 0xcc, 0xaa, 0xd9, 0x2e, 0x57, 0x09, 0x3f, 0x6c, 0x92, 0xce,
+	0x41, 0xa1, 0x43, 0x6d, 0xb7, 0x69, 0x77, 0x50, 0xbb, 0xa1, 0x2e, 0x57, 0xd9, 0x93, 0x66, 0x02,
+	0x79, 0x35, 0xe1, 0x1a, 0xfd, 0x1c, 0xe6, 0x22, 0x8e, 0x06, 0xb5, 0xf1, 0x3e, 0xe4, 0x25, 0x37,
+	0x6a, 0x33, 0x6d, 0x94, 0x9b, 0x3a, 0x27, 0x96, 0x48, 0x3b, 0xcb, 0xbf, 0x48, 0x12, 0x36, 0xba,
+	0xd4, 0x7d, 0x4d, 0x24, 0xc4, 0x7d, 0x1e, 0x3f, 0xa8, 0xcf, 0x51, 0x6e, 0xae, 0x0a, 0x6e, 0x7a,
+	0xfe, 0x07, 0xdc, 0x2c, 0x42, 0xae, 0xcb, 0xcc, 0x66, 0x98, 0x9a, 0x6c, 0x1d, 0x3c, 0x91, 0x0a,
+	0xfd, 0x1f, 0x39, 0x24, 0x6f, 0x71, 0xaf, 0xb0, 0xac, 0xfd, 0x57, 0x9b, 0x4c, 0x0e, 0x40, 0xc0,
+	0x0a, 0x4c, 0x89, 0x39, 0x86, 0x29, 0xc3, 0xea, 0xb4, 0xe4, 0x3d, 0xa1, 0xef, 0x8c, 0xe7, 0x3d,
+	0x27, 0x3d, 0x88, 0x1a, 0x4a, 0x38, 0x09, 0x00, 0xff, 0x45, 0x7b, 0x96, 0x07, 0x24, 0x4e, 0x40,
+	0x70, 0x40, 0x1e, 0x64, 0xc4, 0x7b, 0xed, 0x26, 0xa1, 0x4d, 0x1c, 0x2a, 0x90, 0x97, 0x6d, 0x42,
+	0x07, 0x63, 0xe9, 0x0a, 0xcc, 0x9b, 0xf2, 0xa1, 0x48, 0x68, 0xe2, 0x18, 0x37, 0x17, 0xa8, 0x07,
+	0x96, 0x57, 0xf6, 0xc0, 0xe5, 0x15, 0x6f, 0x79, 0xd7, 0xc1, 0xe8, 0x67, 0x61, 0xe4, 0x32, 0xbb,
+	0xf4, 0x30, 0x0f, 0xe3, 0x35, 0x66, 0xe9, 0x9f, 0xc0, 0x1b, 0xfe, 0xd3, 0xbe, 0x94, 0xd4, 0x7e,
+	0x7b, 0x2f, 0x63, 0xe3, 0xcc, 0x60, 0x7d, 0x60, 0x7b, 0x1b, 0xde, 0x0c, 0x1e, 0xc4, 0x8b, 0x29,
+	0x6b, 0x7c, 0x80, 0x71, 0x76, 0x08, 0x20, 0xd8, 0xb5, 0x0d, 0x85, 0xbe, 0x87, 0x63, 0xda, 0xe2,
+	0x38, 0xd0, 0xa8, 0x8c, 0x08, 0x0c, 0xac, 0x75, 0xe1, 0x58, 0xd2, 0x93, 0x6e, 0x2d, 0x65, 0x9f,
+	0x04, 0xac, 0x71, 0x69, 0x74, 0x6c, 0x60, 0xf6, 0x81, 0x06, 0xc5, 0xd4, 0xf7, 0x57, 0x65, 0x94,
+	0x0d, 0x43, 0x0b, 0x8c, 0x77, 0x0e, 0xb8, 0x20, 0x9c, 0xc1, 0xe0, 0xde, 0x49, 0xcb, 0xa0, 0x0f,
+	0x48, 0xcd, 0x60, 0xfc, 0xe0, 0xea, 0x5f, 0x40, 0x3e, 0xf2, 0xb8, 0x58, 0x19, 0xe8, 0x9e, 0x04,
+	0x19, 0x6f, 0x8d, 0x00, 0x0a, 0x2c, 0xb4, 0x60, 0x3a, 0x36, 0xb9, 0x9f, 0x1e, 0xb8, 0xdc, 0x87,
+	0x19, 0xeb, 0x23, 0xc1, 0xfa, 0x23, 0x51, 0x03, 0xf0, 0xe0, 0x48, 0x24, 0x68, 0x48, 0x24, 0xd1,
+	0xa9, 0xb5, 0x57, 0xed, 0xa1, 0x61, 0x69, 0x70, 0xb5, 0xf7, 0x80, 0x43, 0xaa, 0x3d, 0x61, 0x98,
+	0x6b, 0x43, 0xa1, 0x6f, 0x34, 0x3b, 0x3b, 0xd8, 0xdd, 0xe1, 0xd6, 0xd2, 0x26, 0x1c, 0xfd, 0x0e,
+	0x40, 0x68, 0xba, 0x39, 0x95, 0xb2, 0xbc, 0x07, 0x31, 0xce, 0x0d, 0x85, 0x84, 0xf7, 0x0e, 0xf5,
+	0x84, 0xb4, 0xbd, 0x7b, 0x90, 0xd4, 0xbd, 0x13, 0xee, 0xd4, 0x36, 0x14, 0xfa, 0xba, 0x72, 0x1a,
+	0x4b, 0x71, 0x60, 0x2a, 0x4b, 0x69, 0x6d, 0x4e, 0xb7, 0x61, 0x26, 0xde, 0xe2, 0xd2, 0x2e, 0xe0,
+	0x18, 0xce, 0x28, 0x8f, 0x86, 0xf3, 0x4d, 0x19, 0x47, 0xbe, 0x7c, 0xf1, 0x68, 0x4d, 0xdb, 0xf8,
+	0xf0, 0xf1, 0xb3, 0x92, 0xf6, 0xe4, 0x59, 0x49, 0xfb, 0xeb, 0x59, 0x49, 0x7b, 0xf8, 0xbc, 0x34,
+	0xf6, 0xe4, 0x79, 0x69, 0xec, 0xf7, 0xe7, 0xa5, 0xb1, 0x3b, 0xeb, 0x96, 0xcd, 0x77, 0xbb, 0x3b,
+	0xe5, 0x26, 0x71, 0x2a, 0xfe, 0x0f, 0xc6, 0xea, 0xef, 0x7a, 0xfb, 0x62, 0xa5, 0xf7, 0xeb, 0xb1,
+	0xf7, 0xca, 0x61, 0x3b, 0x13, 0xe2, 0x97, 0xe3, 0xb7, 0xff, 0x0d, 0x00, 0x00, 0xff, 0xff, 0xb7,
+	0x82, 0x0a, 0x8c, 0xd8, 0x16, 0x00, 0x00,
 }
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -1103,6 +1811,13 @@ type MsgClient interface {
 	UpdateMargin(ctx context.Context, in *MsgUpdateMargin, opts ...grpc.CallOption) (*MsgUpdateMarginResponse, error)
 	UpdateLeverage(ctx context.Context, in *MsgUpdateLeverage, opts ...grpc.CallOption) (*MsgUpdateLeverageResponse, error)
 	UpdateParams(ctx context.Context, in *MsgUpdateParams, opts ...grpc.CallOption) (*MsgUpdateParamsResponse, error)
+	// Public pool / Insurance fund.
+	CreatePublicPool(ctx context.Context, in *MsgCreatePublicPool, opts ...grpc.CallOption) (*MsgCreatePublicPoolResponse, error)
+	UpdatePublicPool(ctx context.Context, in *MsgUpdatePublicPool, opts ...grpc.CallOption) (*MsgUpdatePublicPoolResponse, error)
+	MintShares(ctx context.Context, in *MsgMintShares, opts ...grpc.CallOption) (*MsgMintSharesResponse, error)
+	BurnShares(ctx context.Context, in *MsgBurnShares, opts ...grpc.CallOption) (*MsgBurnSharesResponse, error)
+	StrategyTransfer(ctx context.Context, in *MsgStrategyTransfer, opts ...grpc.CallOption) (*MsgStrategyTransferResponse, error)
+	ForceBurnShares(ctx context.Context, in *MsgForceBurnShares, opts ...grpc.CallOption) (*MsgForceBurnSharesResponse, error)
 }
 
 type msgClient struct {
@@ -1194,6 +1909,60 @@ func (c *msgClient) UpdateParams(ctx context.Context, in *MsgUpdateParams, opts 
 	return out, nil
 }
 
+func (c *msgClient) CreatePublicPool(ctx context.Context, in *MsgCreatePublicPool, opts ...grpc.CallOption) (*MsgCreatePublicPoolResponse, error) {
+	out := new(MsgCreatePublicPoolResponse)
+	err := c.cc.Invoke(ctx, "/perpdex.account.v1.Msg/CreatePublicPool", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) UpdatePublicPool(ctx context.Context, in *MsgUpdatePublicPool, opts ...grpc.CallOption) (*MsgUpdatePublicPoolResponse, error) {
+	out := new(MsgUpdatePublicPoolResponse)
+	err := c.cc.Invoke(ctx, "/perpdex.account.v1.Msg/UpdatePublicPool", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) MintShares(ctx context.Context, in *MsgMintShares, opts ...grpc.CallOption) (*MsgMintSharesResponse, error) {
+	out := new(MsgMintSharesResponse)
+	err := c.cc.Invoke(ctx, "/perpdex.account.v1.Msg/MintShares", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) BurnShares(ctx context.Context, in *MsgBurnShares, opts ...grpc.CallOption) (*MsgBurnSharesResponse, error) {
+	out := new(MsgBurnSharesResponse)
+	err := c.cc.Invoke(ctx, "/perpdex.account.v1.Msg/BurnShares", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) StrategyTransfer(ctx context.Context, in *MsgStrategyTransfer, opts ...grpc.CallOption) (*MsgStrategyTransferResponse, error) {
+	out := new(MsgStrategyTransferResponse)
+	err := c.cc.Invoke(ctx, "/perpdex.account.v1.Msg/StrategyTransfer", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) ForceBurnShares(ctx context.Context, in *MsgForceBurnShares, opts ...grpc.CallOption) (*MsgForceBurnSharesResponse, error) {
+	out := new(MsgForceBurnSharesResponse)
+	err := c.cc.Invoke(ctx, "/perpdex.account.v1.Msg/ForceBurnShares", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MsgServer is the server API for Msg service.
 type MsgServer interface {
 	Deposit(context.Context, *MsgDeposit) (*MsgDepositResponse, error)
@@ -1205,6 +1974,13 @@ type MsgServer interface {
 	UpdateMargin(context.Context, *MsgUpdateMargin) (*MsgUpdateMarginResponse, error)
 	UpdateLeverage(context.Context, *MsgUpdateLeverage) (*MsgUpdateLeverageResponse, error)
 	UpdateParams(context.Context, *MsgUpdateParams) (*MsgUpdateParamsResponse, error)
+	// Public pool / Insurance fund.
+	CreatePublicPool(context.Context, *MsgCreatePublicPool) (*MsgCreatePublicPoolResponse, error)
+	UpdatePublicPool(context.Context, *MsgUpdatePublicPool) (*MsgUpdatePublicPoolResponse, error)
+	MintShares(context.Context, *MsgMintShares) (*MsgMintSharesResponse, error)
+	BurnShares(context.Context, *MsgBurnShares) (*MsgBurnSharesResponse, error)
+	StrategyTransfer(context.Context, *MsgStrategyTransfer) (*MsgStrategyTransferResponse, error)
+	ForceBurnShares(context.Context, *MsgForceBurnShares) (*MsgForceBurnSharesResponse, error)
 }
 
 // UnimplementedMsgServer can be embedded to have forward compatible implementations.
@@ -1237,6 +2013,24 @@ func (*UnimplementedMsgServer) UpdateLeverage(ctx context.Context, req *MsgUpdat
 }
 func (*UnimplementedMsgServer) UpdateParams(ctx context.Context, req *MsgUpdateParams) (*MsgUpdateParamsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method UpdateParams not implemented")
+}
+func (*UnimplementedMsgServer) CreatePublicPool(ctx context.Context, req *MsgCreatePublicPool) (*MsgCreatePublicPoolResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CreatePublicPool not implemented")
+}
+func (*UnimplementedMsgServer) UpdatePublicPool(ctx context.Context, req *MsgUpdatePublicPool) (*MsgUpdatePublicPoolResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method UpdatePublicPool not implemented")
+}
+func (*UnimplementedMsgServer) MintShares(ctx context.Context, req *MsgMintShares) (*MsgMintSharesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method MintShares not implemented")
+}
+func (*UnimplementedMsgServer) BurnShares(ctx context.Context, req *MsgBurnShares) (*MsgBurnSharesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method BurnShares not implemented")
+}
+func (*UnimplementedMsgServer) StrategyTransfer(ctx context.Context, req *MsgStrategyTransfer) (*MsgStrategyTransferResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method StrategyTransfer not implemented")
+}
+func (*UnimplementedMsgServer) ForceBurnShares(ctx context.Context, req *MsgForceBurnShares) (*MsgForceBurnSharesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ForceBurnShares not implemented")
 }
 
 func RegisterMsgServer(s grpc1.Server, srv MsgServer) {
@@ -1405,6 +2199,114 @@ func _Msg_UpdateParams_Handler(srv interface{}, ctx context.Context, dec func(in
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_CreatePublicPool_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgCreatePublicPool)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).CreatePublicPool(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/perpdex.account.v1.Msg/CreatePublicPool",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).CreatePublicPool(ctx, req.(*MsgCreatePublicPool))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_UpdatePublicPool_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgUpdatePublicPool)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).UpdatePublicPool(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/perpdex.account.v1.Msg/UpdatePublicPool",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).UpdatePublicPool(ctx, req.(*MsgUpdatePublicPool))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_MintShares_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgMintShares)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).MintShares(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/perpdex.account.v1.Msg/MintShares",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).MintShares(ctx, req.(*MsgMintShares))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_BurnShares_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgBurnShares)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).BurnShares(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/perpdex.account.v1.Msg/BurnShares",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).BurnShares(ctx, req.(*MsgBurnShares))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_StrategyTransfer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgStrategyTransfer)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).StrategyTransfer(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/perpdex.account.v1.Msg/StrategyTransfer",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).StrategyTransfer(ctx, req.(*MsgStrategyTransfer))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_ForceBurnShares_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgForceBurnShares)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).ForceBurnShares(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/perpdex.account.v1.Msg/ForceBurnShares",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).ForceBurnShares(ctx, req.(*MsgForceBurnShares))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 var Msg_serviceDesc = _Msg_serviceDesc
 var _Msg_serviceDesc = grpc.ServiceDesc{
 	ServiceName: "perpdex.account.v1.Msg",
@@ -1445,6 +2347,30 @@ var _Msg_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UpdateParams",
 			Handler:    _Msg_UpdateParams_Handler,
+		},
+		{
+			MethodName: "CreatePublicPool",
+			Handler:    _Msg_CreatePublicPool_Handler,
+		},
+		{
+			MethodName: "UpdatePublicPool",
+			Handler:    _Msg_UpdatePublicPool_Handler,
+		},
+		{
+			MethodName: "MintShares",
+			Handler:    _Msg_MintShares_Handler,
+		},
+		{
+			MethodName: "BurnShares",
+			Handler:    _Msg_BurnShares_Handler,
+		},
+		{
+			MethodName: "StrategyTransfer",
+			Handler:    _Msg_StrategyTransfer_Handler,
+		},
+		{
+			MethodName: "ForceBurnShares",
+			Handler:    _Msg_ForceBurnShares_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
@@ -2099,6 +3025,464 @@ func (m *MsgUpdateParamsResponse) MarshalToSizedBuffer(dAtA []byte) (int, error)
 	return len(dAtA) - i, nil
 }
 
+func (m *MsgCreatePublicPool) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MsgCreatePublicPool) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *MsgCreatePublicPool) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.MinOperatorShareRate != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.MinOperatorShareRate))
+		i--
+		dAtA[i] = 0x30
+	}
+	if m.OperatorFee != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.OperatorFee))
+		i--
+		dAtA[i] = 0x28
+	}
+	if m.InitialTotalShares != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.InitialTotalShares))
+		i--
+		dAtA[i] = 0x20
+	}
+	if m.AccountType != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.AccountType))
+		i--
+		dAtA[i] = 0x18
+	}
+	if m.MasterAccountIndex != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.MasterAccountIndex))
+		i--
+		dAtA[i] = 0x10
+	}
+	if len(m.Sender) > 0 {
+		i -= len(m.Sender)
+		copy(dAtA[i:], m.Sender)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.Sender)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *MsgCreatePublicPoolResponse) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MsgCreatePublicPoolResponse) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *MsgCreatePublicPoolResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.PoolAccountIndex != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.PoolAccountIndex))
+		i--
+		dAtA[i] = 0x8
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *MsgUpdatePublicPool) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MsgUpdatePublicPool) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *MsgUpdatePublicPool) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.NewMinOperatorShareRate != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.NewMinOperatorShareRate))
+		i--
+		dAtA[i] = 0x28
+	}
+	if m.NewOperatorFee != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.NewOperatorFee))
+		i--
+		dAtA[i] = 0x20
+	}
+	if m.NewStatus != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.NewStatus))
+		i--
+		dAtA[i] = 0x18
+	}
+	if m.PoolAccountIndex != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.PoolAccountIndex))
+		i--
+		dAtA[i] = 0x10
+	}
+	if len(m.Sender) > 0 {
+		i -= len(m.Sender)
+		copy(dAtA[i:], m.Sender)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.Sender)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *MsgUpdatePublicPoolResponse) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MsgUpdatePublicPoolResponse) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *MsgUpdatePublicPoolResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	return len(dAtA) - i, nil
+}
+
+func (m *MsgMintShares) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MsgMintShares) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *MsgMintShares) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.PrincipalAmount != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.PrincipalAmount))
+		i--
+		dAtA[i] = 0x18
+	}
+	if m.PoolAccountIndex != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.PoolAccountIndex))
+		i--
+		dAtA[i] = 0x10
+	}
+	if len(m.Sender) > 0 {
+		i -= len(m.Sender)
+		copy(dAtA[i:], m.Sender)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.Sender)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *MsgMintSharesResponse) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MsgMintSharesResponse) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *MsgMintSharesResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	{
+		size := m.ShareAmount.Size()
+		i -= size
+		if _, err := m.ShareAmount.MarshalTo(dAtA[i:]); err != nil {
+			return 0, err
+		}
+		i = encodeVarintTx(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0xa
+	return len(dAtA) - i, nil
+}
+
+func (m *MsgBurnShares) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MsgBurnShares) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *MsgBurnShares) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	{
+		size := m.ShareAmount.Size()
+		i -= size
+		if _, err := m.ShareAmount.MarshalTo(dAtA[i:]); err != nil {
+			return 0, err
+		}
+		i = encodeVarintTx(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0x1a
+	if m.PoolAccountIndex != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.PoolAccountIndex))
+		i--
+		dAtA[i] = 0x10
+	}
+	if len(m.Sender) > 0 {
+		i -= len(m.Sender)
+		copy(dAtA[i:], m.Sender)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.Sender)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *MsgBurnSharesResponse) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MsgBurnSharesResponse) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *MsgBurnSharesResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.UsdcAmount != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.UsdcAmount))
+		i--
+		dAtA[i] = 0x8
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *MsgStrategyTransfer) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MsgStrategyTransfer) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *MsgStrategyTransfer) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	{
+		size := m.Amount.Size()
+		i -= size
+		if _, err := m.Amount.MarshalTo(dAtA[i:]); err != nil {
+			return 0, err
+		}
+		i = encodeVarintTx(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0x2a
+	if m.ToStrategy != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.ToStrategy))
+		i--
+		dAtA[i] = 0x20
+	}
+	if m.FromStrategy != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.FromStrategy))
+		i--
+		dAtA[i] = 0x18
+	}
+	if m.PoolAccountIndex != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.PoolAccountIndex))
+		i--
+		dAtA[i] = 0x10
+	}
+	if len(m.Sender) > 0 {
+		i -= len(m.Sender)
+		copy(dAtA[i:], m.Sender)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.Sender)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *MsgStrategyTransferResponse) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MsgStrategyTransferResponse) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *MsgStrategyTransferResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	return len(dAtA) - i, nil
+}
+
+func (m *MsgForceBurnShares) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MsgForceBurnShares) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *MsgForceBurnShares) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	{
+		size := m.ShareAmount.Size()
+		i -= size
+		if _, err := m.ShareAmount.MarshalTo(dAtA[i:]); err != nil {
+			return 0, err
+		}
+		i = encodeVarintTx(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0x22
+	if m.DepositorAccountIndex != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.DepositorAccountIndex))
+		i--
+		dAtA[i] = 0x18
+	}
+	if m.PoolAccountIndex != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.PoolAccountIndex))
+		i--
+		dAtA[i] = 0x10
+	}
+	if len(m.Authority) > 0 {
+		i -= len(m.Authority)
+		copy(dAtA[i:], m.Authority)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.Authority)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *MsgForceBurnSharesResponse) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MsgForceBurnSharesResponse) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *MsgForceBurnSharesResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.UsdcAmount != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.UsdcAmount))
+		i--
+		dAtA[i] = 0x8
+	}
+	return len(dAtA) - i, nil
+}
+
 func encodeVarintTx(dAtA []byte, offset int, v uint64) int {
 	offset -= sovTx(v)
 	base := offset
@@ -2399,6 +3783,206 @@ func (m *MsgUpdateParamsResponse) Size() (n int) {
 	}
 	var l int
 	_ = l
+	return n
+}
+
+func (m *MsgCreatePublicPool) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.Sender)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	if m.MasterAccountIndex != 0 {
+		n += 1 + sovTx(uint64(m.MasterAccountIndex))
+	}
+	if m.AccountType != 0 {
+		n += 1 + sovTx(uint64(m.AccountType))
+	}
+	if m.InitialTotalShares != 0 {
+		n += 1 + sovTx(uint64(m.InitialTotalShares))
+	}
+	if m.OperatorFee != 0 {
+		n += 1 + sovTx(uint64(m.OperatorFee))
+	}
+	if m.MinOperatorShareRate != 0 {
+		n += 1 + sovTx(uint64(m.MinOperatorShareRate))
+	}
+	return n
+}
+
+func (m *MsgCreatePublicPoolResponse) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	if m.PoolAccountIndex != 0 {
+		n += 1 + sovTx(uint64(m.PoolAccountIndex))
+	}
+	return n
+}
+
+func (m *MsgUpdatePublicPool) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.Sender)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	if m.PoolAccountIndex != 0 {
+		n += 1 + sovTx(uint64(m.PoolAccountIndex))
+	}
+	if m.NewStatus != 0 {
+		n += 1 + sovTx(uint64(m.NewStatus))
+	}
+	if m.NewOperatorFee != 0 {
+		n += 1 + sovTx(uint64(m.NewOperatorFee))
+	}
+	if m.NewMinOperatorShareRate != 0 {
+		n += 1 + sovTx(uint64(m.NewMinOperatorShareRate))
+	}
+	return n
+}
+
+func (m *MsgUpdatePublicPoolResponse) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	return n
+}
+
+func (m *MsgMintShares) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.Sender)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	if m.PoolAccountIndex != 0 {
+		n += 1 + sovTx(uint64(m.PoolAccountIndex))
+	}
+	if m.PrincipalAmount != 0 {
+		n += 1 + sovTx(uint64(m.PrincipalAmount))
+	}
+	return n
+}
+
+func (m *MsgMintSharesResponse) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = m.ShareAmount.Size()
+	n += 1 + l + sovTx(uint64(l))
+	return n
+}
+
+func (m *MsgBurnShares) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.Sender)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	if m.PoolAccountIndex != 0 {
+		n += 1 + sovTx(uint64(m.PoolAccountIndex))
+	}
+	l = m.ShareAmount.Size()
+	n += 1 + l + sovTx(uint64(l))
+	return n
+}
+
+func (m *MsgBurnSharesResponse) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	if m.UsdcAmount != 0 {
+		n += 1 + sovTx(uint64(m.UsdcAmount))
+	}
+	return n
+}
+
+func (m *MsgStrategyTransfer) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.Sender)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	if m.PoolAccountIndex != 0 {
+		n += 1 + sovTx(uint64(m.PoolAccountIndex))
+	}
+	if m.FromStrategy != 0 {
+		n += 1 + sovTx(uint64(m.FromStrategy))
+	}
+	if m.ToStrategy != 0 {
+		n += 1 + sovTx(uint64(m.ToStrategy))
+	}
+	l = m.Amount.Size()
+	n += 1 + l + sovTx(uint64(l))
+	return n
+}
+
+func (m *MsgStrategyTransferResponse) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	return n
+}
+
+func (m *MsgForceBurnShares) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.Authority)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	if m.PoolAccountIndex != 0 {
+		n += 1 + sovTx(uint64(m.PoolAccountIndex))
+	}
+	if m.DepositorAccountIndex != 0 {
+		n += 1 + sovTx(uint64(m.DepositorAccountIndex))
+	}
+	l = m.ShareAmount.Size()
+	n += 1 + l + sovTx(uint64(l))
+	return n
+}
+
+func (m *MsgForceBurnSharesResponse) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	if m.UsdcAmount != 0 {
+		n += 1 + sovTx(uint64(m.UsdcAmount))
+	}
 	return n
 }
 
@@ -4234,6 +5818,1314 @@ func (m *MsgUpdateParamsResponse) Unmarshal(dAtA []byte) error {
 			return fmt.Errorf("proto: MsgUpdateParamsResponse: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTx(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTx
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *MsgCreatePublicPool) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTx
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MsgCreatePublicPool: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MsgCreatePublicPool: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Sender", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Sender = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field MasterAccountIndex", wireType)
+			}
+			m.MasterAccountIndex = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.MasterAccountIndex |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 3:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field AccountType", wireType)
+			}
+			m.AccountType = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.AccountType |= uint32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 4:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field InitialTotalShares", wireType)
+			}
+			m.InitialTotalShares = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.InitialTotalShares |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 5:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field OperatorFee", wireType)
+			}
+			m.OperatorFee = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.OperatorFee |= uint32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 6:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field MinOperatorShareRate", wireType)
+			}
+			m.MinOperatorShareRate = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.MinOperatorShareRate |= uint32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTx(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTx
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *MsgCreatePublicPoolResponse) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTx
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MsgCreatePublicPoolResponse: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MsgCreatePublicPoolResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field PoolAccountIndex", wireType)
+			}
+			m.PoolAccountIndex = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.PoolAccountIndex |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTx(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTx
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *MsgUpdatePublicPool) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTx
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MsgUpdatePublicPool: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MsgUpdatePublicPool: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Sender", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Sender = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field PoolAccountIndex", wireType)
+			}
+			m.PoolAccountIndex = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.PoolAccountIndex |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 3:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field NewStatus", wireType)
+			}
+			m.NewStatus = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.NewStatus |= uint32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 4:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field NewOperatorFee", wireType)
+			}
+			m.NewOperatorFee = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.NewOperatorFee |= uint32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 5:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field NewMinOperatorShareRate", wireType)
+			}
+			m.NewMinOperatorShareRate = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.NewMinOperatorShareRate |= uint32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTx(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTx
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *MsgUpdatePublicPoolResponse) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTx
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MsgUpdatePublicPoolResponse: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MsgUpdatePublicPoolResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTx(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTx
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *MsgMintShares) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTx
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MsgMintShares: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MsgMintShares: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Sender", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Sender = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field PoolAccountIndex", wireType)
+			}
+			m.PoolAccountIndex = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.PoolAccountIndex |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 3:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field PrincipalAmount", wireType)
+			}
+			m.PrincipalAmount = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.PrincipalAmount |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTx(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTx
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *MsgMintSharesResponse) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTx
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MsgMintSharesResponse: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MsgMintSharesResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ShareAmount", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.ShareAmount.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTx(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTx
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *MsgBurnShares) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTx
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MsgBurnShares: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MsgBurnShares: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Sender", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Sender = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field PoolAccountIndex", wireType)
+			}
+			m.PoolAccountIndex = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.PoolAccountIndex |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ShareAmount", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.ShareAmount.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTx(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTx
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *MsgBurnSharesResponse) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTx
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MsgBurnSharesResponse: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MsgBurnSharesResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field UsdcAmount", wireType)
+			}
+			m.UsdcAmount = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.UsdcAmount |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTx(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTx
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *MsgStrategyTransfer) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTx
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MsgStrategyTransfer: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MsgStrategyTransfer: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Sender", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Sender = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field PoolAccountIndex", wireType)
+			}
+			m.PoolAccountIndex = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.PoolAccountIndex |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 3:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field FromStrategy", wireType)
+			}
+			m.FromStrategy = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.FromStrategy |= uint32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 4:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ToStrategy", wireType)
+			}
+			m.ToStrategy = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.ToStrategy |= uint32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 5:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Amount", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.Amount.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTx(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTx
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *MsgStrategyTransferResponse) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTx
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MsgStrategyTransferResponse: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MsgStrategyTransferResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTx(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTx
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *MsgForceBurnShares) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTx
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MsgForceBurnShares: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MsgForceBurnShares: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Authority", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Authority = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field PoolAccountIndex", wireType)
+			}
+			m.PoolAccountIndex = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.PoolAccountIndex |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 3:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field DepositorAccountIndex", wireType)
+			}
+			m.DepositorAccountIndex = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.DepositorAccountIndex |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 4:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ShareAmount", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.ShareAmount.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTx(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTx
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *MsgForceBurnSharesResponse) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTx
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MsgForceBurnSharesResponse: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MsgForceBurnSharesResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field UsdcAmount", wireType)
+			}
+			m.UsdcAmount = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.UsdcAmount |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := skipTx(dAtA[iNdEx:])

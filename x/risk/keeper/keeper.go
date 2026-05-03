@@ -199,6 +199,20 @@ func classifyHealth(p types.RiskParameters) uint32 {
 	return perptypes.HealthHealthy
 }
 
+// GetTotalAccountValue returns TAV = collateral + sum(uPnL across markets) for
+// the account. Used by public-pool share-value math (NAV = TAV / total_shares).
+func (k Keeper) GetTotalAccountValue(ctx context.Context, accountIdx uint64) (math.Int, error) {
+	ri, err := k.ComputeRiskInfo(ctx, accountIdx)
+	if err != nil {
+		return math.ZeroInt(), err
+	}
+	cur := ri.CurrentRiskParameters
+	if cur == nil {
+		return math.ZeroInt(), nil
+	}
+	return cur.TotalAccountValue, nil
+}
+
 // GetAvailableCollateral returns total_account_value - initial_margin_requirement.
 func (k Keeper) GetAvailableCollateral(ctx context.Context, accountIdx uint64) (math.Int, error) {
 	ri, err := k.ComputeRiskInfo(ctx, accountIdx)
@@ -270,4 +284,49 @@ func (k Keeper) GetPositionZeroPrice(ctx context.Context, accountIdx uint64, mar
 		return 0, nil
 	}
 	return uint32(pos.EntryQuote.Quo(pos.Position).Abs().Uint64()), nil
+}
+
+// GetPositionMarkValue returns |position| * mark_price as a math.Int.
+// Returns zero when no position exists or no mark price is available.
+func (k Keeper) GetPositionMarkValue(ctx context.Context, accountIdx uint64, marketIdx uint32) (math.Int, error) {
+	pos, err := k.accountKeeper.GetPosition(ctx, accountIdx, marketIdx)
+	if err != nil {
+		return math.ZeroInt(), err
+	}
+	if pos.Position.IsZero() {
+		return math.ZeroInt(), nil
+	}
+	px, err := k.oracleKeeper.GetPrice(ctx, marketIdx)
+	if err != nil {
+		return math.ZeroInt(), err
+	}
+	if px.MarkPrice == 0 {
+		return math.ZeroInt(), nil
+	}
+	return pos.Position.Abs().Mul(math.NewIntFromUint64(uint64(px.MarkPrice))), nil
+}
+
+// GetPositionUnrealizedPnL returns the signed unrealized PnL of the
+// (account, market) position at the current mark price:
+//
+//	uPnL = position * mark_price - entry_quote
+//
+// Positive when the position is in profit. Returns zero when no position
+// exists or no mark price is available.
+func (k Keeper) GetPositionUnrealizedPnL(ctx context.Context, accountIdx uint64, marketIdx uint32) (math.Int, error) {
+	pos, err := k.accountKeeper.GetPosition(ctx, accountIdx, marketIdx)
+	if err != nil {
+		return math.ZeroInt(), err
+	}
+	if pos.Position.IsZero() {
+		return math.ZeroInt(), nil
+	}
+	px, err := k.oracleKeeper.GetPrice(ctx, marketIdx)
+	if err != nil {
+		return math.ZeroInt(), err
+	}
+	if px.MarkPrice == 0 {
+		return math.ZeroInt(), nil
+	}
+	return pos.Position.Mul(math.NewIntFromUint64(uint64(px.MarkPrice))).Sub(pos.EntryQuote), nil
 }

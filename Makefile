@@ -4,6 +4,8 @@ APP_NAME ?= perpd
 BUILDDIR ?= $(CURDIR)/build
 GOPATH ?= $(shell go env GOPATH)
 DOCKER := $(shell which docker)
+GOLANGCI_LINT_VERSION ?= v2.11.4
+GOLANGCI_LINT ?= go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
@@ -38,6 +40,16 @@ tidy:
 .PHONY: clean
 clean:
 	rm -rf $(BUILDDIR)
+
+###############################################################################
+###                                  Lint                                   ###
+###############################################################################
+
+.PHONY: lint lint-go
+lint: lint-go
+
+lint-go:
+	$(GOLANGCI_LINT) run ./...
 
 ###############################################################################
 ###                                  Tests                                  ###

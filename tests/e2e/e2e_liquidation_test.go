@@ -6,6 +6,7 @@ import (
 	"cosmossdk.io/math"
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
+	liquidationtypes "github.com/perpdex/perpdex-l1/x/liquidation/types"
 
 	"github.com/perpdex/perpdex-l1/tests/e2e"
 	"github.com/perpdex/perpdex-l1/tests/e2e/msg"
@@ -242,4 +243,229 @@ func (s *LiquidationSuite) TestEndBlockerFlagsLifecycle() {
 	_, present = s.QueryLiquidationFlag(s.Users[0].AccountIndex, s.MarketIndex)
 	s.Require().False(present,
 		"EndBlocker must drop the flag once the account returns to HEALTHY")
+}
+
+// pushVictimToBankruptcy is a helper for the ADL tests that re-creates
+// the openHurtablePosition setup and then drops the oracle to the
+// wipe-out price so the victim lands in BANKRUPTCY. It returns the
+// (entryPrice, qty) tuple for assertions.
+func (s *LiquidationSuite) pushVictimToBankruptcy() (entry, wipeout uint32, qty uint64) {
+	entry, qty = s.openHurtablePosition()
+	s.InjectPrice(s.Users[3].Address, s.MarketIndex, entry, entry)
+	wipeout = uint32(30_000)
+	s.InjectPrice(s.Users[3].Address, s.MarketIndex, wipeout, wipeout)
+	health := s.QueryHealthStatus(s.Users[0].AccountIndex)
+	s.Require().Equal(perptypes.HealthBankruptcy, health,
+		"victim must be in BANKRUPTCY before ADL test (got %d)", health)
+	return entry, wipeout, qty
+}
+
+// drainInsuranceFund replaces the insurance-fund collateral with the
+// caller-supplied (signed) amount. EndBlocker auto-ADL only fires when
+// `insurance + victim_collateral < 0`, so tests that exercise the
+// auto-trigger path must call this with a small amount (or zero).
+func (s *LiquidationSuite) drainInsuranceFund(target math.Int) {
+	insf, err := s.App.PerpAccountKeeper.GetAccount(s.Ctx, perptypes.InsuranceFundOperatorAccountIdx)
+	s.Require().NoError(err)
+	delta := target.Sub(insf.Collateral)
+	s.Require().NoError(
+		s.App.PerpAccountKeeper.AddCollateral(s.Ctx, perptypes.InsuranceFundOperatorAccountIdx, delta),
+	)
+}
+
+// freezeInsuranceFund flips IF.PublicPoolInfo.Status to FROZEN. Required
+// in the user-ADL fallback tests because EndBlocker now routes
+// BANKRUPTCY victims to the IF first when it is ACTIVE (lighter
+// IF_FIRST behaviour).
+func (s *LiquidationSuite) freezeInsuranceFund() {
+	insf, err := s.App.PerpAccountKeeper.GetAccount(s.Ctx, perptypes.InsuranceFundOperatorAccountIdx)
+	s.Require().NoError(err)
+	s.Require().NotNil(insf.PublicPoolInfo,
+		"genesis must wire PublicPoolInfo on the IF account")
+	insf.PublicPoolInfo.Status = perptypes.PublicPoolStatusFrozen
+	s.Require().NoError(s.App.PerpAccountKeeper.SetAccount(s.Ctx, insf))
+}
+
+// TestADLRejectsSameSide verifies the Lighter-style ADL invariant: a
+// counterparty on the SAME side as the victim cannot be used as
+// deleverager. user0 (long victim) attempts to ADL against user2 (also
+// long because we cross them at entry).
+func (s *LiquidationSuite) TestADLRejectsSameSide() {
+	_, _, qty := s.pushVictimToBankruptcy()
+
+	// Open a same-side (long) position for user2 by crossing against
+	// user1's resting short. We piggy-back on the funded counterparty
+	// and use a small price (well below current mark so user2 is in
+	// profit, isolating the same-side check from PnL filtering).
+	const entry2 = uint32(30_000)
+	askResp := s.PlaceLimitOrder(s.Users[1], msg.OrderOpts{
+		MarketIndex:      s.MarketIndex,
+		IsAsk:            true,
+		Price:            entry2,
+		BaseAmount:       qty,
+		ClientOrderIndex: 11,
+	})
+	s.Require().Equal(perptypes.OrderStatusOpen, askResp.Status)
+	bidResp := s.PlaceLimitOrder(s.Users[2], msg.OrderOpts{
+		MarketIndex:      s.MarketIndex,
+		IsAsk:            false,
+		Price:            entry2,
+		BaseAmount:       qty,
+		ClientOrderIndex: 12,
+	})
+	s.Require().Equal(perptypes.OrderStatusFilled, bidResp.Status)
+
+	// Sanity: user2 is long, user0 is also long.
+	pos2 := s.QueryPositionSize(s.Users[2].AccountIndex, s.MarketIndex)
+	s.Require().True(pos2.IsPositive(), "user2 must be long for the same-side test")
+
+	err := s.DeleverageExpectErr(
+		s.Users[2], s.Users[0].AccountIndex, s.Users[2].AccountIndex, s.MarketIndex, qty,
+	)
+	s.Require().ErrorIs(err, liquidationtypes.ErrInvalidADLCounterparty,
+		"deleverage must reject a same-side counterparty")
+}
+
+// TestADLAcceptsOppositeProfitable runs the happy ADL path: user1 holds
+// the opposing short and is in profit at the wipe-out price, so
+// MsgDeleverage with user1 must succeed and bring both books to flat.
+func (s *LiquidationSuite) TestADLAcceptsOppositeProfitable() {
+	_, _, qty := s.pushVictimToBankruptcy()
+
+	// Confirm the queue ranks user1 as the only/best candidate for the
+	// short side of the victim's long.
+	cands := s.QueryADLQueue(s.MarketIndex, false /* victim long → shorts queue */, 8)
+	s.Require().NotEmpty(cands, "ADL queue must contain at least user1 short")
+	s.Require().Equal(s.Users[1].AccountIndex, cands[0].AccountIndex,
+		"user1 should rank first since they hold the only profitable short")
+
+	prePosVictim := s.QueryPositionSize(s.Users[0].AccountIndex, s.MarketIndex)
+	s.Require().Equal(math.NewInt(int64(qty)), prePosVictim)
+
+	s.Deleverage(s.Users[2], s.Users[0].AccountIndex, s.Users[1].AccountIndex, s.MarketIndex, qty)
+
+	postPosVictim := s.QueryPositionSize(s.Users[0].AccountIndex, s.MarketIndex)
+	s.Require().True(postPosVictim.IsZero(),
+		"deleverage must close the victim's position completely (post=%s)", postPosVictim.String())
+	postPosCounter := s.QueryPositionSize(s.Users[1].AccountIndex, s.MarketIndex)
+	s.Require().True(postPosCounter.IsZero(),
+		"counterparty must end flat after absorbing the close (post=%s)", postPosCounter.String())
+}
+
+// TestEndBlockerAutoADL verifies the dYdX-style on-chain auto-trigger:
+// when a victim is BANKRUPTCY and the insurance fund cannot absorb the
+// loss, the EndBlocker's auto-ADL loop force-closes the victim against
+// the top of the ADL queue. Asserts the victim's position is closed
+// without any manual MsgDeleverage call.
+//
+// Note: we invoke `LiquidationKeeper.EndBlocker(s.Ctx)` directly rather
+// than `s.AdvanceBlock()` because the suite's UncachedContext writes
+// (drainInsuranceFund / Params override) only land in the BaseApp's
+// committed multistore on Commit; FinalizeBlock branches off a fresh
+// state that wouldn't observe those writes. Calling the keeper on the
+// same s.Ctx threads all writes through one context.
+func (s *LiquidationSuite) TestEndBlockerAutoADL() {
+	_, _, qty := s.pushVictimToBankruptcy()
+
+	// Freeze the IF so the IF_FIRST branch declines and EndBlocker
+	// falls back to the user ADL queue (the user-ranked queue is what
+	// this test exercises).
+	s.freezeInsuranceFund()
+	s.drainInsuranceFund(math.ZeroInt())
+
+	// Bump the per-block cap so a single block can fully close the
+	// victim's position via one fill against user1.
+	params, err := s.App.LiquidationKeeper.Params.Get(s.Ctx)
+	s.Require().NoError(err)
+	params.MaxAdlAttemptsPerBlock = 4
+	s.Require().NoError(s.App.LiquidationKeeper.Params.Set(s.Ctx, params))
+
+	prePosVictim := s.QueryPositionSize(s.Users[0].AccountIndex, s.MarketIndex)
+	s.Require().Equal(math.NewInt(int64(qty)), prePosVictim)
+
+	// Sanity: queue must contain user1 short before auto-ADL fires.
+	cands := s.QueryADLQueue(s.MarketIndex, false /* shorts */, 8)
+	s.Require().NotEmpty(cands, "queue must contain user1 before auto-ADL fires")
+
+	s.Require().NoError(s.App.LiquidationKeeper.EndBlocker(s.Ctx))
+
+	postPosVictim := s.QueryPositionSize(s.Users[0].AccountIndex, s.MarketIndex)
+	s.Require().True(postPosVictim.IsZero(),
+		"EndBlocker auto-ADL must close the bankrupt victim (post=%s)", postPosVictim.String())
+	postPosCounter := s.QueryPositionSize(s.Users[1].AccountIndex, s.MarketIndex)
+	s.Require().True(postPosCounter.IsZero(),
+		"auto-ADL counterparty must end flat (post=%s)", postPosCounter.String())
+}
+
+// TestADLRespectsPerBlockCap pins MaxAdlAttemptsPerBlock=1, makes BOTH
+// users 0 and 2 bankrupt against user1's short, and verifies that the
+// EndBlocker only closes ONE victim in a single block. The second
+// victim must remain open (and flagged) until the next block.
+func (s *LiquidationSuite) TestADLRespectsPerBlockCap() {
+	const entry = uint32(50_000)
+	const qty = uint64(1_000_000_000)
+	const counterDeposit = uint64(5_000_000_000) // 5000 USDC
+
+	// Deposit modest collateral to victims and a fat buffer to user1
+	// (counterparty for both victims). user3 is the oracle provider.
+	s.DepositUSDC(&s.Users[0], 10_000_000)        // victim A: 10 USDC
+	s.DepositUSDC(&s.Users[2], 10_000_000)        // victim B: 10 USDC
+	s.DepositUSDC(&s.Users[1], counterDeposit)
+	s.DepositUSDC(&s.Users[3], counterDeposit)
+
+	// user1 rests a short of 2*qty; victims A & B each cross half.
+	askResp := s.PlaceLimitOrder(s.Users[1], msg.OrderOpts{
+		MarketIndex:      s.MarketIndex,
+		IsAsk:            true,
+		Price:            entry,
+		BaseAmount:       2 * qty,
+		ClientOrderIndex: 21,
+	})
+	s.Require().Equal(perptypes.OrderStatusOpen, askResp.Status)
+	bidA := s.PlaceLimitOrder(s.Users[0], msg.OrderOpts{
+		MarketIndex:      s.MarketIndex,
+		IsAsk:            false,
+		Price:            entry,
+		BaseAmount:       qty,
+		ClientOrderIndex: 22,
+	})
+	s.Require().Equal(perptypes.OrderStatusFilled, bidA.Status)
+	bidB := s.PlaceLimitOrder(s.Users[2], msg.OrderOpts{
+		MarketIndex:      s.MarketIndex,
+		IsAsk:            false,
+		Price:            entry,
+		BaseAmount:       qty,
+		ClientOrderIndex: 23,
+	})
+	s.Require().Equal(perptypes.OrderStatusFilled, bidB.Status)
+
+	// Push both A & B into BANKRUPTCY simultaneously.
+	s.InjectPrice(s.Users[3].Address, s.MarketIndex, entry, entry)
+	s.InjectPrice(s.Users[3].Address, s.MarketIndex, 30_000, 30_000)
+	s.Require().Equal(perptypes.HealthBankruptcy,
+		s.QueryHealthStatus(s.Users[0].AccountIndex))
+	s.Require().Equal(perptypes.HealthBankruptcy,
+		s.QueryHealthStatus(s.Users[2].AccountIndex))
+
+	// Freeze IF so the EndBlocker takes the user-ADL fallback (the
+	// per-block cap test only makes sense in that path).
+	s.freezeInsuranceFund()
+	s.drainInsuranceFund(math.ZeroInt())
+
+	// Pin per-block cap to 1: at most one auto-ADL fill across both
+	// victims this block.
+	params, err := s.App.LiquidationKeeper.Params.Get(s.Ctx)
+	s.Require().NoError(err)
+	params.MaxAdlAttemptsPerBlock = 1
+	s.Require().NoError(s.App.LiquidationKeeper.Params.Set(s.Ctx, params))
+
+	s.Require().NoError(s.App.LiquidationKeeper.EndBlocker(s.Ctx))
+
+	posA := s.QueryPositionSize(s.Users[0].AccountIndex, s.MarketIndex)
+	posB := s.QueryPositionSize(s.Users[2].AccountIndex, s.MarketIndex)
+	closedA := posA.IsZero()
+	closedB := posB.IsZero()
+	s.Require().True(closedA != closedB,
+		"per-block cap=1 must close exactly one of the two bankrupt victims (A=%s B=%s)",
+		posA.String(), posB.String())
 }

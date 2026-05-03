@@ -24,6 +24,45 @@ type OrderOpts struct {
 	TriggerPrice     uint32
 	Expiry           int64
 	ReduceOnly       bool
+	// Sender / AccountIndex are only consulted by PlaceLimitOrderRaw.
+	// The standard PlaceLimitOrder fills them from the supplied user.
+	Sender       string
+	AccountIndex uint64
+}
+
+// PlaceLimitOrderRaw bypasses the implicit `user.AccountIndex` mapping
+// and instead reads `opts.Sender` + `opts.AccountIndex` directly. Used
+// to drive negative scenarios where we want the signer's master to
+// authorise an order on a *different* sub-account (e.g. a pool).
+func PlaceLimitOrderRaw(
+	app *perp.PerpDEXApp,
+	ctx sdk.Context,
+	opts OrderOpts,
+) (*matchingtypes.MsgCreateOrderResponse, error) {
+	srv := matchingkeeper.NewMsgServerImpl(app.MatchingKeeper)
+	if opts.OrderType == 0 {
+		opts.OrderType = perptypes.LimitOrder
+	}
+	if opts.TimeInForce == 0 {
+		opts.TimeInForce = perptypes.GTT
+	}
+	if opts.ClientOrderIndex == 0 {
+		opts.ClientOrderIndex = perptypes.MinClientOrderIndex
+	}
+	return srv.CreateOrder(ctx, &matchingtypes.MsgCreateOrder{
+		Sender:           opts.Sender,
+		AccountIndex:     opts.AccountIndex,
+		MarketIndex:      opts.MarketIndex,
+		ClientOrderIndex: opts.ClientOrderIndex,
+		IsAsk:            opts.IsAsk,
+		OrderType:        opts.OrderType,
+		TimeInForce:      opts.TimeInForce,
+		BaseAmount:       opts.BaseAmount,
+		Price:            opts.Price,
+		TriggerPrice:     opts.TriggerPrice,
+		Expiry:           opts.Expiry,
+		ReduceOnly:       opts.ReduceOnly,
+	})
 }
 
 // PlaceLimitOrder is the minimal sugar over MsgCreateOrder for a GTT limit
