@@ -70,6 +70,10 @@ func (s *LiquidationSuite) openHurtablePosition() (entryPrice uint32, qty uint64
 	s.DepositUSDC(&s.Users[2], counterDeposit)
 	s.DepositUSDC(&s.Users[3], counterDeposit)
 
+	// Seed the entry oracle so the post-trade risk check in the trade
+	// keeper has a live mark price to classify the fresh positions.
+	s.InjectPrice(s.Users[3].Address, s.MarketIndex, entryPrice, entryPrice)
+
 	askResp := s.PlaceLimitOrder(s.Users[1], msg.OrderOpts{
 		MarketIndex:      s.MarketIndex,
 		IsAsk:            true,
@@ -194,10 +198,12 @@ func (s *LiquidationSuite) TestBankruptcyDeleverage() {
 
 	// MsgDeleverage with user1 as the deleverager — they took the
 	// counter short during the open so they're well capitalised.
+	// The audit fix requires the sender to own the deleverager account,
+	// so user1 drives the ADL themselves.
 	prePosVictim := s.QueryPositionSize(s.Users[0].AccountIndex, s.MarketIndex)
 	s.Require().Equal(math.NewInt(int64(qty)), prePosVictim)
 
-	s.Deleverage(s.Users[2], s.Users[0].AccountIndex, s.Users[1].AccountIndex, s.MarketIndex, qty)
+	s.Deleverage(s.Users[1], s.Users[0].AccountIndex, s.Users[1].AccountIndex, s.MarketIndex, qty)
 
 	postPosVictim := s.QueryPositionSize(s.Users[0].AccountIndex, s.MarketIndex)
 	s.Require().True(postPosVictim.IsZero(),
@@ -342,7 +348,8 @@ func (s *LiquidationSuite) TestADLAcceptsOppositeProfitable() {
 	prePosVictim := s.QueryPositionSize(s.Users[0].AccountIndex, s.MarketIndex)
 	s.Require().Equal(math.NewInt(int64(qty)), prePosVictim)
 
-	s.Deleverage(s.Users[2], s.Users[0].AccountIndex, s.Users[1].AccountIndex, s.MarketIndex, qty)
+	// Audit fix: sender must own the deleverager account.
+	s.Deleverage(s.Users[1], s.Users[0].AccountIndex, s.Users[1].AccountIndex, s.MarketIndex, qty)
 
 	postPosVictim := s.QueryPositionSize(s.Users[0].AccountIndex, s.MarketIndex)
 	s.Require().True(postPosVictim.IsZero(),
@@ -412,6 +419,10 @@ func (s *LiquidationSuite) TestADLRespectsPerBlockCap() {
 	s.DepositUSDC(&s.Users[2], 10_000_000)        // victim B: 10 USDC
 	s.DepositUSDC(&s.Users[1], counterDeposit)
 	s.DepositUSDC(&s.Users[3], counterDeposit)
+
+	// Seed the oracle so the risk keeper can classify these fresh
+	// crossing fills (audit fix: missing prices now fail closed).
+	s.InjectPrice(s.Users[3].Address, s.MarketIndex, entry, entry)
 
 	// user1 rests a short of 2*qty; victims A & B each cross half.
 	askResp := s.PlaceLimitOrder(s.Users[1], msg.OrderOpts{

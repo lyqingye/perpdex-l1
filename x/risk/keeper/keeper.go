@@ -90,18 +90,30 @@ func (k Keeper) ComputeRiskInfo(ctx context.Context, accountIdx uint64) (types.R
 	for marketIdx := uint32(0); marketIdx <= perptypes.MaxPerpsMarketIndex; marketIdx++ {
 		pos, err := k.accountKeeper.GetPosition(ctx, accountIdx, marketIdx)
 		if err != nil {
-			continue
+			return types.RiskInfo{}, err
 		}
 		if pos.Position.IsZero() {
 			continue
 		}
-		px, err := k.oracleKeeper.GetPrice(ctx, marketIdx)
+		// For any NON-ZERO position the oracle must return a fresh,
+		// non-zero mark. Silently skipping a missing price previously
+		// made bankrupt accounts look healthy whenever the oracle
+		// hiccupped. Fail-closed keeps the invariant "risk regression
+		// cannot be hidden by an oracle outage".
+		px, err := k.oracleKeeper.GetFreshPrice(ctx, marketIdx)
 		if err != nil {
-			continue
+			return types.RiskInfo{}, types.ErrMissingPrice.Wrapf(
+				"account=%d market=%d: %s", accountIdx, marketIdx, err.Error(),
+			)
+		}
+		if px.MarkPrice == 0 {
+			return types.RiskInfo{}, types.ErrZeroMarkPrice.Wrapf(
+				"account=%d market=%d", accountIdx, marketIdx,
+			)
 		}
 		md, err := k.marketKeeper.GetMarketDetails(ctx, marketIdx)
 		if err != nil {
-			continue
+			return types.RiskInfo{}, err
 		}
 		notional := pos.Position.Abs().Mul(math.NewIntFromUint64(uint64(px.MarkPrice)))
 		// Margin requirements scale by basis points (precision 1e4).
@@ -145,9 +157,16 @@ func (k Keeper) ComputeIsolatedRisk(ctx context.Context, accountIdx uint64, mark
 	if pos.MarginMode != perptypes.IsolatedMargin {
 		return types.RiskParameters{}, fmt.Errorf("position is not isolated")
 	}
-	px, err := k.oracleKeeper.GetPrice(ctx, marketIdx)
+	px, err := k.oracleKeeper.GetFreshPrice(ctx, marketIdx)
 	if err != nil {
-		return types.RiskParameters{}, err
+		return types.RiskParameters{}, types.ErrMissingPrice.Wrapf(
+			"account=%d market=%d: %s", accountIdx, marketIdx, err.Error(),
+		)
+	}
+	if px.MarkPrice == 0 {
+		return types.RiskParameters{}, types.ErrZeroMarkPrice.Wrapf(
+			"account=%d market=%d", accountIdx, marketIdx,
+		)
 	}
 	md, err := k.marketKeeper.GetMarketDetails(ctx, marketIdx)
 	if err != nil {
@@ -226,9 +245,16 @@ func (k Keeper) GetAvailableCollateral(ctx context.Context, accountIdx uint64) (
 	return cur.TotalAccountValue.Sub(cur.InitialMarginRequirement), nil
 }
 
-// IsValidRiskChange returns true if the post-state risk is healthy or
-// strictly improving versus the cached pre-state. When no pre-state cache is
-// found we treat any healthy post-state as valid.
+// IsValidRiskChange returns true when the post-state risk is either healthy
+// or strictly improving versus the cached pre-state. Semantics:
+//
+//   - HEALTHY post-state is always accepted (including the initial open
+//     trade case where no pre-state exists yet).
+//   - Unhealthy post-state requires a pre-state snapshot. Without one we
+//     cannot verify improvement and must fail closed, otherwise a fresh
+//     account can fall straight into PARTIAL_LIQUIDATION on first trade.
+//   - Otherwise we require (post.TAV * pre.IM) >= (pre.TAV * post.IM)
+//     AND post.class <= pre.class so margin efficiency never regresses.
 func (k Keeper) IsValidRiskChange(ctx context.Context, accountIdx uint64) (bool, error) {
 	post, err := k.ComputeRiskInfo(ctx, accountIdx)
 	if err != nil {
@@ -242,15 +268,17 @@ func (k Keeper) IsValidRiskChange(ctx context.Context, accountIdx uint64) (bool,
 	pre, err := k.Cache.Get(ctx, accountIdx)
 	if err != nil {
 		if errors.Is(err, collections.ErrNotFound) {
-			return postClass == perptypes.HealthHealthy, nil
+			// No pre-state snapshot means the handler never captured
+			// one: reject so the operator has to wire a snapshot on
+			// the Msg entry path rather than silently letting an
+			// unhealthy post-state pass.
+			return false, nil
 		}
 		return false, err
 	}
 	preClass := classifyHealth(pre)
-	// post must not be worse than pre — cross multiplication:
-	// (post.tav * pre.im) >= (pre.tav * post.im) when both sides healthy-ish
 	if postP.InitialMarginRequirement.IsZero() {
-		return true, nil
+		return postClass <= preClass, nil
 	}
 	if pre.InitialMarginRequirement.IsZero() {
 		return postClass <= preClass, nil
@@ -287,7 +315,7 @@ func (k Keeper) GetPositionZeroPrice(ctx context.Context, accountIdx uint64, mar
 }
 
 // GetPositionMarkValue returns |position| * mark_price as a math.Int.
-// Returns zero when no position exists or no mark price is available.
+// Returns zero when no position exists; errors out on missing/stale oracle.
 func (k Keeper) GetPositionMarkValue(ctx context.Context, accountIdx uint64, marketIdx uint32) (math.Int, error) {
 	pos, err := k.accountKeeper.GetPosition(ctx, accountIdx, marketIdx)
 	if err != nil {
@@ -296,12 +324,14 @@ func (k Keeper) GetPositionMarkValue(ctx context.Context, accountIdx uint64, mar
 	if pos.Position.IsZero() {
 		return math.ZeroInt(), nil
 	}
-	px, err := k.oracleKeeper.GetPrice(ctx, marketIdx)
+	px, err := k.oracleKeeper.GetFreshPrice(ctx, marketIdx)
 	if err != nil {
-		return math.ZeroInt(), err
+		return math.ZeroInt(), types.ErrMissingPrice.Wrapf(
+			"account=%d market=%d: %s", accountIdx, marketIdx, err.Error(),
+		)
 	}
 	if px.MarkPrice == 0 {
-		return math.ZeroInt(), nil
+		return math.ZeroInt(), types.ErrZeroMarkPrice
 	}
 	return pos.Position.Abs().Mul(math.NewIntFromUint64(uint64(px.MarkPrice))), nil
 }
@@ -321,12 +351,14 @@ func (k Keeper) GetPositionUnrealizedPnL(ctx context.Context, accountIdx uint64,
 	if pos.Position.IsZero() {
 		return math.ZeroInt(), nil
 	}
-	px, err := k.oracleKeeper.GetPrice(ctx, marketIdx)
+	px, err := k.oracleKeeper.GetFreshPrice(ctx, marketIdx)
 	if err != nil {
-		return math.ZeroInt(), err
+		return math.ZeroInt(), types.ErrMissingPrice.Wrapf(
+			"account=%d market=%d: %s", accountIdx, marketIdx, err.Error(),
+		)
 	}
 	if px.MarkPrice == 0 {
-		return math.ZeroInt(), nil
+		return math.ZeroInt(), types.ErrZeroMarkPrice
 	}
 	return pos.Position.Mul(math.NewIntFromUint64(uint64(px.MarkPrice))).Sub(pos.EntryQuote), nil
 }

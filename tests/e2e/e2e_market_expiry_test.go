@@ -120,6 +120,9 @@ func (s *MarketExpirySuite) TestExpiryClosesOpenPositions() {
 
 	// Cross at 50_000 for 1 BTC.
 	const entry = uint32(50_000)
+	// Seed the oracle before the first fill so the risk keeper can
+	// classify the resulting positions.
+	s.InjectPrice(s.Users[3].Address, s.MarketIndex, entry, entry)
 	const qty = uint64(100_000_000) // 1 BTC at 8 decimals
 	askResp := s.PlaceLimitOrder(s.Users[1], msg.OrderOpts{
 		MarketIndex:      s.MarketIndex,

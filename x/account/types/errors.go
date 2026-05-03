@@ -34,4 +34,7 @@ var (
 	ErrInvalidPoolUpdate      = errors.Register(ModuleName, 39, "invalid public pool update")
 	ErrInvalidPoolAccount     = errors.Register(ModuleName, 40, "account is not a public pool")
 	ErrPoolCannotPlaceOrder   = errors.Register(ModuleName, 41, "public pool / insurance fund cannot place orders directly")
+	ErrPoolGenericMsg         = errors.Register(ModuleName, 42, "public pool / insurance fund cannot use generic account msg; use share/strategy paths")
+	ErrRiskKeeperUnset        = errors.Register(ModuleName, 43, "risk keeper is not wired; cannot validate risk change")
+	ErrInvalidMarginMode      = errors.Register(ModuleName, 44, "invalid margin mode")
 )

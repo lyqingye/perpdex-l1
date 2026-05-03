@@ -5,6 +5,7 @@ import (
 
 	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
 	markettypes "github.com/perpdex/perpdex-l1/x/market/types"
+	oracletypes "github.com/perpdex/perpdex-l1/x/oracle/types"
 	orderbooktypes "github.com/perpdex/perpdex-l1/x/orderbook/types"
 	tradekeeper "github.com/perpdex/perpdex-l1/x/trade/keeper"
 )
@@ -33,9 +34,29 @@ type OrderbookKeeper interface {
 	WouldCross(ctx context.Context, market uint32, isAsk bool, price uint32) (bool, error)
 	IndexClientOrder(ctx context.Context, o orderbooktypes.Order) error
 	UnindexClientOrder(ctx context.Context, o orderbooktypes.Order) error
+	// UnindexClientOrderIfMatches removes the (market, account, client_id)
+	// -> order_index mapping only when it still points at `o.OrderIndex`.
+	// Prevents a cancel from wiping the index of a freshly-created new
+	// order that happens to share the same client_order_index.
+	UnindexClientOrderIfMatches(ctx context.Context, o orderbooktypes.Order) error
+	// HasOpenClientOrder reports whether (market, account, clientID)
+	// currently resolves to an open/pending order in the book.
+	HasOpenClientOrder(ctx context.Context, market uint32, account uint64, clientID uint64) (bool, uint64, error)
+	AddTrigger(ctx context.Context, market uint32, triggerPrice uint32, orderIndex uint64) error
+	RemoveTrigger(ctx context.Context, market uint32, triggerPrice uint32, orderIndex uint64) error
+	IterateTriggers(ctx context.Context, cb func(market uint32, triggerPrice uint32, orderIndex uint64) bool) error
+	// IterateUserOrders walks every (market, account, clientID) ->
+	// order_index mapping owned by `account`. `cb` returns true to stop.
+	IterateUserOrders(ctx context.Context, account uint64, cb func(orderbooktypes.Order) bool) error
 }
 
 type TradeKeeper interface {
 	ApplyPerpsMatching(ctx context.Context, f tradekeeper.Fill) error
 	ApplySpotMatching(ctx context.Context, f tradekeeper.Fill, baseAssetID, quoteAssetID uint32) error
+}
+
+// OracleKeeper provides the mark price used by the matching EndBlocker to
+// resolve trigger orders.
+type OracleKeeper interface {
+	GetPrice(ctx context.Context, marketIdx uint32) (oracletypes.OraclePrice, error)
 }

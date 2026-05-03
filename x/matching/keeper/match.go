@@ -64,11 +64,55 @@ func (k Keeper) matchOrder(ctx context.Context, taker *orderbooktypes.Order, max
 			}
 			continue
 		}
+		// Reduce-only invariant for the taker: if the taker is reduce-only,
+		// the fill must only reduce (never grow) the taker's current
+		// position absolute value. Taker side (isAsk=true ⇒ sell, reducing
+		// a long position).
+		if isPerp && taker.ReduceOnly {
+			pos, err := k.accountKeeper.GetPosition(ctx, taker.OwnerAccountIndex, taker.MarketIndex)
+			if err != nil {
+				return totalFilled, perptypes.OrderStatusCancelled, err
+			}
+			if pos.Position.IsZero() ||
+				(taker.IsAsk && !pos.Position.IsPositive()) ||
+				(!taker.IsAsk && !pos.Position.IsNegative()) {
+				break
+			}
+		}
 		// Maker reduce-only check is best-effort: maker's stored reduce_only
 		// flag is honoured when present.
+		if isPerp && best.ReduceOnly {
+			pos, err := k.accountKeeper.GetPosition(ctx, best.OwnerAccountIndex, taker.MarketIndex)
+			if err != nil {
+				return totalFilled, perptypes.OrderStatusCancelled, err
+			}
+			if pos.Position.IsZero() ||
+				(taker.IsAsk && !pos.Position.IsNegative()) ||
+				(!taker.IsAsk && !pos.Position.IsPositive()) {
+				if err := k.bookKeeper.RemoveOrderbookEntry(ctx, taker.MarketIndex, !taker.IsAsk, best.OrderIndex); err != nil {
+					return totalFilled, perptypes.OrderStatusCancelled, err
+				}
+				continue
+			}
+		}
 		tradeBase := taker.RemainingBaseAmount
 		if tradeBase > best.RemainingBaseAmount {
 			tradeBase = best.RemainingBaseAmount
+		}
+		// Cap reduce-only fills to the taker's current position size so a
+		// single trade cannot flip the account to the opposite side.
+		if isPerp && taker.ReduceOnly {
+			pos, err := k.accountKeeper.GetPosition(ctx, taker.OwnerAccountIndex, taker.MarketIndex)
+			if err != nil {
+				return totalFilled, perptypes.OrderStatusCancelled, err
+			}
+			limit := pos.Position.Abs().Uint64()
+			if limit == 0 {
+				break
+			}
+			if tradeBase > limit {
+				tradeBase = limit
+			}
 		}
 
 		fill := tradekeeper.Fill{

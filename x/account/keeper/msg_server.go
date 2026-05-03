@@ -102,6 +102,10 @@ func (m msgServer) Withdraw(ctx context.Context, msg *types.MsgWithdraw) (*types
 	} else if !ok {
 		return nil, types.ErrUnauthorized
 	}
+	// Pool/IF accounts must use share/strategy paths only.
+	if err := m.rejectPoolAccount(ctx, msg.AccountIndex); err != nil {
+		return nil, err
+	}
 
 	asset, err := m.assetKeeper.GetAsset(ctx, msg.AssetIndex)
 	if err != nil {
@@ -113,12 +117,28 @@ func (m msgServer) Withdraw(ctx context.Context, msg *types.MsgWithdraw) (*types
 	if msg.Amount < asset.MinWithdrawalAmount {
 		return nil, types.ErrAmountTooSmall
 	}
+	// Settle pending funding on all non-zero positions so the post-state
+	// risk check sees the up-to-date collateral/entry_quote.
+	if err := m.settleAllPositionFunding(ctx, msg.AccountIndex); err != nil {
+		return nil, err
+	}
+	// Capture pre-state risk so IsValidRiskChange can enforce the
+	// "strict improvement" rule for accounts that are already
+	// unhealthy (e.g. returning collateral to a HEALTHY state).
+	if err := m.snapshotPreRisk(ctx, msg.AccountIndex); err != nil {
+		return nil, err
+	}
 
 	// Internal precision delta to subtract.
 	delta := math.NewIntFromUint64(msg.Amount).Mul(math.NewIntFromUint64(asset.ExtensionMultiplier))
 
 	switch msg.RouteType {
 	case perptypes.RouteTypePerps:
+		// Perps route shares a canonical collateral bucket; only margin-enabled
+		// assets can settle via the perps route, symmetrically to Deposit.
+		if asset.MarginMode != perptypes.MarginModeEnabled {
+			return nil, types.ErrAssetNotMargin
+		}
 		if err := m.AddCollateral(ctx, msg.AccountIndex, delta.Neg()); err != nil {
 			return nil, err
 		}
@@ -130,14 +150,8 @@ func (m msgServer) Withdraw(ctx context.Context, msg *types.MsgWithdraw) (*types
 		return nil, types.ErrInvalidRoute
 	}
 
-	if m.riskKeeper != nil {
-		ok, err := m.riskKeeper.IsValidRiskChange(ctx, msg.AccountIndex)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			return nil, types.ErrRiskRegression
-		}
+	if err := m.requireRiskOK(ctx, msg.AccountIndex); err != nil {
+		return nil, err
 	}
 
 	dest, err := sdk.AccAddressFromBech32(msg.Sender)
@@ -168,6 +182,11 @@ func (m msgServer) CreateSubAccount(ctx context.Context, msg *types.MsgCreateSub
 	if master.OwnerAddress != msg.Sender {
 		return nil, types.ErrUnauthorized
 	}
+	// Sub-accounts can only be opened under a master; pool/IF accounts
+	// don't have user-facing sub-accounts.
+	if master.AccountType != perptypes.MasterAccountType {
+		return nil, types.ErrInvalidAccountType.Wrap("master is not a master account")
+	}
 	sub, err := m.Keeper.CreateSubAccount(ctx, master)
 	if err != nil {
 		return nil, err
@@ -189,6 +208,10 @@ func (m msgServer) UpdateAccountConfig(ctx context.Context, msg *types.MsgUpdate
 	if a.OwnerAddress != msg.Sender {
 		return nil, types.ErrUnauthorized
 	}
+	if a.AccountType == perptypes.PublicPoolAccountType ||
+		a.AccountType == perptypes.InsuranceFundAccountType {
+		return nil, types.ErrPoolGenericMsg.Wrapf("account %d is a pool account", a.AccountIndex)
+	}
 	a.AccountTradingMode = msg.NewTradingMode
 	if err := m.SetAccount(ctx, a); err != nil {
 		return nil, err
@@ -200,12 +223,20 @@ func (m msgServer) UpdateAccountAssetConfig(ctx context.Context, msg *types.MsgU
 	if err := msg.ValidateBasic(); err != nil {
 		return nil, err
 	}
+	if msg.NewMarginMode != perptypes.MarginModeDisabled &&
+		msg.NewMarginMode != perptypes.MarginModeEnabled {
+		return nil, types.ErrInvalidMarginMode.Wrapf("new_margin_mode=%d", msg.NewMarginMode)
+	}
 	a, err := m.GetAccount(ctx, msg.AccountIndex)
 	if err != nil {
 		return nil, err
 	}
 	if a.OwnerAddress != msg.Sender {
 		return nil, types.ErrUnauthorized
+	}
+	if a.AccountType == perptypes.PublicPoolAccountType ||
+		a.AccountType == perptypes.InsuranceFundAccountType {
+		return nil, types.ErrPoolGenericMsg.Wrapf("account %d is a pool account", a.AccountIndex)
 	}
 	aa, err := m.GetAccountAsset(ctx, msg.AccountIndex, msg.AssetIndex)
 	if err != nil {
@@ -227,6 +258,14 @@ func (m msgServer) Transfer(ctx context.Context, msg *types.MsgTransfer) (*types
 	} else if !ok {
 		return nil, types.ErrUnauthorized
 	}
+	// Pool/IF accounts cannot be the source or destination of a
+	// generic Transfer; use share/strategy paths.
+	if err := m.rejectPoolAccount(ctx, msg.FromAccountIndex); err != nil {
+		return nil, err
+	}
+	if err := m.rejectPoolAccount(ctx, msg.ToAccountIndex); err != nil {
+		return nil, err
+	}
 
 	asset, err := m.assetKeeper.GetAsset(ctx, msg.AssetIndex)
 	if err != nil {
@@ -234,6 +273,14 @@ func (m msgServer) Transfer(ctx context.Context, msg *types.MsgTransfer) (*types
 	}
 	if !asset.Enabled {
 		return nil, types.ErrAssetDisabled
+	}
+	// Settle pending funding on the sender (the account whose risk we check)
+	// so the post-state risk uses the up-to-date collateral / entry_quote.
+	if err := m.settleAllPositionFunding(ctx, msg.FromAccountIndex); err != nil {
+		return nil, err
+	}
+	if err := m.snapshotPreRisk(ctx, msg.FromAccountIndex); err != nil {
+		return nil, err
 	}
 	delta := math.NewIntFromUint64(msg.Amount).Mul(math.NewIntFromUint64(asset.ExtensionMultiplier))
 
@@ -255,14 +302,8 @@ func (m msgServer) Transfer(ctx context.Context, msg *types.MsgTransfer) (*types
 		}
 	}
 
-	if m.riskKeeper != nil {
-		ok, err := m.riskKeeper.IsValidRiskChange(ctx, msg.FromAccountIndex)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			return nil, types.ErrRiskRegression
-		}
+	if err := m.requireRiskOK(ctx, msg.FromAccountIndex); err != nil {
+		return nil, err
 	}
 	return &types.MsgTransferResponse{}, nil
 }
@@ -276,8 +317,22 @@ func (m msgServer) UpdateMargin(ctx context.Context, msg *types.MsgUpdateMargin)
 	} else if !ok {
 		return nil, types.ErrUnauthorized
 	}
+	if err := m.rejectPoolAccount(ctx, msg.AccountIndex); err != nil {
+		return nil, err
+	}
 	if msg.Action != perptypes.AddMargin && msg.Action != perptypes.RemoveMargin {
 		return nil, types.ErrInvalidMarginAction
+	}
+	// Settle pending funding on the touched isolated position so its
+	// allocated_margin/entry_quote/collateral reflect the latest rate
+	// before the risk check fires.
+	if m.fundingKeeper != nil {
+		if err := m.fundingKeeper.SettlePositionFunding(ctx, msg.AccountIndex, msg.MarketIndex); err != nil {
+			return nil, err
+		}
+	}
+	if err := m.snapshotPreRisk(ctx, msg.AccountIndex); err != nil {
+		return nil, err
 	}
 	pos, err := m.GetPosition(ctx, msg.AccountIndex, msg.MarketIndex)
 	if err != nil {
@@ -309,14 +364,8 @@ func (m msgServer) UpdateMargin(ctx context.Context, msg *types.MsgUpdateMargin)
 		return nil, err
 	}
 
-	if m.riskKeeper != nil {
-		ok, err := m.riskKeeper.IsValidRiskChange(ctx, msg.AccountIndex)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			return nil, types.ErrRiskRegression
-		}
+	if err := m.requireRiskOK(ctx, msg.AccountIndex); err != nil {
+		return nil, err
 	}
 	return &types.MsgUpdateMarginResponse{}, nil
 }
@@ -329,6 +378,32 @@ func (m msgServer) UpdateLeverage(ctx context.Context, msg *types.MsgUpdateLever
 		return nil, err
 	} else if !ok {
 		return nil, types.ErrUnauthorized
+	}
+	if err := m.rejectPoolAccount(ctx, msg.AccountIndex); err != nil {
+		return nil, err
+	}
+	if msg.NewMarginMode != perptypes.CrossMargin && msg.NewMarginMode != perptypes.IsolatedMargin {
+		return nil, types.ErrInvalidMarginMode.Wrapf("new_margin_mode=%d", msg.NewMarginMode)
+	}
+	// Market + IMF validation: the market must exist, and the new IMF
+	// must satisfy market_min <= new_imf <= margin_tick.
+	if m.marketKeeper != nil {
+		md, err := m.marketKeeper.GetMarketDetails(ctx, msg.MarketIndex)
+		if err != nil {
+			return nil, err
+		}
+		if msg.NewInitialMarginFraction < md.MinInitialMarginFraction {
+			return nil, types.ErrInvalidParams.Wrapf(
+				"new_initial_margin_fraction=%d below market min=%d",
+				msg.NewInitialMarginFraction, md.MinInitialMarginFraction,
+			)
+		}
+		if msg.NewInitialMarginFraction > uint32(perptypes.MarginTick) {
+			return nil, types.ErrInvalidParams.Wrapf(
+				"new_initial_margin_fraction=%d exceeds MarginTick=%d",
+				msg.NewInitialMarginFraction, perptypes.MarginTick,
+			)
+		}
 	}
 	pos, err := m.GetPosition(ctx, msg.AccountIndex, msg.MarketIndex)
 	if err != nil {

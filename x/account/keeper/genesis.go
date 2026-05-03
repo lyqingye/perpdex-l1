@@ -48,6 +48,60 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 	if err := k.IterateAccounts(ctx, func(a types.Account) bool { accounts = append(accounts, a); return false }); err != nil {
 		return nil, err
 	}
+
+	// Iterate every `AccountAsset`, `AccountPosition` and `AccountMeta` row
+	// so that state export -> import is lossless. Without these iterators
+	// spot balances / perp positions / per-account bookkeeping were
+	// silently dropped on genesis round-trip.
+	assets := []types.AccountAsset{}
+	{
+		iter, err := k.AccountAssets.Iterate(ctx, nil)
+		if err != nil {
+			return nil, err
+		}
+		for ; iter.Valid(); iter.Next() {
+			v, err := iter.Value()
+			if err != nil {
+				iter.Close()
+				return nil, err
+			}
+			assets = append(assets, v)
+		}
+		iter.Close()
+	}
+	positions := []types.AccountPosition{}
+	{
+		iter, err := k.AccountPositions.Iterate(ctx, nil)
+		if err != nil {
+			return nil, err
+		}
+		for ; iter.Valid(); iter.Next() {
+			v, err := iter.Value()
+			if err != nil {
+				iter.Close()
+				return nil, err
+			}
+			positions = append(positions, v)
+		}
+		iter.Close()
+	}
+	metas := []types.AccountMeta{}
+	{
+		iter, err := k.AccountMetas.Iterate(ctx, nil)
+		if err != nil {
+			return nil, err
+		}
+		for ; iter.Valid(); iter.Next() {
+			v, err := iter.Value()
+			if err != nil {
+				iter.Close()
+				return nil, err
+			}
+			metas = append(metas, v)
+		}
+		iter.Close()
+	}
+
 	master, err := k.NextMasterIndex.Peek(ctx)
 	if err != nil {
 		return nil, err
@@ -57,8 +111,11 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 		return nil, err
 	}
 	return &types.GenesisState{
-		Params:   p,
-		Counters: types.Counters{NextMasterAccountIndex: master, NextSubAccountIndex: sub},
-		Accounts: accounts,
+		Params:           p,
+		Counters:         types.Counters{NextMasterAccountIndex: master, NextSubAccountIndex: sub},
+		Accounts:         accounts,
+		AccountAssets:    assets,
+		AccountPositions: positions,
+		AccountMetas:     metas,
 	}, nil
 }

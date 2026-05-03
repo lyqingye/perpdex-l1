@@ -628,10 +628,12 @@ func (m msgServer) burnSharesCore(
 		// Operator-fee shares are awarded to the operator.
 		info.OperatorShares = info.OperatorShares.Add(operatorFeeShares)
 	}
-	if !frozen && info.OperatorShares.IsPositive() {
-		if !CheckMinOperatorShareRate(*info) {
-			return nil, types.ErrOperatorRateViolation
-		}
+	// Non-frozen pools must always respect the operator floor, including
+	// when an operator burn drove OperatorShares to zero (previously the
+	// IsPositive guard let that edge case bypass the check, letting the
+	// operator withdraw their skin-in-the-game entirely).
+	if !frozen && !CheckMinOperatorShareRate(*info) {
+		return nil, types.ErrOperatorRateViolation
 	}
 
 	// Re-fetch & write pool with updated info + reduced collateral.

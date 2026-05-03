@@ -23,6 +23,7 @@ type Keeper struct {
 	// Optional / wired post-construction:
 	fundingKeeper types.FundingKeeper
 	riskKeeper    types.RiskKeeper
+	marketKeeper  types.MarketKeeper
 
 	// State.
 	Schema           collections.Schema
@@ -76,6 +77,10 @@ func (k *Keeper) SetFundingKeeper(f types.FundingKeeper) { k.fundingKeeper = f }
 
 // SetRiskKeeper allows late-binding the risk keeper to break a cycle.
 func (k *Keeper) SetRiskKeeper(r types.RiskKeeper) { k.riskKeeper = r }
+
+// SetMarketKeeper allows late-binding the market keeper (late because the
+// market keeper is built after account keeper during wiring).
+func (k *Keeper) SetMarketKeeper(m types.MarketKeeper) { k.marketKeeper = m }
 
 // AssetKeeper returns the wired asset keeper for cross-module use.
 func (k Keeper) AssetKeeper() types.AssetKeeper { return k.assetKeeper }

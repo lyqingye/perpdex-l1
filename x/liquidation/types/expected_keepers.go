@@ -17,6 +17,7 @@ type AccountKeeper interface {
 	SetPosition(ctx context.Context, p accounttypes.AccountPosition) error
 	AddCollateral(ctx context.Context, idx uint64, delta math.Int) error
 	IterateAccounts(ctx context.Context, cb func(accounttypes.Account) bool) error
+	IsAuthorized(ctx context.Context, signer string, idx uint64) (bool, error)
 }
 
 type MarketKeeper interface {

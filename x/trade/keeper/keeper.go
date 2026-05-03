@@ -67,9 +67,9 @@ type Fill struct {
 	MakerFee          uint32
 	NoFee             bool // liquidation/deleverage path
 	// NoRiskCheck skips the post-trade IsValidRiskChange call on the
-	// taker. Reserved for forced close-outs (market-expiry exit, etc.)
-	// where the insurance fund has to absorb residual size even when
-	// doing so worsens its own health classification.
+	// taker and maker. Reserved for forced close-outs (market-expiry
+	// exit, etc.) where the insurance fund or ADL counterparty must
+	// absorb residual size even when doing so worsens its own health.
 	NoRiskCheck bool
 }
 
@@ -80,14 +80,25 @@ type Fill struct {
 //  3. realize PnL into collateral
 //  4. apply taker/maker fees, transfer to TREASURY
 //  5. recompute isolated allocated_margin if needed
-//  6. update OI
-//  7. validate IsValidRiskChange for taker (and maker if cross-margined)
+//  6. update OI using |position| deltas (both sides, divided by 2)
+//  7. validate IsValidRiskChange for BOTH taker and maker
 func (k Keeper) ApplyPerpsMatching(ctx context.Context, f Fill) error {
 	if err := k.fundingKeeper.SettlePositionFunding(ctx, f.MakerAccountIndex, f.MarketIndex); err != nil {
 		return err
 	}
 	if err := k.fundingKeeper.SettlePositionFunding(ctx, f.TakerAccountIndex, f.MarketIndex); err != nil {
 		return err
+	}
+	// Snapshot pre-state risk for both sides so IsValidRiskChange can
+	// enforce strict improvement for accounts that were already
+	// unhealthy (e.g. reducing an underwater position).
+	if !f.NoRiskCheck {
+		if err := k.riskKeeper.SnapshotPreRisk(ctx, f.MakerAccountIndex); err != nil {
+			return err
+		}
+		if err := k.riskKeeper.SnapshotPreRisk(ctx, f.TakerAccountIndex); err != nil {
+			return err
+		}
 	}
 
 	makerSign := int64(1)
@@ -96,10 +107,12 @@ func (k Keeper) ApplyPerpsMatching(ctx context.Context, f Fill) error {
 	}
 	takerSign := -makerSign
 
-	if err := k.applyPositionChange(ctx, f.MakerAccountIndex, f.MarketIndex, f.Price, f.BaseAmount, makerSign); err != nil {
+	makerOIDelta, err := k.applyPositionChange(ctx, f.MakerAccountIndex, f.MarketIndex, f.Price, f.BaseAmount, makerSign)
+	if err != nil {
 		return err
 	}
-	if err := k.applyPositionChange(ctx, f.TakerAccountIndex, f.MarketIndex, f.Price, f.BaseAmount, takerSign); err != nil {
+	takerOIDelta, err := k.applyPositionChange(ctx, f.TakerAccountIndex, f.MarketIndex, f.Price, f.BaseAmount, takerSign)
+	if err != nil {
 		return err
 	}
 
@@ -119,29 +132,42 @@ func (k Keeper) ApplyPerpsMatching(ctx context.Context, f Fill) error {
 		}
 	}
 
-	if err := k.marketKeeper.UpdateOpenInterest(ctx, f.MarketIndex, int64(f.BaseAmount)); err != nil {
+	// Open interest = sum over accounts of |position|, divided by 2 since
+	// every fill touches exactly two accounts. Using the |newSize|-|oldSize|
+	// delta ensures round-trips (open then close) return OI to its original
+	// value rather than linearly growing with cumulative fill volume.
+	oiDelta := (makerOIDelta + takerOIDelta) / 2
+	if err := k.marketKeeper.UpdateOpenInterest(ctx, f.MarketIndex, oiDelta); err != nil {
 		return err
 	}
 
 	if f.NoRiskCheck {
 		return nil
 	}
-	ok, err := k.riskKeeper.IsValidRiskChange(ctx, f.TakerAccountIndex)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return fmt.Errorf("trade: taker risk regression")
+	// Both maker and taker must pass the post-state risk check: makers
+	// resting on the book otherwise have an open attack vector where a
+	// low-collateral maker lets the book close against them into a fresh
+	// unhealthy position. Lighter parity: l2_trade enforces both sides.
+	for _, idx := range []uint64{f.TakerAccountIndex, f.MakerAccountIndex} {
+		ok, err := k.riskKeeper.IsValidRiskChange(ctx, idx)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("trade: account %d risk regression", idx)
+		}
 	}
 	return nil
 }
 
 // applyPositionChange handles the four position-change scenarios from
-// 14-trade.md §3.2: open new, increase, decrease, flip.
-func (k Keeper) applyPositionChange(ctx context.Context, accountIdx uint64, marketIdx uint32, price uint32, baseAmount uint64, sign int64) error {
+// 14-trade.md §3.2: open new, increase, decrease, flip. It returns the
+// signed open-interest delta (new_size.abs() - old_size.abs()) so the caller
+// can roll the market-level OI forward correctly even for flip scenarios.
+func (k Keeper) applyPositionChange(ctx context.Context, accountIdx uint64, marketIdx uint32, price uint32, baseAmount uint64, sign int64) (int64, error) {
 	pos, err := k.accountKeeper.GetPosition(ctx, accountIdx, marketIdx)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	curSize := pos.Position
 	delta := math.NewIntFromUint64(baseAmount).MulRaw(sign)
@@ -161,7 +187,7 @@ func (k Keeper) applyPositionChange(ctx context.Context, accountIdx uint64, mark
 		// pure decrease (or close): realize partial PnL into collateral
 		realized := notional.Add(curEntryQuote.Mul(delta).Quo(curSize.Neg()))
 		if err := k.accountKeeper.AddCollateral(ctx, accountIdx, realized); err != nil {
-			return err
+			return 0, err
 		}
 		// scale entry_quote proportionally to remaining size
 		if curSize.IsZero() {
@@ -175,14 +201,20 @@ func (k Keeper) applyPositionChange(ctx context.Context, accountIdx uint64, mark
 		closeNotional := closeBase.Mul(math.NewIntFromUint64(uint64(price))).MulRaw(-sign)
 		realized := closeNotional.Add(curEntryQuote)
 		if err := k.accountKeeper.AddCollateral(ctx, accountIdx, realized); err != nil {
-			return err
+			return 0, err
 		}
 		residual := delta.Add(curSize) // residual same sign as delta
 		residualNotional := residual.Mul(math.NewIntFromUint64(uint64(price)))
 		pos.EntryQuote = residualNotional
 	}
 	pos.Position = newSize
-	return k.accountKeeper.SetPosition(ctx, pos)
+	if err := k.accountKeeper.SetPosition(ctx, pos); err != nil {
+		return 0, err
+	}
+	// OI contribution from this account: |new| - |old|. Positive when the
+	// account grows its exposure, negative when reducing / closing.
+	oiDelta := newSize.Abs().Sub(curSize.Abs())
+	return oiDelta.Int64(), nil
 }
 
 func sameSign(a, b math.Int) bool {
@@ -227,14 +259,31 @@ func (k Keeper) ApplySpotMatching(ctx context.Context, f Fill, baseAssetID, quot
 	return nil
 }
 
+// transferAsset moves `amount` of `assetID` from `from` to `to`. The source
+// must have a balance at least equal to `amount`; otherwise the transfer
+// aborts with an insufficient funds error rather than silently producing a
+// negative balance (which would break asset conservation).
 func (k Keeper) transferAsset(ctx context.Context, from, to uint64, assetID uint32, amount math.Int) error {
+	if amount.IsNegative() {
+		return fmt.Errorf("trade: transfer amount must be non-negative")
+	}
 	src, err := k.accountKeeper.GetAccountAsset(ctx, from, assetID)
 	if err != nil {
 		return err
 	}
+	if src.Balance.IsNil() {
+		src.Balance = math.ZeroInt()
+	}
+	if src.Balance.LT(amount) {
+		return fmt.Errorf("trade: account %d insufficient balance for asset %d: have %s need %s",
+			from, assetID, src.Balance.String(), amount.String())
+	}
 	dst, err := k.accountKeeper.GetAccountAsset(ctx, to, assetID)
 	if err != nil {
 		return err
+	}
+	if dst.Balance.IsNil() {
+		dst.Balance = math.ZeroInt()
 	}
 	src.Balance = src.Balance.Sub(amount)
 	dst.Balance = dst.Balance.Add(amount)

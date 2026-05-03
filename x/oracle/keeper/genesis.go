@@ -11,7 +11,10 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 		return err
 	}
 	for _, p := range gs.Prices {
-		if err := k.SetPrice(ctx, p); err != nil {
+		// Genesis may seed placeholder rows with zero prices that will
+		// be populated later by the oracle module; bypass the non-zero
+		// validation for that single code path.
+		if err := k.SetPriceUnsafe(ctx, p); err != nil {
 			return err
 		}
 	}

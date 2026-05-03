@@ -46,6 +46,13 @@ func (s *TradingFlowSuite) SetupTest() {
 	// Pick a market index in the perp range. 1 is below MaxPerpsMarketIndex
 	// and not reserved by other tests.
 	s.MarketIndex = s.CreatePerpMarket(msg.DefaultPerpMarketOpts(1, s.BTCAssetIndex))
+
+	// Seed a live oracle price so the risk keeper can classify
+	// non-zero positions. Prior to the audit fixes the risk module
+	// silently skipped missing prices; it now fails closed, so
+	// tests that open perp positions must provide a mark price.
+	s.AddOracleProvider(s.Users[3].Address, "trading-flow-test-provider")
+	s.InjectPrice(s.Users[3].Address, s.MarketIndex, 50_000, 50_000)
 }
 
 // TestCrossingFillRoundTrip drives the full trading round-trip:
@@ -143,12 +150,12 @@ func (s *TradingFlowSuite) TestCrossingFillRoundTrip() {
 	s.Require().True(pos0Final.IsZero(), "user0 position must be flat after the close trade")
 	s.Require().True(pos1Final.IsZero(), "user1 position must be flat after the close trade")
 
-	// In the current trade keeper OpenInterest tracks the total base
-	// volume traded into the market (it never decreases on close), so we
-	// expect it to have grown to 2*orderQty after the round-trip.
+	// Open interest must track the current net outstanding base across
+	// accounts (sum(|position|)/2). After a full round-trip (open then
+	// close) both sides are flat, so OI returns to zero.
 	finalDetails := s.QueryMarketDetails(s.MarketIndex)
-	s.Require().Equal(int64(2*orderQty), finalDetails.OpenInterest,
-		"open interest accumulator must reflect every fill")
+	s.Require().Equal(int64(0), finalDetails.OpenInterest,
+		"open interest must return to zero after a full round-trip")
 
 	// Best-bid/ask must drain back to (0, 0) since every order was filled.
 	bidEnd, askEnd := s.QueryBestBidAsk(s.MarketIndex)

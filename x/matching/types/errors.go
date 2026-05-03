@@ -17,4 +17,8 @@ var (
 	ErrTriggerInactive    = errors.Register(ModuleName, 13, "trigger order not yet active")
 	ErrReduceOnlyViolated = errors.Register(ModuleName, 14, "reduce-only invariant violated")
 	ErrPoolCannotPlaceOrder = errors.Register(ModuleName, 15, "public pool / insurance fund cannot place orders directly")
+	ErrDuplicateClientOrder = errors.Register(ModuleName, 16, "duplicate client_order_index for open order")
+	ErrOrderNotCancelable   = errors.Register(ModuleName, 17, "order status does not allow cancel/modify")
+	ErrUnimplemented        = errors.Register(ModuleName, 18, "feature not implemented")
+	ErrQuoteLimitExceeded   = errors.Register(ModuleName, 19, "base*price exceeds market quote limit")
 )

@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 
+	perptypes "github.com/perpdex/perpdex-l1/types"
 	"github.com/perpdex/perpdex-l1/x/liquidation/types"
 )
 
@@ -52,6 +53,35 @@ func (m msgServer) Deleverage(ctx context.Context, msg *types.MsgDeleverage) (*t
 	base := msg.BaseAmount
 	if base == 0 {
 		base = 1
+	}
+	// Sender must be authorised to operate the deleverager account.
+	// Insurance Fund / Public Pool deleveragers are protocol-level paths
+	// that only the governance authority may drive directly; ADL from
+	// a user account is permitted for the account's owner (master/sub
+	// of the same bech32 address).
+	deleverager, err := m.accountKeeper.GetAccount(ctx, msg.DeleveragerAccountIndex)
+	if err != nil {
+		return nil, err
+	}
+	isPool := deleverager.AccountType == perptypes.PublicPoolAccountType ||
+		deleverager.AccountType == perptypes.InsuranceFundAccountType
+	if isPool {
+		if msg.Sender != m.authority {
+			return nil, types.ErrUnauthorized.Wrapf(
+				"pool/if deleverage requires governance authority",
+			)
+		}
+	} else {
+		ok, err := m.accountKeeper.IsAuthorized(ctx, msg.Sender, msg.DeleveragerAccountIndex)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, types.ErrUnauthorized.Wrapf(
+				"sender=%s cannot drive deleverager_account_index=%d",
+				msg.Sender, msg.DeleveragerAccountIndex,
+			)
+		}
 	}
 	if err := m.Keeper.Deleverage(ctx, msg.VictimAccountIndex, msg.MarketIndex, msg.DeleveragerAccountIndex, base); err != nil {
 		return nil, err

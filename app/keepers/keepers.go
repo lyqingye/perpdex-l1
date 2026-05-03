@@ -385,11 +385,13 @@ func NewAppKeeper(
 		appKeepers.TradeKeeper,
 	)
 
-	// Late wiring (break import cycles): account needs funding/risk hooks;
-	// market needs the liquidation hook for expiry; ditto for funding.
+	// Late wiring (break import cycles): account needs funding/risk/market
+	// hooks; market needs the liquidation hook for expiry; ditto for funding.
 	appKeepers.PerpAccountKeeper.SetFundingKeeper(appKeepers.FundingKeeper)
 	appKeepers.PerpAccountKeeper.SetRiskKeeper(appKeepers.RiskKeeper)
+	appKeepers.PerpAccountKeeper.SetMarketKeeper(appKeepers.MarketKeeper)
 	appKeepers.MarketKeeper.SetLiquidationKeeper(appKeepers.LiquidationKeeper)
+	appKeepers.MatchingKeeper.SetOracleKeeper(appKeepers.OracleKeeper)
 
 	return appKeepers
 }
