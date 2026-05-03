@@ -1,0 +1,6 @@
+syntax = "proto3";
+package perpdex.trade.v1;
+
+option go_package = "github.com/perpdex/perpdex-l1/x/trade/types";
+
+message Params {}

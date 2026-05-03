@@ -1,0 +1,16 @@
+syntax = "proto3";
+package perpdex.account.v1;
+
+import "gogoproto/gogo.proto";
+import "perpdex/account/v1/account.proto";
+
+option go_package = "github.com/perpdex/perpdex-l1/x/account/types";
+
+message GenesisState {
+  Params params = 1 [(gogoproto.nullable) = false];
+  Counters counters = 2 [(gogoproto.nullable) = false];
+  repeated Account accounts = 3 [(gogoproto.nullable) = false];
+  repeated AccountAsset account_assets = 4 [(gogoproto.nullable) = false];
+  repeated AccountPosition account_positions = 5 [(gogoproto.nullable) = false];
+  repeated AccountMeta account_metas = 6 [(gogoproto.nullable) = false];
+}

@@ -1,0 +1,40 @@
+syntax = "proto3";
+package perpdex.risk.v1;
+
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/perpdex/perpdex-l1/x/risk/types";
+
+message RiskParameters {
+  string collateral = 1 [
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+  string collateral_with_funding = 2 [
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+  string total_account_value = 3 [
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+  string initial_margin_requirement = 4 [
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+  string maintenance_margin_requirement = 5 [
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+  string close_out_margin_requirement = 6 [
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+}
+
+message RiskInfo {
+  RiskParameters cross_risk_parameters = 1;
+  RiskParameters current_risk_parameters = 2;
+}
+
+message Params {}

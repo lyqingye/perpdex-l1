@@ -1,0 +1,23 @@
+syntax = "proto3";
+package perpdex.asset.v1;
+
+option go_package = "github.com/perpdex/perpdex-l1/x/asset/types";
+
+// Asset describes a registered asset usable as spot balance or perp collateral.
+message Asset {
+  uint32 asset_index = 1;
+  string denom = 2;
+  string display_name = 3;
+  uint32 decimals = 4;
+  uint64 extension_multiplier = 5;
+  uint64 min_transfer_amount = 6;
+  uint64 min_withdrawal_amount = 7;
+  uint32 margin_mode = 8;
+  bool enabled = 9;
+  int64 created_at = 10;
+}
+
+// Params is the module wide configuration for x/asset.
+message Params {
+  uint32 max_asset_index = 1;
+}

@@ -1,0 +1,15 @@
+syntax = "proto3";
+package perpdex.funding.v1;
+
+option go_package = "github.com/perpdex/perpdex-l1/x/funding/types";
+
+message FundingMetadata {
+  int64 last_funding_round_timestamp = 1;
+  int64 last_premium_timestamp = 2;
+}
+
+message Params {
+  int64 funding_period_ms = 1;
+  int64 funding_period_divisor = 2;
+  uint32 max_premium_sample_count = 3;
+}

@@ -1,0 +1,11 @@
+syntax = "proto3";
+package perpdex.risk.v1;
+
+import "gogoproto/gogo.proto";
+import "perpdex/risk/v1/risk.proto";
+
+option go_package = "github.com/perpdex/perpdex-l1/x/risk/types";
+
+message GenesisState {
+  Params params = 1 [(gogoproto.nullable) = false];
+}

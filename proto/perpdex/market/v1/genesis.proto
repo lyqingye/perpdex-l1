@@ -1,0 +1,13 @@
+syntax = "proto3";
+package perpdex.market.v1;
+
+import "gogoproto/gogo.proto";
+import "perpdex/market/v1/market.proto";
+
+option go_package = "github.com/perpdex/perpdex-l1/x/market/types";
+
+message GenesisState {
+  Params params = 1 [(gogoproto.nullable) = false];
+  repeated Market markets = 2 [(gogoproto.nullable) = false];
+  repeated MarketDetails market_details = 3 [(gogoproto.nullable) = false];
+}

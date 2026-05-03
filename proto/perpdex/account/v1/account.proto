@@ -1,0 +1,86 @@
+syntax = "proto3";
+package perpdex.account.v1;
+
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/perpdex/perpdex-l1/x/account/types";
+
+// Account is the perpdex account record. Master and sub accounts share this
+// structure; the discriminator is the index range plus account_type.
+message Account {
+  uint64 account_index = 1;
+  uint64 master_account_index = 2;
+  string owner_address = 3;
+  uint32 account_type = 4;
+  uint32 account_trading_mode = 5;
+  string collateral = 6 [
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+  int64 total_order_count = 7;
+  int64 total_non_cross_order_count = 8;
+  int64 cancel_all_time = 9;
+  int64 created_at = 10;
+}
+
+// AccountAsset stores spot asset balances per (account, asset).
+message AccountAsset {
+  uint64 account_index = 1;
+  uint32 asset_index = 2;
+  string balance = 3 [
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+  string locked_balance = 4 [
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+  uint32 margin_mode = 5;
+}
+
+// AccountPosition stores a perp position for (account, market).
+message AccountPosition {
+  uint64 account_index = 1;
+  uint32 market_index = 2;
+  string position = 3 [
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+  string entry_quote = 4 [
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+  string last_funding_rate_prefix_sum = 5 [
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+  uint32 initial_margin_fraction = 6;
+  uint32 margin_mode = 7;
+  string allocated_margin = 8 [
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+  int64 total_order_count = 9;
+  int64 total_position_tied_order_count = 10;
+  int64 created_at = 11;
+}
+
+// AccountMeta tracks low-frequency-write counters per account.
+message AccountMeta {
+  uint64 account_index = 1;
+  int64 next_client_order_index = 2;
+}
+
+// Params is module-wide configuration for x/account.
+message Params {
+  uint64 treasury_account_index = 1;
+  uint64 insurance_fund_account_index = 2;
+  uint64 min_partial_transfer_amount = 3;
+  uint64 min_partial_withdraw_amount = 4;
+}
+
+// Counters keeps next-available account indexes.
+message Counters {
+  uint64 next_master_account_index = 1;
+  uint64 next_sub_account_index = 2;
+}

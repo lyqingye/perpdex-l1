@@ -1,0 +1,202 @@
+package types
+
+const (
+	// UPerpDenom is the base (smallest) denom of the chain.
+	UPerpDenom = "uperp"
+	// HumanCoinUnit is the human readable name of the chain's display denom.
+	HumanCoinUnit = "perp"
+	// BaseCoinUnit is the base denom (alias for UPerpDenom).
+	BaseCoinUnit = "uperp"
+	// PerpExponent is the exponent of the human readable denom.
+	PerpExponent = 6
+)
+
+// Time constants (milliseconds).
+const (
+	SecondInMs = int64(1_000)
+	MinuteInMs = int64(60_000)
+	HourInMs   = int64(3_600_000)
+)
+
+// Funding constants. See zk-dex/l1/02-data-types.md §2.3.
+const (
+	FundingPeriod         = HourInMs
+	FundingPeriodDivisor  = int64(8)
+	FundingSmallClamp     = int64(500)
+	FundingBigClamp       = int64(40_000)
+	MaxPremiumSampleCount = uint32(60)
+	FundingRateTick       = int64(1_000_000)
+)
+
+// Precision / tick constants. See zk-dex/l1/02-data-types.md §2.2.
+const (
+	OneUSDC                    = uint64(1_000_000)
+	USDCToCollateralMultiplier = uint64(1_000_000)
+	OneUSDCCollateral          = uint64(1_000_000_000_000)
+	ImpactUSDCAmount           = uint64(500_000_000)
+	FeeTick                    = uint64(1_000_000)
+	MarginTick                 = uint32(10_000)
+	MarginFractionMultiplier   = uint64(100) // USDC_TO_COLLATERAL_MULTIPLIER / MARGIN_TICK
+	ShareTick                  = uint32(10_000)
+)
+
+// Account / market index ranges. See zk-dex/l1/02-data-types.md §2.4.
+const (
+	MaxAccountIndex                  = uint64(281_474_976_710_654)
+	NilAccountIndex                  = uint64(281_474_976_710_655)
+	MaxMasterAccountIndex            = uint64(140_737_488_355_327)
+	MinSubAccountIndex               = uint64(140_737_488_355_328)
+	NilMasterAccountIndex            = uint64(0)
+	TreasuryAccountIndex             = uint64(0)
+	InsuranceFundOperatorAccountIdx  = uint64(1)
+	MaxPerpsMarketIndex              = uint32(254)
+	MinSpotMarketIndex               = uint32(2048)
+	MaxSpotMarketIndex               = uint32(4094)
+	NilMarketIndex                   = uint32(255)
+	PositionListSize                 = uint32(255)
+	FirstUserMasterAccountIndex      = uint64(2)
+)
+
+// Asset constants.
+const (
+	NativeAssetIndex = uint32(1)
+	LITAssetIndex    = uint32(2)
+	USDCAssetIndex   = uint32(3)
+	MinAssetIndex    = uint32(1)
+	MaxAssetIndex    = uint32(62)
+	NilAssetIndex    = uint32(0)
+)
+
+// Order constants.
+const (
+	MaxOrderPrice         = uint32(4_294_967_295)
+	MaxOrderBaseAmount    = uint64(281_474_976_710_655)
+	MaxOrderQuoteAmount   = uint64(281_474_976_710_655)
+	FirstAskNonce         = int64(1)
+	FirstBidNonce         = int64(281_474_976_710_655)
+	MaxNonce              = int64(281_474_976_710_655)
+	MaxSkipNonceCap       = int64(140_737_488_355_327)
+	MinClientOrderIndex   = uint64(1)
+	MaxClientOrderIndex   = uint64(281_474_976_710_655)
+)
+
+// Min transfer / withdraw amounts (USDC 6-decimal external precision).
+const (
+	MinPartialTransferAmount = uint64(10_000_000)
+	MinPartialWithdrawAmount = uint64(10_000_000)
+)
+
+// Account types.
+const (
+	MasterAccountType        = uint32(0)
+	SubAccountType           = uint32(1)
+	PublicPoolAccountType    = uint32(2)
+	InsuranceFundAccountType = uint32(3)
+)
+
+// Account trading modes.
+const (
+	AccountTradingModeSimple  = uint32(0)
+	AccountTradingModeUnified = uint32(1)
+)
+
+// Market types & status.
+const (
+	MarketTypePerps    = uint32(0)
+	MarketTypeSpot     = uint32(1)
+	MarketStatusExpired = uint32(0)
+	MarketStatusActive  = uint32(1)
+)
+
+// Asset routing.
+const (
+	RouteTypePerps = uint32(0)
+	RouteTypeSpot  = uint32(1)
+)
+
+// Margin modes.
+const (
+	MarginModeDisabled = uint32(0)
+	MarginModeEnabled  = uint32(1)
+	CrossMargin        = uint32(0)
+	IsolatedMargin     = uint32(1)
+	RemoveMargin       = uint32(0)
+	AddMargin          = uint32(1)
+)
+
+// Order types.
+const (
+	LimitOrder           = uint32(0)
+	MarketOrder          = uint32(1)
+	StopLossOrder        = uint32(2)
+	StopLossLimitOrder   = uint32(3)
+	TakeProfitOrder      = uint32(4)
+	TakeProfitLimitOrder = uint32(5)
+	TWAPOrder            = uint32(6)
+	TWAPSubOrder         = uint32(7)
+	LiquidationOrder     = uint32(8)
+)
+
+// Time-in-force.
+const (
+	IOC      = uint32(0)
+	GTT      = uint32(1)
+	PostOnly = uint32(2)
+)
+
+// Trigger statuses.
+const (
+	TriggerStatusNA          = uint32(0)
+	TriggerStatusMarkPrice   = uint32(1)
+	TriggerStatusTWAP        = uint32(2)
+	TriggerStatusParentOrder = uint32(3)
+)
+
+// Order status.
+const (
+	OrderStatusOpen             = uint32(0)
+	OrderStatusPartiallyFilled  = uint32(1)
+	OrderStatusFilled           = uint32(2)
+	OrderStatusCancelled        = uint32(3)
+	OrderStatusTriggeredPending = uint32(4)
+)
+
+// Health status.
+const (
+	HealthHealthy             = uint32(0)
+	HealthPreLiquidation      = uint32(1)
+	HealthPartialLiquidation  = uint32(2)
+	HealthFullLiquidation     = uint32(3)
+	HealthBankruptcy          = uint32(4)
+)
+
+// Cancel-all modes.
+const (
+	ImmediateCancelAll       = uint32(0)
+	ScheduledCancelAll       = uint32(1)
+	AbortScheduledCancelAll  = uint32(2)
+)
+
+// Oracle aggregation modes.
+const (
+	OracleAggPosMedian = uint32(0)
+	OracleAggWhitelist = uint32(1)
+)
+
+const (
+	// Bech32PrefixAccAddr defines the Bech32 prefix of an account's address.
+	Bech32PrefixAccAddr = "px"
+	// Bech32PrefixAccPub defines the Bech32 prefix of an account's public key.
+	Bech32PrefixAccPub = "pxpub"
+	// Bech32PrefixValAddr defines the Bech32 prefix of a validator's operator address.
+	Bech32PrefixValAddr = "pxvaloper"
+	// Bech32PrefixValPub defines the Bech32 prefix of a validator's operator public key.
+	Bech32PrefixValPub = "pxvaloperpub"
+	// Bech32PrefixConsAddr defines the Bech32 prefix of a consensus node address.
+	Bech32PrefixConsAddr = "pxvalcons"
+	// Bech32PrefixConsPub defines the Bech32 prefix of a consensus node public key.
+	Bech32PrefixConsPub = "pxvalconspub"
+)
+
+// CoinType is the BIP-44 coin type used by the chain.
+const CoinType = uint32(118)

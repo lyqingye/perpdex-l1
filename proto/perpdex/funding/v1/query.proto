@@ -1,0 +1,46 @@
+syntax = "proto3";
+package perpdex.funding.v1;
+
+import "gogoproto/gogo.proto";
+import "google/api/annotations.proto";
+import "perpdex/funding/v1/funding.proto";
+
+option go_package = "github.com/perpdex/perpdex-l1/x/funding/types";
+
+service Query {
+  rpc Metadata(QueryMetadataRequest) returns (QueryMetadataResponse) {
+    option (google.api.http).get = "/perpdex/funding/v1/metadata";
+  }
+  rpc MarketFundingRate(QueryMarketFundingRateRequest) returns (QueryMarketFundingRateResponse) {
+    option (google.api.http).get = "/perpdex/funding/v1/rate/{market_index}";
+  }
+  rpc PositionPendingFunding(QueryPositionPendingFundingRequest) returns (QueryPositionPendingFundingResponse) {
+    option (google.api.http).get = "/perpdex/funding/v1/pending/{account_index}/{market_index}";
+  }
+  rpc Params(QueryParamsRequest) returns (QueryParamsResponse) {
+    option (google.api.http).get = "/perpdex/funding/v1/params";
+  }
+}
+
+message QueryMetadataRequest {}
+message QueryMetadataResponse { FundingMetadata metadata = 1 [(gogoproto.nullable) = false]; }
+
+message QueryMarketFundingRateRequest { uint32 market_index = 1; }
+message QueryMarketFundingRateResponse {
+  string prefix_sum = 1 [
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+  int64 last_settled_at = 2;
+}
+
+message QueryPositionPendingFundingRequest { uint64 account_index = 1; uint32 market_index = 2; }
+message QueryPositionPendingFundingResponse {
+  string pending = 1 [
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+}
+
+message QueryParamsRequest {}
+message QueryParamsResponse { Params params = 1 [(gogoproto.nullable) = false]; }

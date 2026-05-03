@@ -1,0 +1,55 @@
+syntax = "proto3";
+package perpdex.asset.v1;
+
+import "cosmos/base/query/v1beta1/pagination.proto";
+import "gogoproto/gogo.proto";
+import "google/api/annotations.proto";
+import "perpdex/asset/v1/asset.proto";
+
+option go_package = "github.com/perpdex/perpdex-l1/x/asset/types";
+
+service Query {
+  rpc Asset(QueryAssetRequest) returns (QueryAssetResponse) {
+    option (google.api.http).get = "/perpdex/asset/v1/asset/{asset_index}";
+  }
+  rpc AssetByDenom(QueryAssetByDenomRequest) returns (QueryAssetByDenomResponse) {
+    option (google.api.http).get = "/perpdex/asset/v1/asset/by_denom/{denom}";
+  }
+  rpc Assets(QueryAssetsRequest) returns (QueryAssetsResponse) {
+    option (google.api.http).get = "/perpdex/asset/v1/assets";
+  }
+  rpc Params(QueryParamsRequest) returns (QueryParamsResponse) {
+    option (google.api.http).get = "/perpdex/asset/v1/params";
+  }
+}
+
+message QueryAssetRequest {
+  uint32 asset_index = 1;
+}
+
+message QueryAssetResponse {
+  Asset asset = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryAssetByDenomRequest {
+  string denom = 1;
+}
+
+message QueryAssetByDenomResponse {
+  Asset asset = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryAssetsRequest {
+  cosmos.base.query.v1beta1.PageRequest pagination = 1;
+}
+
+message QueryAssetsResponse {
+  repeated Asset assets = 1 [(gogoproto.nullable) = false];
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}
+
+message QueryParamsRequest {}
+
+message QueryParamsResponse {
+  Params params = 1 [(gogoproto.nullable) = false];
+}

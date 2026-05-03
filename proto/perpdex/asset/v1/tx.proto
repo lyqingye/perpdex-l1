@@ -1,0 +1,55 @@
+syntax = "proto3";
+package perpdex.asset.v1;
+
+import "cosmos/msg/v1/msg.proto";
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+import "perpdex/asset/v1/asset.proto";
+
+option go_package = "github.com/perpdex/perpdex-l1/x/asset/types";
+
+service Msg {
+  option (cosmos.msg.v1.service) = true;
+
+  rpc RegisterAsset(MsgRegisterAsset) returns (MsgRegisterAssetResponse);
+  rpc UpdateAsset(MsgUpdateAsset) returns (MsgUpdateAssetResponse);
+  rpc UpdateParams(MsgUpdateParams) returns (MsgUpdateParamsResponse);
+}
+
+message MsgRegisterAsset {
+  option (cosmos.msg.v1.signer) = "authority";
+
+  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  string denom = 2;
+  string display_name = 3;
+  uint32 decimals = 4;
+  uint64 extension_multiplier = 5;
+  uint64 min_transfer_amount = 6;
+  uint64 min_withdrawal_amount = 7;
+  uint32 margin_mode = 8;
+}
+
+message MsgRegisterAssetResponse {
+  uint32 asset_index = 1;
+}
+
+message MsgUpdateAsset {
+  option (cosmos.msg.v1.signer) = "authority";
+
+  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  uint32 asset_index = 2;
+  uint64 min_transfer_amount = 3;
+  uint64 min_withdrawal_amount = 4;
+  bool enabled = 5;
+}
+
+message MsgUpdateAssetResponse {}
+
+message MsgUpdateParams {
+  option (cosmos.msg.v1.signer) = "authority";
+
+  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  Params params = 2 [(gogoproto.nullable) = false];
+}
+
+message MsgUpdateParamsResponse {}

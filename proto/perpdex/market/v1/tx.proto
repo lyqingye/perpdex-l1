@@ -1,0 +1,70 @@
+syntax = "proto3";
+package perpdex.market.v1;
+
+import "cosmos/msg/v1/msg.proto";
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+import "perpdex/market/v1/market.proto";
+
+option go_package = "github.com/perpdex/perpdex-l1/x/market/types";
+
+service Msg {
+  option (cosmos.msg.v1.service) = true;
+
+  rpc CreateMarket(MsgCreateMarket) returns (MsgCreateMarketResponse);
+  rpc UpdateMarket(MsgUpdateMarket) returns (MsgUpdateMarketResponse);
+  rpc UpdateMarketDetails(MsgUpdateMarketDetails) returns (MsgUpdateMarketDetailsResponse);
+  rpc UpdateParams(MsgUpdateParams) returns (MsgUpdateParamsResponse);
+}
+
+message MsgCreateMarket {
+  option (cosmos.msg.v1.signer) = "authority";
+
+  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  Market market = 2 [(gogoproto.nullable) = false];
+  MarketDetails market_details = 3 [(gogoproto.nullable) = false];
+}
+
+message MsgCreateMarketResponse {}
+
+message MsgUpdateMarket {
+  option (cosmos.msg.v1.signer) = "authority";
+
+  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  uint32 market_index = 2;
+  uint32 new_status = 3;
+  uint32 new_taker_fee = 4;
+  uint32 new_maker_fee = 5;
+  uint64 new_min_base_amount = 6;
+  uint64 new_min_quote_amount = 7;
+  int64 new_order_quote_limit = 8;
+  int64 new_expiry_timestamp = 9;
+}
+
+message MsgUpdateMarketResponse {}
+
+message MsgUpdateMarketDetails {
+  option (cosmos.msg.v1.signer) = "authority";
+
+  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  uint32 market_index = 2;
+  uint32 new_default_imf = 3;
+  uint32 new_min_imf = 4;
+  uint32 new_maintenance_mf = 5;
+  uint32 new_close_out_mf = 6;
+  uint32 new_funding_clamp_small = 7;
+  uint32 new_funding_clamp_big = 8;
+  uint32 new_interest_rate = 9;
+  uint64 new_open_interest_limit = 10;
+}
+
+message MsgUpdateMarketDetailsResponse {}
+
+message MsgUpdateParams {
+  option (cosmos.msg.v1.signer) = "authority";
+
+  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  Params params = 2 [(gogoproto.nullable) = false];
+}
+
+message MsgUpdateParamsResponse {}

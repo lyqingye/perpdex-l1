@@ -1,0 +1,60 @@
+syntax = "proto3";
+package perpdex.account.v1;
+
+import "cosmos/base/query/v1beta1/pagination.proto";
+import "gogoproto/gogo.proto";
+import "google/api/annotations.proto";
+import "perpdex/account/v1/account.proto";
+
+option go_package = "github.com/perpdex/perpdex-l1/x/account/types";
+
+service Query {
+  rpc Account(QueryAccountRequest) returns (QueryAccountResponse) {
+    option (google.api.http).get = "/perpdex/account/v1/account/{account_index}";
+  }
+  rpc AccountByOwner(QueryAccountByOwnerRequest) returns (QueryAccountByOwnerResponse) {
+    option (google.api.http).get = "/perpdex/account/v1/account/by_owner/{owner_address}";
+  }
+  rpc SubAccounts(QuerySubAccountsRequest) returns (QuerySubAccountsResponse) {
+    option (google.api.http).get = "/perpdex/account/v1/sub_accounts/{master_account_index}";
+  }
+  rpc AccountAssets(QueryAccountAssetsRequest) returns (QueryAccountAssetsResponse) {
+    option (google.api.http).get = "/perpdex/account/v1/account/{account_index}/assets";
+  }
+  rpc AccountPositions(QueryAccountPositionsRequest) returns (QueryAccountPositionsResponse) {
+    option (google.api.http).get = "/perpdex/account/v1/account/{account_index}/positions";
+  }
+  rpc AccountPosition(QueryAccountPositionRequest) returns (QueryAccountPositionResponse) {
+    option (google.api.http).get = "/perpdex/account/v1/account/{account_index}/position/{market_index}";
+  }
+  rpc Params(QueryParamsRequest) returns (QueryParamsResponse) {
+    option (google.api.http).get = "/perpdex/account/v1/params";
+  }
+}
+
+message QueryAccountRequest { uint64 account_index = 1; }
+message QueryAccountResponse { Account account = 1 [(gogoproto.nullable) = false]; }
+
+message QueryAccountByOwnerRequest { string owner_address = 1; }
+message QueryAccountByOwnerResponse { Account account = 1 [(gogoproto.nullable) = false]; }
+
+message QuerySubAccountsRequest {
+  uint64 master_account_index = 1;
+  cosmos.base.query.v1beta1.PageRequest pagination = 2;
+}
+message QuerySubAccountsResponse {
+  repeated Account accounts = 1 [(gogoproto.nullable) = false];
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}
+
+message QueryAccountAssetsRequest { uint64 account_index = 1; }
+message QueryAccountAssetsResponse { repeated AccountAsset assets = 1 [(gogoproto.nullable) = false]; }
+
+message QueryAccountPositionsRequest { uint64 account_index = 1; }
+message QueryAccountPositionsResponse { repeated AccountPosition positions = 1 [(gogoproto.nullable) = false]; }
+
+message QueryAccountPositionRequest { uint64 account_index = 1; uint32 market_index = 2; }
+message QueryAccountPositionResponse { AccountPosition position = 1 [(gogoproto.nullable) = false]; }
+
+message QueryParamsRequest {}
+message QueryParamsResponse { Params params = 1 [(gogoproto.nullable) = false]; }

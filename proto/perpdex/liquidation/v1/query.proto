@@ -1,0 +1,45 @@
+syntax = "proto3";
+package perpdex.liquidation.v1;
+
+import "gogoproto/gogo.proto";
+import "google/api/annotations.proto";
+import "perpdex/liquidation/v1/liquidation.proto";
+
+option go_package = "github.com/perpdex/perpdex-l1/x/liquidation/types";
+
+service Query {
+  rpc Params(QueryParamsRequest) returns (QueryParamsResponse) {
+    option (google.api.http).get = "/perpdex/liquidation/v1/params";
+  }
+  // LiquidationFlag returns the flag for a single (account, market). The
+  // EndBlocker writes flags every block while an account remains
+  // unhealthy and clears them once it returns to HEALTHY.
+  rpc LiquidationFlag(QueryLiquidationFlagRequest) returns (QueryLiquidationFlagResponse) {
+    option (google.api.http).get = "/perpdex/liquidation/v1/flag/{account_index}/{market_index}";
+  }
+  // LiquidationFlags lists every flag currently set for the given
+  // account. Useful for keeper bots scanning a victim's positions.
+  rpc LiquidationFlags(QueryLiquidationFlagsRequest) returns (QueryLiquidationFlagsResponse) {
+    option (google.api.http).get = "/perpdex/liquidation/v1/flags/{account_index}";
+  }
+}
+
+message QueryParamsRequest {}
+message QueryParamsResponse { Params params = 1 [(gogoproto.nullable) = false]; }
+
+message QueryLiquidationFlagRequest {
+  uint64 account_index = 1;
+  uint32 market_index = 2;
+}
+message QueryLiquidationFlagResponse {
+  // present is false when the (account, market) pair is not flagged.
+  bool present = 1;
+  LiquidationFlag flag = 2 [(gogoproto.nullable) = false];
+}
+
+message QueryLiquidationFlagsRequest {
+  uint64 account_index = 1;
+}
+message QueryLiquidationFlagsResponse {
+  repeated LiquidationFlag flags = 1 [(gogoproto.nullable) = false];
+}

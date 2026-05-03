@@ -1,0 +1,46 @@
+syntax = "proto3";
+package perpdex.risk.v1;
+
+import "gogoproto/gogo.proto";
+import "google/api/annotations.proto";
+import "perpdex/risk/v1/risk.proto";
+
+option go_package = "github.com/perpdex/perpdex-l1/x/risk/types";
+
+service Query {
+  rpc RiskInfo(QueryRiskInfoRequest) returns (QueryRiskInfoResponse) {
+    option (google.api.http).get = "/perpdex/risk/v1/risk_info/{account_index}";
+  }
+  rpc IsolatedRisk(QueryIsolatedRiskRequest) returns (QueryIsolatedRiskResponse) {
+    option (google.api.http).get = "/perpdex/risk/v1/isolated/{account_index}/{market_index}";
+  }
+  rpc HealthStatus(QueryHealthStatusRequest) returns (QueryHealthStatusResponse) {
+    option (google.api.http).get = "/perpdex/risk/v1/health/{account_index}";
+  }
+  rpc AvailableCollateral(QueryAvailableCollateralRequest) returns (QueryAvailableCollateralResponse) {
+    option (google.api.http).get = "/perpdex/risk/v1/available_collateral/{account_index}";
+  }
+  rpc PositionZeroPrice(QueryPositionZeroPriceRequest) returns (QueryPositionZeroPriceResponse) {
+    option (google.api.http).get = "/perpdex/risk/v1/zero_price/{account_index}/{market_index}";
+  }
+}
+
+message QueryRiskInfoRequest { uint64 account_index = 1; }
+message QueryRiskInfoResponse { RiskInfo risk_info = 1 [(gogoproto.nullable) = false]; }
+
+message QueryIsolatedRiskRequest { uint64 account_index = 1; uint32 market_index = 2; }
+message QueryIsolatedRiskResponse { RiskParameters risk = 1 [(gogoproto.nullable) = false]; }
+
+message QueryHealthStatusRequest { uint64 account_index = 1; }
+message QueryHealthStatusResponse { uint32 status = 1; }
+
+message QueryAvailableCollateralRequest { uint64 account_index = 1; }
+message QueryAvailableCollateralResponse {
+  string available = 1 [
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+}
+
+message QueryPositionZeroPriceRequest { uint64 account_index = 1; uint32 market_index = 2; }
+message QueryPositionZeroPriceResponse { uint32 zero_price = 1; }

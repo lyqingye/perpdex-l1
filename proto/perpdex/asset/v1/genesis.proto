@@ -1,0 +1,13 @@
+syntax = "proto3";
+package perpdex.asset.v1;
+
+import "gogoproto/gogo.proto";
+import "perpdex/asset/v1/asset.proto";
+
+option go_package = "github.com/perpdex/perpdex-l1/x/asset/types";
+
+message GenesisState {
+  Params params = 1 [(gogoproto.nullable) = false];
+  repeated Asset assets = 2 [(gogoproto.nullable) = false];
+  uint32 next_asset_index = 3;
+}

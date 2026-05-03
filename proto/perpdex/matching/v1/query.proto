@@ -1,0 +1,17 @@
+syntax = "proto3";
+package perpdex.matching.v1;
+
+import "gogoproto/gogo.proto";
+import "google/api/annotations.proto";
+import "perpdex/matching/v1/matching.proto";
+
+option go_package = "github.com/perpdex/perpdex-l1/x/matching/types";
+
+service Query {
+  rpc Params(QueryParamsRequest) returns (QueryParamsResponse) {
+    option (google.api.http).get = "/perpdex/matching/v1/params";
+  }
+}
+
+message QueryParamsRequest {}
+message QueryParamsResponse { Params params = 1 [(gogoproto.nullable) = false]; }

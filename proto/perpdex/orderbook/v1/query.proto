@@ -1,0 +1,77 @@
+syntax = "proto3";
+package perpdex.orderbook.v1;
+
+import "cosmos/base/query/v1beta1/pagination.proto";
+import "gogoproto/gogo.proto";
+import "google/api/annotations.proto";
+import "perpdex/orderbook/v1/orderbook.proto";
+
+option go_package = "github.com/perpdex/perpdex-l1/x/orderbook/types";
+
+service Query {
+  rpc Order(QueryOrderRequest) returns (QueryOrderResponse) {
+    option (google.api.http).get = "/perpdex/orderbook/v1/order/{order_index}";
+  }
+  rpc OrderByClientId(QueryOrderByClientIdRequest) returns (QueryOrderByClientIdResponse) {
+    option (google.api.http).get = "/perpdex/orderbook/v1/order/by_client/{market_index}/{account_index}/{client_order_index}";
+  }
+  rpc Orders(QueryOrdersRequest) returns (QueryOrdersResponse) {
+    option (google.api.http).get = "/perpdex/orderbook/v1/orders";
+  }
+  rpc OrderBookSnapshot(QueryOrderBookSnapshotRequest) returns (QueryOrderBookSnapshotResponse) {
+    option (google.api.http).get = "/perpdex/orderbook/v1/snapshot/{market_index}";
+  }
+  rpc BestBidAsk(QueryBestBidAskRequest) returns (QueryBestBidAskResponse) {
+    option (google.api.http).get = "/perpdex/orderbook/v1/best/{market_index}";
+  }
+  rpc ImpactPrice(QueryImpactPriceRequest) returns (QueryImpactPriceResponse) {
+    option (google.api.http).get = "/perpdex/orderbook/v1/impact/{market_index}";
+  }
+  rpc Params(QueryParamsRequest) returns (QueryParamsResponse) {
+    option (google.api.http).get = "/perpdex/orderbook/v1/params";
+  }
+}
+
+message QueryOrderRequest { uint64 order_index = 1; }
+message QueryOrderResponse { Order order = 1 [(gogoproto.nullable) = false]; }
+
+message QueryOrderByClientIdRequest {
+  uint32 market_index = 1;
+  uint64 account_index = 2;
+  uint64 client_order_index = 3;
+}
+message QueryOrderByClientIdResponse { Order order = 1 [(gogoproto.nullable) = false]; }
+
+message QueryOrdersRequest {
+  uint64 account_index = 1;
+  uint32 market_index = 2;
+  cosmos.base.query.v1beta1.PageRequest pagination = 3;
+}
+message QueryOrdersResponse {
+  repeated Order orders = 1 [(gogoproto.nullable) = false];
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}
+
+message QueryOrderBookSnapshotRequest {
+  uint32 market_index = 1;
+  uint32 depth = 2;
+}
+message QueryOrderBookSnapshotResponse {
+  repeated PriceLevelAggregate levels = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryBestBidAskRequest { uint32 market_index = 1; }
+message QueryBestBidAskResponse {
+  uint32 best_bid = 1;
+  uint32 best_ask = 2;
+}
+
+message QueryImpactPriceRequest { uint32 market_index = 1; }
+message QueryImpactPriceResponse {
+  uint32 impact_bid = 1;
+  uint32 impact_ask = 2;
+  uint32 impact_price = 3;
+}
+
+message QueryParamsRequest {}
+message QueryParamsResponse { Params params = 1 [(gogoproto.nullable) = false]; }

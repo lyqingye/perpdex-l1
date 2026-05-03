@@ -1,0 +1,11 @@
+syntax = "proto3";
+package perpdex.trade.v1;
+
+import "gogoproto/gogo.proto";
+import "perpdex/trade/v1/trade.proto";
+
+option go_package = "github.com/perpdex/perpdex-l1/x/trade/types";
+
+message GenesisState {
+  Params params = 1 [(gogoproto.nullable) = false];
+}

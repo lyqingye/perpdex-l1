@@ -1,0 +1,11 @@
+syntax = "proto3";
+package perpdex.liquidation.v1;
+
+import "gogoproto/gogo.proto";
+import "perpdex/liquidation/v1/liquidation.proto";
+
+option go_package = "github.com/perpdex/perpdex-l1/x/liquidation/types";
+
+message GenesisState {
+  Params params = 1 [(gogoproto.nullable) = false];
+}

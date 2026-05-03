@@ -1,0 +1,53 @@
+syntax = "proto3";
+package perpdex.orderbook.v1;
+
+option go_package = "github.com/perpdex/perpdex-l1/x/orderbook/types";
+
+message Order {
+  uint64 order_index = 1;
+  uint64 client_order_index = 2;
+  uint64 owner_account_index = 3;
+  uint32 market_index = 4;
+  bool is_ask = 5;
+  uint32 order_type = 6;
+  uint32 time_in_force = 7;
+  bool reduce_only = 8;
+  uint32 price = 9;
+  int64 nonce = 10;
+  uint64 initial_base_amount = 11;
+  uint64 remaining_base_amount = 12;
+  uint32 trigger_price = 13;
+  uint32 trigger_status = 14;
+  int64 expiry = 15;
+  int64 created_at = 16;
+  uint32 status = 17;
+}
+
+message OrderBookEntry {
+  uint64 order_index = 1;
+  uint64 owner_account_index = 2;
+  uint32 price = 3;
+  int64 nonce = 4;
+  uint64 remaining_base_amount = 5;
+  int64 expiry = 6;
+  bool is_post_only = 7;
+  bool reduce_only = 8;
+  uint32 order_type = 9;
+}
+
+message PriceLevelAggregate {
+  uint32 market_index = 1;
+  uint32 price = 2;
+  uint64 ask_base_sum = 3;
+  uint64 ask_quote_sum = 4;
+  uint64 bid_base_sum = 5;
+  uint64 bid_quote_sum = 6;
+  uint32 ask_count = 7;
+  uint32 bid_count = 8;
+}
+
+message Params {
+  uint32 max_fills_per_msg = 1;
+  uint32 max_cancels_per_msg = 2;
+  uint64 impact_usdc_amount = 3;
+}

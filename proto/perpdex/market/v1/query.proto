@@ -1,0 +1,42 @@
+syntax = "proto3";
+package perpdex.market.v1;
+
+import "cosmos/base/query/v1beta1/pagination.proto";
+import "gogoproto/gogo.proto";
+import "google/api/annotations.proto";
+import "perpdex/market/v1/market.proto";
+
+option go_package = "github.com/perpdex/perpdex-l1/x/market/types";
+
+service Query {
+  rpc Market(QueryMarketRequest) returns (QueryMarketResponse) {
+    option (google.api.http).get = "/perpdex/market/v1/market/{market_index}";
+  }
+  rpc MarketDetails(QueryMarketDetailsRequest) returns (QueryMarketDetailsResponse) {
+    option (google.api.http).get = "/perpdex/market/v1/market/{market_index}/details";
+  }
+  rpc Markets(QueryMarketsRequest) returns (QueryMarketsResponse) {
+    option (google.api.http).get = "/perpdex/market/v1/markets";
+  }
+  rpc Params(QueryParamsRequest) returns (QueryParamsResponse) {
+    option (google.api.http).get = "/perpdex/market/v1/params";
+  }
+}
+
+message QueryMarketRequest { uint32 market_index = 1; }
+message QueryMarketResponse { Market market = 1 [(gogoproto.nullable) = false]; }
+
+message QueryMarketDetailsRequest { uint32 market_index = 1; }
+message QueryMarketDetailsResponse { MarketDetails details = 1 [(gogoproto.nullable) = false]; }
+
+message QueryMarketsRequest {
+  uint32 market_type = 1;
+  cosmos.base.query.v1beta1.PageRequest pagination = 2;
+}
+message QueryMarketsResponse {
+  repeated Market markets = 1 [(gogoproto.nullable) = false];
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}
+
+message QueryParamsRequest {}
+message QueryParamsResponse { Params params = 1 [(gogoproto.nullable) = false]; }

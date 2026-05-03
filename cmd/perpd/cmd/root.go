@@ -1,0 +1,370 @@
+package cmd
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+
+	"github.com/spf13/cast"
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+
+	tmcfg "github.com/cometbft/cometbft/config"
+	tmcli "github.com/cometbft/cometbft/libs/cli"
+
+	dbm "github.com/cosmos/cosmos-db"
+
+	"cosmossdk.io/client/v2/autocli"
+	"cosmossdk.io/log"
+	"cosmossdk.io/store"
+	"cosmossdk.io/store/snapshots"
+	snapshottypes "cosmossdk.io/store/snapshots/types"
+	storetypes "cosmossdk.io/store/types"
+	confixcmd "cosmossdk.io/tools/confix/cmd"
+
+	"github.com/cosmos/cosmos-sdk/baseapp"
+	"github.com/cosmos/cosmos-sdk/client"
+	"github.com/cosmos/cosmos-sdk/client/config"
+	"github.com/cosmos/cosmos-sdk/client/debug"
+	"github.com/cosmos/cosmos-sdk/client/flags"
+	"github.com/cosmos/cosmos-sdk/client/keys"
+	"github.com/cosmos/cosmos-sdk/client/pruning"
+	"github.com/cosmos/cosmos-sdk/client/rpc"
+	"github.com/cosmos/cosmos-sdk/client/snapshot"
+	"github.com/cosmos/cosmos-sdk/codec"
+	addresscodec "github.com/cosmos/cosmos-sdk/codec/address"
+	"github.com/cosmos/cosmos-sdk/server"
+	serverconfig "github.com/cosmos/cosmos-sdk/server/config"
+	servertypes "github.com/cosmos/cosmos-sdk/server/types"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/types/module"
+	"github.com/cosmos/cosmos-sdk/types/tx/signing"
+	authcmd "github.com/cosmos/cosmos-sdk/x/auth/client/cli"
+	"github.com/cosmos/cosmos-sdk/x/auth/tx"
+	authtxconfig "github.com/cosmos/cosmos-sdk/x/auth/tx/config"
+	"github.com/cosmos/cosmos-sdk/x/auth/types"
+	genutilcli "github.com/cosmos/cosmos-sdk/x/genutil/client/cli"
+	genutiltypes "github.com/cosmos/cosmos-sdk/x/genutil/types"
+
+	perp "github.com/perpdex/perpdex-l1/app"
+)
+
+// NewRootCmd builds the root cobra command for `perpd`.
+func NewRootCmd() *cobra.Command {
+	initAppOptions := viper.New()
+	tempDir := tempDir()
+	initAppOptions.Set(flags.FlagHome, tempDir)
+
+	tempApplication := perp.NewPerpDEXApp(
+		log.NewNopLogger(),
+		dbm.NewMemDB(),
+		nil,
+		true,
+		map[int64]bool{},
+		tempDir,
+		initAppOptions,
+	)
+	defer func() {
+		if err := tempApplication.Close(); err != nil {
+			panic(err)
+		}
+		if tempDir != perp.DefaultNodeHome {
+			os.RemoveAll(tempDir)
+		}
+	}()
+
+	initClientCtx := client.Context{}.
+		WithCodec(tempApplication.AppCodec()).
+		WithInterfaceRegistry(tempApplication.InterfaceRegistry()).
+		WithLegacyAmino(tempApplication.LegacyAmino()).
+		WithInput(os.Stdin).
+		WithAccountRetriever(types.AccountRetriever{}).
+		WithHomeDir(perp.DefaultNodeHome).
+		WithViper("")
+
+	rootCmd := &cobra.Command{
+		Use:   "perpd",
+		Short: "PerpDEX L1 daemon",
+		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			cmd.SetOut(cmd.OutOrStdout())
+			cmd.SetErr(cmd.ErrOrStderr())
+
+			initClientCtx = initClientCtx.WithCmdContext(cmd.Context())
+			initClientCtx, err := client.ReadPersistentCommandFlags(initClientCtx, cmd.Flags())
+			if err != nil {
+				return err
+			}
+
+			initClientCtx, err = config.ReadFromClientConfig(initClientCtx)
+			if err != nil {
+				return err
+			}
+
+			// SIGN_MODE_TEXTUAL needs an online client context to fetch coin
+			// metadata via gRPC, so it can only be enabled in non-offline mode.
+			if !initClientCtx.Offline {
+				txConfigOpts := tx.ConfigOptions{
+					EnabledSignModes:           append(tx.DefaultSignModes, signing.SignMode_SIGN_MODE_TEXTUAL),
+					TextualCoinMetadataQueryFn: authtxconfig.NewGRPCCoinMetadataQueryFn(initClientCtx),
+				}
+				txConfigWithTextual, err := tx.NewTxConfigWithOptions(initClientCtx.Codec, txConfigOpts)
+				if err != nil {
+					return err
+				}
+				initClientCtx = initClientCtx.WithTxConfig(txConfigWithTextual)
+			}
+
+			if err := client.SetCmdClientContextHandler(initClientCtx, cmd); err != nil {
+				return err
+			}
+
+			customAppTemplate, customAppConfig := initAppConfig()
+			customCometConfig := initCometConfig()
+			return server.InterceptConfigsPreRunHandler(cmd, customAppTemplate, customAppConfig, customCometConfig)
+		},
+	}
+
+	initRootCmd(rootCmd, tempApplication.ModuleBasics, tempApplication.GetTxConfig())
+
+	autoCliOpts := enrichAutoCliOpts(tempApplication.AutoCliOpts(), initClientCtx)
+	if err := autoCliOpts.EnhanceRootCommand(rootCmd); err != nil {
+		panic(err)
+	}
+
+	return rootCmd
+}
+
+func enrichAutoCliOpts(autoCliOpts autocli.AppOptions, clientCtx client.Context) autocli.AppOptions {
+	autoCliOpts.AddressCodec = addresscodec.NewBech32Codec(sdk.GetConfig().GetBech32AccountAddrPrefix())
+	autoCliOpts.ValidatorAddressCodec = addresscodec.NewBech32Codec(sdk.GetConfig().GetBech32ValidatorAddrPrefix())
+	autoCliOpts.ConsensusAddressCodec = addresscodec.NewBech32Codec(sdk.GetConfig().GetBech32ConsensusAddrPrefix())
+	autoCliOpts.ClientCtx = clientCtx
+	return autoCliOpts
+}
+
+func initCometConfig() *tmcfg.Config {
+	return tmcfg.DefaultConfig()
+}
+
+func initAppConfig() (string, interface{}) {
+	srvCfg := serverconfig.DefaultConfig()
+	srvCfg.StateSync.SnapshotInterval = 1000
+	srvCfg.StateSync.SnapshotKeepRecent = 10
+	return serverconfig.DefaultConfigTemplate, *srvCfg
+}
+
+func initRootCmd(rootCmd *cobra.Command, basicManager module.BasicManager, txConfig client.TxConfig) {
+	cfg := sdk.GetConfig()
+	cfg.Seal()
+
+	ac := appCreator{}
+
+	rootCmd.AddCommand(
+		genutilcli.InitCmd(basicManager, perp.DefaultNodeHome),
+		tmcli.NewCompletionCmd(rootCmd, true),
+		debug.Cmd(),
+		confixcmd.ConfigCommand(),
+		pruning.Cmd(ac.newApp, perp.DefaultNodeHome),
+		snapshot.Cmd(ac.newApp),
+	)
+
+	server.AddCommands(rootCmd, perp.DefaultNodeHome, ac.newApp, ac.appExport, addModuleInitFlags)
+
+	rootCmd.AddCommand(
+		server.StatusCommand(),
+		genesisCommand(txConfig, basicManager,
+			addGenesisAssetCmd(),
+			addGenesisMarketCmd(),
+		),
+		queryCommand(),
+		txCommand(basicManager),
+		keys.Commands(),
+	)
+}
+
+// addModuleInitFlags is invoked during `perpd start` to let modules add custom
+// flags. The minimal chain has no module-specific start flags.
+func addModuleInitFlags(_ *cobra.Command) {}
+
+func genesisCommand(txConfig client.TxConfig, basicManager module.BasicManager, cmds ...*cobra.Command) *cobra.Command {
+	cmd := genutilcli.GenesisCoreCommand(txConfig, basicManager, perp.DefaultNodeHome)
+	for _, sub := range cmds {
+		cmd.AddCommand(sub)
+	}
+	return cmd
+}
+
+func queryCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:                        "query",
+		Aliases:                    []string{"q"},
+		Short:                      "Querying subcommands",
+		DisableFlagParsing:         true,
+		SuggestionsMinimumDistance: 2,
+		RunE:                       client.ValidateCmd,
+	}
+	cmd.AddCommand(
+		rpc.ValidatorCommand(),
+		server.QueryBlocksCmd(),
+		server.QueryBlockCmd(),
+		server.QueryBlockResultsCmd(),
+		authcmd.QueryTxsByEventsCmd(),
+		authcmd.QueryTxCmd(),
+	)
+	cmd.PersistentFlags().String(flags.FlagChainID, "", "The network chain ID")
+	return cmd
+}
+
+func txCommand(basicManager module.BasicManager) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:                        "tx",
+		Short:                      "Transactions subcommands",
+		DisableFlagParsing:         true,
+		SuggestionsMinimumDistance: 2,
+		RunE:                       client.ValidateCmd,
+	}
+	cmd.AddCommand(
+		authcmd.GetSignCommand(),
+		authcmd.GetSignBatchCommand(),
+		authcmd.GetMultiSignCommand(),
+		authcmd.GetMultiSignBatchCmd(),
+		authcmd.GetValidateSignaturesCommand(),
+		flags.LineBreak,
+		authcmd.GetBroadcastCommand(),
+		authcmd.GetEncodeCommand(),
+		authcmd.GetDecodeCommand(),
+	)
+	basicManager.AddTxCommands(cmd)
+	cmd.PersistentFlags().String(flags.FlagChainID, "", "The network chain ID")
+	return cmd
+}
+
+type appCreator struct{}
+
+func (a appCreator) newApp(
+	logger log.Logger,
+	db dbm.DB,
+	traceStore io.Writer,
+	appOpts servertypes.AppOptions,
+) servertypes.Application {
+	var cache storetypes.MultiStorePersistentCache
+	if cast.ToBool(appOpts.Get(server.FlagInterBlockCache)) {
+		cache = store.NewCommitKVStoreCacheManager()
+	}
+
+	pruningOpts, err := server.GetPruningOptionsFromFlags(appOpts)
+	if err != nil {
+		panic(err)
+	}
+
+	skipUpgradeHeights := make(map[int64]bool)
+	for _, h := range cast.ToIntSlice(appOpts.Get(server.FlagUnsafeSkipUpgrades)) {
+		skipUpgradeHeights[int64(h)] = true
+	}
+
+	homeDir := cast.ToString(appOpts.Get(flags.FlagHome))
+	chainID := cast.ToString(appOpts.Get(flags.FlagChainID))
+	if chainID == "" {
+		genDocFile := filepath.Join(homeDir, cast.ToString(appOpts.Get("genesis_file")))
+		appGenesis, err := genutiltypes.AppGenesisFromFile(genDocFile)
+		if err != nil {
+			panic(err)
+		}
+		chainID = appGenesis.ChainID
+	}
+
+	snapshotDir := filepath.Join(homeDir, "data", "snapshots")
+	snapshotDB, err := dbm.NewDB("metadata", server.GetAppDBBackend(appOpts), snapshotDir)
+	if err != nil {
+		panic(err)
+	}
+	snapshotStore, err := snapshots.NewStore(snapshotDB, snapshotDir)
+	if err != nil {
+		panic(err)
+	}
+	snapshotOptions := snapshottypes.NewSnapshotOptions(
+		cast.ToUint64(appOpts.Get(server.FlagStateSyncSnapshotInterval)),
+		cast.ToUint32(appOpts.Get(server.FlagStateSyncSnapshotKeepRecent)),
+	)
+
+	baseappOptions := []func(*baseapp.BaseApp){
+		baseapp.SetChainID(chainID),
+		baseapp.SetPruning(pruningOpts),
+		baseapp.SetMinGasPrices(cast.ToString(appOpts.Get(server.FlagMinGasPrices))),
+		baseapp.SetHaltHeight(cast.ToUint64(appOpts.Get(server.FlagHaltHeight))),
+		baseapp.SetHaltTime(cast.ToUint64(appOpts.Get(server.FlagHaltTime))),
+		baseapp.SetMinRetainBlocks(cast.ToUint64(appOpts.Get(server.FlagMinRetainBlocks))),
+		baseapp.SetInterBlockCache(cache),
+		baseapp.SetTrace(cast.ToBool(appOpts.Get(server.FlagTrace))),
+		baseapp.SetIndexEvents(cast.ToStringSlice(appOpts.Get(server.FlagIndexEvents))),
+		baseapp.SetSnapshot(snapshotStore, snapshotOptions),
+		baseapp.SetIAVLCacheSize(cast.ToInt(appOpts.Get(server.FlagIAVLCacheSize))),
+	}
+
+	return perp.NewPerpDEXApp(
+		logger,
+		db,
+		traceStore,
+		true,
+		skipUpgradeHeights,
+		homeDir,
+		appOpts,
+		baseappOptions...,
+	)
+}
+
+func (a appCreator) appExport(
+	logger log.Logger,
+	db dbm.DB,
+	traceStore io.Writer,
+	height int64,
+	forZeroHeight bool,
+	jailAllowedAddrs []string,
+	appOpts servertypes.AppOptions,
+	modulesToExport []string,
+) (servertypes.ExportedApp, error) {
+	homePath, ok := appOpts.Get(flags.FlagHome).(string)
+	if !ok || homePath == "" {
+		return servertypes.ExportedApp{}, errors.New("application home is not set")
+	}
+
+	viperAppOpts, ok := appOpts.(*viper.Viper)
+	if !ok {
+		return servertypes.ExportedApp{}, errors.New("appOpts is not viper.Viper")
+	}
+	viperAppOpts.Set(server.FlagInvCheckPeriod, 1)
+	appOpts = viperAppOpts
+
+	loadLatest := height == -1
+
+	app := perp.NewPerpDEXApp(
+		logger,
+		db,
+		traceStore,
+		loadLatest,
+		map[int64]bool{},
+		homePath,
+		appOpts,
+	)
+	if height != -1 {
+		if err := app.LoadHeight(height); err != nil {
+			return servertypes.ExportedApp{}, err
+		}
+	}
+	return app.ExportAppStateAndValidators(forZeroHeight, jailAllowedAddrs, modulesToExport)
+}
+
+// codec is used for the rosetta-style command setup; left here in case the
+// chain wants to optionally re-introduce rosetta later.
+var _ codec.Codec = nil
+
+var tempDir = func() string {
+	dir, err := os.MkdirTemp("", ".perpd")
+	if err != nil {
+		panic(fmt.Sprintf("failed creating temp directory: %s", err.Error()))
+	}
+	defer os.RemoveAll(dir)
+	return dir
+}

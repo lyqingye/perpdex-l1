@@ -1,0 +1,13 @@
+syntax = "proto3";
+package perpdex.orderbook.v1;
+
+import "gogoproto/gogo.proto";
+import "perpdex/orderbook/v1/orderbook.proto";
+
+option go_package = "github.com/perpdex/perpdex-l1/x/orderbook/types";
+
+message GenesisState {
+  Params params = 1 [(gogoproto.nullable) = false];
+  uint64 next_order_index = 2;
+  repeated Order orders = 3 [(gogoproto.nullable) = false];
+}

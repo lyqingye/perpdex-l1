@@ -1,0 +1,10 @@
+build/
+perpd
+*.exe
+*.test
+*.out
+.DS_Store
+.idea/
+.vscode/
+
+gaia-ref/

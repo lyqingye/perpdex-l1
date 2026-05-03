@@ -1,0 +1,61 @@
+syntax = "proto3";
+package perpdex.market.v1;
+
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/perpdex/perpdex-l1/x/market/types";
+
+// Market is the static (governance-managed) configuration of a perp or spot market.
+message Market {
+  uint32 market_index = 1;
+  uint32 status = 2;
+  uint32 market_type = 3;
+  uint32 base_asset_id = 4;
+  uint32 quote_asset_id = 5;
+  uint32 taker_fee = 6;
+  uint32 maker_fee = 7;
+  uint32 liquidation_fee = 8;
+  int64 size_extension_multiplier = 9;
+  int64 quote_extension_multiplier = 10;
+  uint64 min_base_amount = 11;
+  uint64 min_quote_amount = 12;
+  int64 order_quote_limit = 13;
+  int64 expiry_timestamp = 14;
+  int64 created_at = 15;
+}
+
+// MarketDetails carries the runtime (per-block mutable) state of a market.
+message MarketDetails {
+  uint32 market_index = 1;
+  uint32 default_initial_margin_fraction = 2;
+  uint32 min_initial_margin_fraction = 3;
+  uint32 maintenance_margin_fraction = 4;
+  uint32 close_out_margin_fraction = 5;
+  uint32 quote_multiplier = 6;
+  uint32 interest_rate = 7;
+  string funding_rate_prefix_sum = 8 [
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+  int64 aggregate_premium_sum = 9;
+  uint32 impact_bid_price = 10;
+  uint32 impact_ask_price = 11;
+  uint32 impact_price = 12;
+  int64 open_interest = 13;
+  uint32 index_price = 14;
+  uint32 mark_price = 15;
+  uint32 funding_clamp_small = 16;
+  uint32 funding_clamp_big = 17;
+  uint64 open_interest_limit = 18;
+  int64 ask_nonce = 19;
+  int64 bid_nonce = 20;
+  int64 total_order_count = 21;
+  uint32 total_premium_samples = 22;
+  int64 last_updated_timestamp = 23;
+}
+
+message Params {
+  uint32 max_perps_market_index = 1;
+  uint32 min_spot_market_index = 2;
+  uint32 max_spot_market_index = 3;
+}

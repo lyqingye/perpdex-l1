@@ -1,0 +1,12 @@
+syntax = "proto3";
+package perpdex.funding.v1;
+
+import "gogoproto/gogo.proto";
+import "perpdex/funding/v1/funding.proto";
+
+option go_package = "github.com/perpdex/perpdex-l1/x/funding/types";
+
+message GenesisState {
+  Params params = 1 [(gogoproto.nullable) = false];
+  FundingMetadata metadata = 2 [(gogoproto.nullable) = false];
+}

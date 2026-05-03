@@ -1,0 +1,320 @@
+package keeper
+
+import (
+	"context"
+	"errors"
+
+	"cosmossdk.io/collections"
+
+	perptypes "github.com/perpdex/perpdex-l1/types"
+	"github.com/perpdex/perpdex-l1/x/orderbook/types"
+)
+
+// sideByte returns the discriminator byte used as the first byte of the
+// orderbook entry sort-key (ask=0, bid=1) so each side iterates separately.
+func sideByte(isAsk bool) byte {
+	if isAsk {
+		return 0
+	}
+	return 1
+}
+
+// composeSortKey returns sideByte || sortableKey (13 bytes).
+func composeSortKey(isAsk bool, sk []byte) []byte {
+	out := make([]byte, 0, 1+len(sk))
+	out = append(out, sideByte(isAsk))
+	out = append(out, sk...)
+	return out
+}
+
+// sidePrefix returns the 1-byte prefix used to iterate one side of a market.
+func sidePrefix(isAsk bool) []byte { return []byte{sideByte(isAsk)} }
+
+// AllocateOrderIndex returns the next order_index, ensuring it starts at 1.
+func (k Keeper) AllocateOrderIndex(ctx context.Context) (uint64, error) {
+	idx, err := k.NextOrderIndex.Next(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if idx == 0 {
+		idx, err = k.NextOrderIndex.Next(ctx)
+		if err != nil {
+			return 0, err
+		}
+	}
+	return idx, nil
+}
+
+// InsertOrderbookEntry adds an order to the orderbook (sorted side store) and
+// updates the price-level aggregate.
+func (k Keeper) InsertOrderbookEntry(ctx context.Context, market uint32, isAsk bool, o types.OrderBookEntry) error {
+	sk := types.SortableKey(o.Price, o.Nonce, isAsk)
+	composed := composeSortKey(isAsk, sk)
+	if err := k.OrderBookEntries.Set(ctx, collections.Join(market, composed), o); err != nil {
+		return err
+	}
+	if err := k.OrderToSortKey.Set(ctx, collections.Join(market, o.OrderIndex), composed); err != nil {
+		return err
+	}
+	return k.adjustPriceLevel(ctx, market, isAsk, o.Price, int64(o.RemainingBaseAmount), int64(uint64Mul(o.RemainingBaseAmount, uint64(o.Price))), 1)
+}
+
+// RemoveOrderbookEntry deletes the entry and decrements the price-level.
+func (k Keeper) RemoveOrderbookEntry(ctx context.Context, market uint32, isAsk bool, orderIndex uint64) error {
+	composed, err := k.OrderToSortKey.Get(ctx, collections.Join(market, orderIndex))
+	if err != nil {
+		if errors.Is(err, collections.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	entry, err := k.OrderBookEntries.Get(ctx, collections.Join(market, composed))
+	if err != nil {
+		if errors.Is(err, collections.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	if err := k.OrderBookEntries.Remove(ctx, collections.Join(market, composed)); err != nil {
+		return err
+	}
+	if err := k.OrderToSortKey.Remove(ctx, collections.Join(market, orderIndex)); err != nil {
+		return err
+	}
+	return k.adjustPriceLevel(ctx, market, isAsk, entry.Price,
+		-int64(entry.RemainingBaseAmount),
+		-int64(uint64Mul(entry.RemainingBaseAmount, uint64(entry.Price))),
+		-1,
+	)
+}
+
+// PartialFill subtracts filledBase from the remaining_base_amount of the entry
+// and updates the price level. If remaining drops to 0 the entry is removed.
+func (k Keeper) PartialFill(ctx context.Context, market uint32, isAsk bool, orderIndex uint64, filledBase uint64) error {
+	composed, err := k.OrderToSortKey.Get(ctx, collections.Join(market, orderIndex))
+	if err != nil {
+		return err
+	}
+	tripKey := collections.Join(market, composed)
+	entry, err := k.OrderBookEntries.Get(ctx, tripKey)
+	if err != nil {
+		return err
+	}
+	if filledBase >= entry.RemainingBaseAmount {
+		filledBase = entry.RemainingBaseAmount
+	}
+	entry.RemainingBaseAmount -= filledBase
+	if err := k.adjustPriceLevel(ctx, market, isAsk, entry.Price,
+		-int64(filledBase),
+		-int64(uint64Mul(filledBase, uint64(entry.Price))),
+		0,
+	); err != nil {
+		return err
+	}
+	if entry.RemainingBaseAmount == 0 {
+		if err := k.OrderBookEntries.Remove(ctx, tripKey); err != nil {
+			return err
+		}
+		if err := k.OrderToSortKey.Remove(ctx, collections.Join(market, orderIndex)); err != nil {
+			return err
+		}
+		return k.adjustPriceLevel(ctx, market, isAsk, entry.Price, 0, 0, -1)
+	}
+	return k.OrderBookEntries.Set(ctx, tripKey, entry)
+}
+
+// PeekBestOpposite returns the head-of-book entry on the opposite side of
+// `isAsk`. Returns (entry, true, nil) if an order exists.
+func (k Keeper) PeekBestOpposite(ctx context.Context, market uint32, isAsk bool) (types.OrderBookEntry, bool, error) {
+	prefix := sidePrefix(!isAsk)
+	rng := new(collections.Range[collections.Pair[uint32, []byte]]).
+		Prefix(collections.PairPrefix[uint32, []byte](market))
+	iter, err := k.OrderBookEntries.Iterate(ctx, rng)
+	if err != nil {
+		return types.OrderBookEntry{}, false, err
+	}
+	defer iter.Close()
+	for ; iter.Valid(); iter.Next() {
+		k2, err := iter.Key()
+		if err != nil {
+			return types.OrderBookEntry{}, false, err
+		}
+		composed := k2.K2()
+		if len(composed) == 0 || composed[0] != prefix[0] {
+			continue
+		}
+		v, err := iter.Value()
+		if err != nil {
+			return types.OrderBookEntry{}, false, err
+		}
+		return v, true, nil
+	}
+	return types.OrderBookEntry{}, false, nil
+}
+
+// WouldCross reports whether placing an order at `price` on `isAsk` side would
+// match against the best opposite order.
+func (k Keeper) WouldCross(ctx context.Context, market uint32, isAsk bool, price uint32) (bool, error) {
+	best, ok, err := k.PeekBestOpposite(ctx, market, isAsk)
+	if err != nil || !ok {
+		return false, err
+	}
+	if isAsk {
+		return price <= best.Price, nil
+	}
+	return price >= best.Price, nil
+}
+
+// adjustPriceLevel applies signed deltas to the price-level aggregate at
+// (market, price) for the given side.
+func (k Keeper) adjustPriceLevel(ctx context.Context, market uint32, isAsk bool, price uint32, baseDelta, quoteDelta int64, countDelta int32) error {
+	key := collections.Join(market, price)
+	pl, err := k.PriceLevels.Get(ctx, key)
+	if err != nil && !errors.Is(err, collections.ErrNotFound) {
+		return err
+	}
+	if errors.Is(err, collections.ErrNotFound) {
+		pl = types.PriceLevelAggregate{MarketIndex: market, Price: price}
+	}
+	if isAsk {
+		pl.AskBaseSum = applyDelta(pl.AskBaseSum, baseDelta)
+		pl.AskQuoteSum = applyDelta(pl.AskQuoteSum, quoteDelta)
+		pl.AskCount = uint32(int32(pl.AskCount) + countDelta)
+	} else {
+		pl.BidBaseSum = applyDelta(pl.BidBaseSum, baseDelta)
+		pl.BidQuoteSum = applyDelta(pl.BidQuoteSum, quoteDelta)
+		pl.BidCount = uint32(int32(pl.BidCount) + countDelta)
+	}
+	if pl.AskBaseSum == 0 && pl.BidBaseSum == 0 && pl.AskCount == 0 && pl.BidCount == 0 {
+		return k.PriceLevels.Remove(ctx, key)
+	}
+	return k.PriceLevels.Set(ctx, key, pl)
+}
+
+func applyDelta(cur uint64, delta int64) uint64 {
+	if delta < 0 {
+		dec := uint64(-delta)
+		if dec > cur {
+			return 0
+		}
+		return cur - dec
+	}
+	return cur + uint64(delta)
+}
+
+func uint64Mul(a, b uint64) uint64 { return a * b }
+
+// ComputeImpactPrice walks price levels on the requested side accumulating up
+// to `usdc_amount` of quote depth, then returns the volume-weighted average
+// price across that depth. Returns (0, false) if depth is insufficient.
+func (k Keeper) ComputeImpactPrice(ctx context.Context, market uint32, isAsk bool, usdcAmount uint64) (uint32, bool, error) {
+	rng := collections.NewPrefixedPairRange[uint32, uint32](market)
+	iter, err := k.PriceLevels.Iterate(ctx, rng)
+	if err != nil {
+		return 0, false, err
+	}
+	defer iter.Close()
+
+	type level struct {
+		price uint32
+		base  uint64
+		quote uint64
+	}
+	var levels []level
+	for ; iter.Valid(); iter.Next() {
+		v, err := iter.Value()
+		if err != nil {
+			return 0, false, err
+		}
+		if isAsk {
+			if v.AskBaseSum > 0 {
+				levels = append(levels, level{v.Price, v.AskBaseSum, v.AskQuoteSum})
+			}
+		} else {
+			if v.BidBaseSum > 0 {
+				levels = append(levels, level{v.Price, v.BidBaseSum, v.BidQuoteSum})
+			}
+		}
+	}
+	if len(levels) == 0 {
+		return 0, false, nil
+	}
+	if !isAsk {
+		// Bid side: walk highest price first (reverse iterator order).
+		for i, j := 0, len(levels)-1; i < j; i, j = i+1, j-1 {
+			levels[i], levels[j] = levels[j], levels[i]
+		}
+	}
+
+	var accBase, accQuote uint64
+	for _, lv := range levels {
+		// quote precision uses USDC_TO_COLLATERAL_MULTIPLIER scaling but we keep
+		// the raw price * base aggregate which is "quote ticks". We compare
+		// against `usdcAmount * 1e6 / quote_extension_multiplier` upstream.
+		if accQuote+lv.quote >= usdcAmount {
+			needQuote := usdcAmount - accQuote
+			needBase := needQuote / uint64(lv.price)
+			if needBase == 0 {
+				needBase = 1
+			}
+			accBase += needBase
+			accQuote += needBase * uint64(lv.price)
+			break
+		}
+		accBase += lv.base
+		accQuote += lv.quote
+	}
+	if accQuote < usdcAmount || accBase == 0 {
+		return 0, false, nil
+	}
+	return uint32(accQuote / accBase), true, nil
+}
+
+// BestBidAsk returns the best bid and best ask prices.
+func (k Keeper) BestBidAsk(ctx context.Context, market uint32) (uint32, uint32, error) {
+	bid, ok, err := k.PeekBestOpposite(ctx, market, true) // best bid is opposite of asks
+	if err != nil {
+		return 0, 0, err
+	}
+	var bidP uint32
+	if ok {
+		bidP = bid.Price
+	}
+	ask, ok, err := k.PeekBestOpposite(ctx, market, false) // best ask is opposite of bids
+	if err != nil {
+		return 0, 0, err
+	}
+	var askP uint32
+	if ok {
+		askP = ask.Price
+	}
+	return bidP, askP, nil
+}
+
+// IndexClientOrder records the (market, account, client_order_index) -> order_index mapping.
+func (k Keeper) IndexClientOrder(ctx context.Context, o types.Order) error {
+	return k.UserOrderIndex.Set(ctx, collections.Join3(o.MarketIndex, o.OwnerAccountIndex, o.ClientOrderIndex), o.OrderIndex)
+}
+
+// UnindexClientOrder removes the (market, account, client_order_index) -> order mapping.
+func (k Keeper) UnindexClientOrder(ctx context.Context, o types.Order) error {
+	return k.UserOrderIndex.Remove(ctx, collections.Join3(o.MarketIndex, o.OwnerAccountIndex, o.ClientOrderIndex))
+}
+
+// AddTrigger registers an order with a trigger price.
+func (k Keeper) AddTrigger(ctx context.Context, market uint32, triggerPrice uint32, orderIndex uint64) error {
+	return k.TriggerIndex.Set(ctx, collections.Join3(market, triggerPrice, orderIndex))
+}
+
+// RemoveTrigger drops the trigger entry for an order.
+func (k Keeper) RemoveTrigger(ctx context.Context, market uint32, triggerPrice uint32, orderIndex uint64) error {
+	return k.TriggerIndex.Remove(ctx, collections.Join3(market, triggerPrice, orderIndex))
+}
+
+// IsExpired reports whether the order has passed its expiry.
+func IsExpired(o types.Order, now int64) bool {
+	if o.TimeInForce != perptypes.GTT {
+		return false
+	}
+	return o.Expiry > 0 && now >= o.Expiry
+}
