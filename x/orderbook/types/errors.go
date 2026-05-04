@@ -10,4 +10,6 @@ var (
 	ErrPriceLevelMissing  = errors.Register(ModuleName, 6, "price level missing")
 	ErrInvariantViolated  = errors.Register(ModuleName, 7, "orderbook invariant violated")
 	ErrInsufficientLiquidity = errors.Register(ModuleName, 8, "insufficient orderbook liquidity")
+	ErrQuoteOverflow         = errors.Register(ModuleName, 9, "base*price exceeds MaxOrderQuoteAmount")
+	ErrPriceLevelOverflow    = errors.Register(ModuleName, 10, "price level quote sum would overflow uint64")
 )

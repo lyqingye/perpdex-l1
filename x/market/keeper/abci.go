@@ -30,10 +30,8 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 			if err := k.SetMarket(ctx, m); err != nil {
 				return err
 			}
-			if k.liquidationKeeper != nil {
-				if err := k.liquidationKeeper.ApplyExitPosition(ctx, m.MarketIndex); err != nil {
-					sdk.UnwrapSDKContext(ctx).Logger().Error("market: apply exit failed", "market", m.MarketIndex, "err", err)
-				}
+			if err := k.liquidationKeeper.ApplyExitPosition(ctx, m.MarketIndex); err != nil {
+				sdk.UnwrapSDKContext(ctx).Logger().Error("market: apply exit failed", "market", m.MarketIndex, "err", err)
 			}
 			sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
 				"market_expired",

@@ -43,6 +43,10 @@ func (s *PublicPoolSuite) SetupTest() {
 	})
 	s.MarketIndex = s.CreatePerpMarket(msg.DefaultPerpMarketOpts(1, s.BTCAssetIndex))
 	s.AddOracleProvider(s.Users[3].Address, "publicpool-test-provider")
+	// Risk keeper now requires a non-zero mark price on any non-zero
+	// position; seed a default so crossing orders in the IF-first
+	// scenario don't fail before we explicitly push the price down.
+	s.InjectPrice(s.Users[3].Address, s.MarketIndex, 50_000, 50_000)
 }
 
 // ---------- helpers ----------

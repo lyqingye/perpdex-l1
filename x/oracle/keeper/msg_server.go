@@ -19,9 +19,6 @@ func NewMsgServerImpl(k Keeper) types.MsgServer { return &msgServer{Keeper: k} }
 var _ types.MsgServer = msgServer{}
 
 func (m msgServer) BindOracleOperator(ctx context.Context, msg *types.MsgBindOracleOperator) (*types.MsgBindOracleOperatorResponse, error) {
-	if err := msg.ValidateBasic(); err != nil {
-		return nil, err
-	}
 	// Authority: validator operator address (signer must be the operator).
 	if msg.Sender != msg.ValidatorAddress {
 		return nil, types.ErrUnauthorized
@@ -50,9 +47,6 @@ func (m msgServer) BindOracleOperator(ctx context.Context, msg *types.MsgBindOra
 }
 
 func (m msgServer) UnbindOracleOperator(ctx context.Context, msg *types.MsgUnbindOracleOperator) (*types.MsgUnbindOracleOperatorResponse, error) {
-	if err := msg.ValidateBasic(); err != nil {
-		return nil, err
-	}
 	binding, err := m.Bindings.Get(ctx, msg.ValidatorAddress)
 	if err != nil {
 		if errors.Is(err, collections.ErrNotFound) {
@@ -80,13 +74,13 @@ func (m msgServer) AggregateOracleVotes(ctx context.Context, msg *types.MsgAggre
 	now := sdk.UnwrapSDKContext(ctx).BlockTime().UnixMilli()
 	for _, agg := range msg.Aggregations {
 		p := types.OraclePrice{
-			MarketIndex:           agg.MarketIndex,
-			IndexPrice:            agg.IndexPrice,
-			MarkPrice:             agg.MarkPrice,
-			LastUpdatedTimestamp:  now,
-			LastUpdatedHeight:     msg.Height,
-			AggregationMethod:     perptypes.OracleAggPosMedian,
-			ParticipantCount:      uint32(len(msg.VoterRecords)),
+			MarketIndex:          agg.MarketIndex,
+			IndexPrice:           agg.IndexPrice,
+			MarkPrice:            agg.MarkPrice,
+			LastUpdatedTimestamp: now,
+			LastUpdatedHeight:    msg.Height,
+			AggregationMethod:    perptypes.OracleAggPosMedian,
+			ParticipantCount:     uint32(len(msg.VoterRecords)),
 		}
 		if err := m.SetPrice(ctx, p); err != nil {
 			return nil, err
@@ -119,9 +113,6 @@ func (m msgServer) AggregateOracleVotes(ctx context.Context, msg *types.MsgAggre
 // InjectOracle is the WHITELIST mode entrypoint. The signer must be a
 // registered oracle provider.
 func (m msgServer) InjectOracle(ctx context.Context, msg *types.MsgInjectOracle) (*types.MsgInjectOracleResponse, error) {
-	if err := msg.ValidateBasic(); err != nil {
-		return nil, err
-	}
 	prov, err := m.Providers.Get(ctx, msg.Sender)
 	if err != nil {
 		if errors.Is(err, collections.ErrNotFound) {

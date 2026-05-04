@@ -31,4 +31,8 @@ type FundingKeeper interface {
 
 type RiskKeeper interface {
 	IsValidRiskChange(ctx context.Context, accountIndex uint64) (bool, error)
+	// SnapshotPreRisk caches pre-state RiskParameters for an account so
+	// IsValidRiskChange can require strict improvement on unhealthy
+	// post-states.
+	SnapshotPreRisk(ctx context.Context, accountIndex uint64) error
 }

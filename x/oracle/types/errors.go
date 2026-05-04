@@ -14,4 +14,6 @@ var (
 	ErrUnauthorized       = errors.Register(ModuleName, 10, "unauthorized signer")
 	ErrInvalidPrice       = errors.Register(ModuleName, 11, "invalid price")
 	ErrInvalidVote        = errors.Register(ModuleName, 12, "invalid oracle vote")
+	ErrStalePrice         = errors.Register(ModuleName, 13, "oracle price is stale")
+	ErrVoteExtDisabled    = errors.Register(ModuleName, 14, "vote-extension aggregation not implemented")
 )

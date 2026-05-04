@@ -8,6 +8,8 @@ import (
 	"github.com/grpc-ecosystem/grpc-gateway/runtime"
 	"github.com/spf13/cobra"
 
+	abci "github.com/cometbft/cometbft/abci/types"
+
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/codec"
 	cdctypes "github.com/cosmos/cosmos-sdk/codec/types"
@@ -24,6 +26,7 @@ var (
 	_ module.AppModuleBasic = AppModuleBasic{}
 	_ module.HasGenesis     = AppModule{}
 	_ module.HasServices    = AppModule{}
+	_ module.HasABCIEndBlock = AppModule{}
 )
 
 type AppModuleBasic struct{ cdc codec.Codec }
@@ -79,4 +82,13 @@ func (am AppModule) ExportGenesis(ctx sdk.Context, cdc codec.JSONCodec) json.Raw
 		panic(err)
 	}
 	return cdc.MustMarshalJSON(gs)
+}
+
+// EndBlock resolves trigger orders whose activation condition has been met
+// this block. See keeper.EndBlocker for the full lifecycle.
+func (am AppModule) EndBlock(ctx context.Context) ([]abci.ValidatorUpdate, error) {
+	if err := am.keeper.EndBlocker(ctx); err != nil {
+		return nil, err
+	}
+	return nil, nil
 }

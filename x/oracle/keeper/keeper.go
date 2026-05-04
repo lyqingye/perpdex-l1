@@ -9,6 +9,7 @@ import (
 	"cosmossdk.io/core/store"
 
 	"github.com/cosmos/cosmos-sdk/codec"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	"github.com/perpdex/perpdex-l1/x/oracle/types"
 )
@@ -70,8 +71,54 @@ func (k Keeper) GetPrice(ctx context.Context, marketIdx uint32) (types.OraclePri
 	return p, nil
 }
 
-// SetPrice stores an oracle price for a market.
+// GetFreshPrice is a staleness-aware accessor used by risk / liquidation /
+// funding. It refuses prices whose `LastUpdatedTimestamp` is older than
+// `Params.MaxAgeMs`. A zero `LastUpdatedTimestamp` is treated as stale to
+// avoid counting genesis-seeded placeholders as live.
+func (k Keeper) GetFreshPrice(ctx context.Context, marketIdx uint32) (types.OraclePrice, error) {
+	p, err := k.GetPrice(ctx, marketIdx)
+	if err != nil {
+		return types.OraclePrice{}, err
+	}
+	params, err := k.Params.Get(ctx)
+	if err != nil {
+		return types.OraclePrice{}, err
+	}
+	if params.MaxAgeMs <= 0 {
+		return p, nil
+	}
+	now := sdk.UnwrapSDKContext(ctx).BlockTime().UnixMilli()
+	if p.LastUpdatedTimestamp <= 0 {
+		return types.OraclePrice{}, types.ErrStalePrice.Wrapf(
+			"market_index=%d never updated", marketIdx,
+		)
+	}
+	if now-p.LastUpdatedTimestamp > params.MaxAgeMs {
+		return types.OraclePrice{}, types.ErrStalePrice.Wrapf(
+			"market_index=%d age=%dms > max=%dms",
+			marketIdx, now-p.LastUpdatedTimestamp, params.MaxAgeMs,
+		)
+	}
+	return p, nil
+}
+
+// SetPrice stores an oracle price for a market. Zero index/mark prices are
+// rejected because they always signal a broken upstream (genesis only uses
+// SetPriceUnsafe via InitGenesis).
 func (k Keeper) SetPrice(ctx context.Context, p types.OraclePrice) error {
+	if p.IndexPrice == 0 || p.MarkPrice == 0 {
+		return types.ErrInvalidPrice.Wrapf(
+			"prices must be non-zero (index=%d mark=%d)",
+			p.IndexPrice, p.MarkPrice,
+		)
+	}
+	return k.Prices.Set(ctx, p.MarketIndex, p)
+}
+
+// SetPriceUnsafe bypasses the non-zero check and is intended for genesis
+// loading only. Runtime paths (oracle inject / aggregate) must use SetPrice
+// so zero prices can never survive a block.
+func (k Keeper) SetPriceUnsafe(ctx context.Context, p types.OraclePrice) error {
 	return k.Prices.Set(ctx, p.MarketIndex, p)
 }
 
