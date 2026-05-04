@@ -138,18 +138,19 @@ message MsgUpdateParams {
 
 message MsgUpdateParamsResponse {}
 
-// MsgCreatePublicPool initialises a new sub-account as a Public Pool /
-// Insurance Fund. Sender must be the master's owner. The master's
-// collateral funds the initial total_shares at INITIAL_POOL_SHARE_VALUE
-// each. account_type must be PUBLIC_POOL or INSURANCE_FUND. When the
-// master is the canonical InsuranceFundOperatorAccountIdx, the new pool
-// is forced to INSURANCE_FUND + UNIFIED trading_mode (lighter parity).
+// MsgCreatePublicPool initialises a new sub-account as a Public Pool.
+// Sender must be the master's owner. The master's collateral funds the
+// initial total_shares at INITIAL_POOL_SHARE_VALUE each. `account_type`
+// must be PUBLIC_POOL: the canonical Insurance Fund pool lives at
+// `InsuranceFundOperatorAccountIdx` and is seeded by genesis — its state
+// is mutated via `MsgUpdatePublicPool` / `MsgStrategyTransfer` under
+// governance authority, not through this Msg.
 message MsgCreatePublicPool {
   option (cosmos.msg.v1.signer) = "sender";
 
   string sender = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
   uint64 master_account_index = 2;
-  uint32 account_type = 3; // PUBLIC_POOL or INSURANCE_FUND
+  uint32 account_type = 3; // must be PUBLIC_POOL; INSURANCE_FUND is genesis-only
   uint64 initial_total_shares = 4;
   uint32 operator_fee = 5;            // FeeTick precision
   uint32 min_operator_share_rate = 6; // ShareTick precision

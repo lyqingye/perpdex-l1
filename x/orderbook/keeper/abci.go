@@ -38,6 +38,7 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 			return err
 		}
 		_ = k.UnindexClientOrder(ctx, o)
+		_ = k.UnindexAccountOpenOrder(ctx, o)
 		o.Status = perptypes.OrderStatusCancelled
 		if err := k.SetOrder(ctx, o); err != nil {
 			return err

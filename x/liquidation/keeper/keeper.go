@@ -76,6 +76,19 @@ func (k Keeper) Liquidate(ctx context.Context, victim uint64, marketIdx uint32, 
 	if pos.Position.IsZero() {
 		return types.ErrNotLiquidatable.Wrap("victim has no position")
 	}
+	if baseAmount == 0 {
+		return types.ErrInvalidParams.Wrap("base_amount must be > 0")
+	}
+	// A partial-liquidation Msg that passes in more base than the
+	// victim's remaining size would otherwise close the position *and*
+	// flip it to the opposite side, stealing collateral from the
+	// victim. Cap here (symmetrical to Deleverage).
+	absVictim := pos.Position.Abs()
+	if math.NewIntFromUint64(baseAmount).GT(absVictim) {
+		return types.ErrInvalidParams.Wrapf(
+			"base_amount=%d exceeds victim position size %s", baseAmount, absVictim.String(),
+		)
+	}
 	zeroPrice, err := k.riskKeeper.GetPositionZeroPrice(ctx, victim, marketIdx)
 	if err != nil {
 		return err

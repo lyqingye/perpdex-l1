@@ -19,9 +19,6 @@ func (m msgServer) CreateMarket(ctx context.Context, msg *types.MsgCreateMarket)
 	if msg.Authority != m.authority {
 		return nil, types.ErrInvalidAuthority
 	}
-	if err := msg.ValidateBasic(); err != nil {
-		return nil, err
-	}
 	market := msg.Market
 	details := msg.MarketDetails
 	if market.MarketIndex != details.MarketIndex {
@@ -88,9 +85,25 @@ func (m msgServer) UpdateMarket(ctx context.Context, msg *types.MsgUpdateMarket)
 	if msg.Authority != m.authority {
 		return nil, types.ErrInvalidAuthority
 	}
+	if err := validateUpdateMarket(msg); err != nil {
+		return nil, err
+	}
 	market, err := m.GetMarket(ctx, msg.MarketIndex)
 	if err != nil {
 		return nil, err
+	}
+	// Once a market is EXPIRED, its static parameters are frozen.
+	if market.Status == perptypes.MarketStatusExpired && msg.NewStatus != perptypes.MarketStatusExpired {
+		return nil, types.ErrInvalidMarket.Wrap("cannot un-expire market")
+	}
+	if msg.NewExpiryTimestamp > 0 {
+		nowMs := sdk.UnwrapSDKContext(ctx).BlockTime().UnixMilli()
+		if msg.NewExpiryTimestamp <= nowMs {
+			return nil, types.ErrInvalidMarket.Wrapf(
+				"new_expiry_timestamp=%d must be > now=%d",
+				msg.NewExpiryTimestamp, nowMs,
+			)
+		}
 	}
 	market.Status = msg.NewStatus
 	market.TakerFee = msg.NewTakerFee
@@ -105,9 +118,65 @@ func (m msgServer) UpdateMarket(ctx context.Context, msg *types.MsgUpdateMarket)
 	return &types.MsgUpdateMarketResponse{}, nil
 }
 
+// validateUpdateMarket enforces business-level bounds on a MsgUpdateMarket
+// payload:
+//   - NewStatus ∈ {Active, Expired}
+//   - NewTakerFee / NewMakerFee < FeeTick
+//   - NewMinBaseAmount, NewMinQuoteAmount > 0 (0 would disable the checks)
+//   - NewOrderQuoteLimit fits the protocol cap when non-zero
+//   - NewExpiryTimestamp is either 0 (no expiry) or in the future (checked
+//     against `BlockTime` at the call site).
+func validateUpdateMarket(msg *types.MsgUpdateMarket) error {
+	if msg.NewStatus != perptypes.MarketStatusActive &&
+		msg.NewStatus != perptypes.MarketStatusExpired {
+		return types.ErrInvalidMarket.Wrapf("new_status=%d", msg.NewStatus)
+	}
+	if uint64(msg.NewTakerFee) >= uint64(perptypes.FeeTick) {
+		return types.ErrInvalidParams.Wrapf(
+			"new_taker_fee=%d >= FeeTick=%d", msg.NewTakerFee, perptypes.FeeTick,
+		)
+	}
+	if uint64(msg.NewMakerFee) >= uint64(perptypes.FeeTick) {
+		return types.ErrInvalidParams.Wrapf(
+			"new_maker_fee=%d >= FeeTick=%d", msg.NewMakerFee, perptypes.FeeTick,
+		)
+	}
+	if msg.NewMinBaseAmount == 0 {
+		return types.ErrInvalidParams.Wrap("new_min_base_amount must be > 0")
+	}
+	if msg.NewMinQuoteAmount == 0 {
+		return types.ErrInvalidParams.Wrap("new_min_quote_amount must be > 0")
+	}
+	if msg.NewOrderQuoteLimit < 0 {
+		return types.ErrInvalidParams.Wrap("new_order_quote_limit must be >= 0")
+	}
+	return nil
+}
+
 func (m msgServer) UpdateMarketDetails(ctx context.Context, msg *types.MsgUpdateMarketDetails) (*types.MsgUpdateMarketDetailsResponse, error) {
 	if msg.Authority != m.authority {
 		return nil, types.ErrInvalidAuthority
+	}
+	// IMF / MF bounds before we touch state so a partial write can't leave
+	// the margin chain in an invalid state.
+	if msg.NewMinImf == 0 {
+		return nil, types.ErrInvalidParams.Wrap("new_min_imf must be > 0")
+	}
+	if msg.NewDefaultImf > uint32(perptypes.MarginTick) ||
+		msg.NewMinImf > uint32(perptypes.MarginTick) ||
+		msg.NewMaintenanceMf > uint32(perptypes.MarginTick) ||
+		msg.NewCloseOutMf > uint32(perptypes.MarginTick) {
+		return nil, types.ErrInvalidParams.Wrapf(
+			"margin fraction above MarginTick=%d", perptypes.MarginTick,
+		)
+	}
+	if msg.NewDefaultImf < msg.NewMinImf ||
+		msg.NewMaintenanceMf >= msg.NewDefaultImf ||
+		msg.NewCloseOutMf >= msg.NewMaintenanceMf {
+		return nil, types.ErrInvalidMarginChain
+	}
+	if msg.NewFundingClampSmall > msg.NewFundingClampBig {
+		return nil, types.ErrInvalidParams.Wrap("funding_clamp_small must be <= funding_clamp_big")
 	}
 	d, err := m.GetMarketDetails(ctx, msg.MarketIndex)
 	if err != nil {
@@ -121,11 +190,6 @@ func (m msgServer) UpdateMarketDetails(ctx context.Context, msg *types.MsgUpdate
 	d.FundingClampBig = msg.NewFundingClampBig
 	d.InterestRate = msg.NewInterestRate
 	d.OpenInterestLimit = msg.NewOpenInterestLimit
-	if d.DefaultInitialMarginFraction < d.MinInitialMarginFraction ||
-		d.MaintenanceMarginFraction >= d.DefaultInitialMarginFraction ||
-		d.CloseOutMarginFraction >= d.MaintenanceMarginFraction {
-		return nil, types.ErrInvalidMarginChain
-	}
 	if err := m.SetMarketDetails(ctx, d); err != nil {
 		return nil, err
 	}

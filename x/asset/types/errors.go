@@ -10,4 +10,5 @@ var (
 	ErrUSDCMarginConstraint  = errors.Register(ModuleName, 6, "only USDC may be margin enabled and USDC must be margin enabled")
 	ErrAssetIndexExceedsMax  = errors.Register(ModuleName, 7, "asset index exceeds maximum")
 	ErrAssetDisabled         = errors.Register(ModuleName, 8, "asset is disabled")
+	ErrInvalidParams         = errors.Register(ModuleName, 9, "invalid params")
 )

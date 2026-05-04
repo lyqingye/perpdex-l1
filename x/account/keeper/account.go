@@ -53,10 +53,19 @@ func (k Keeper) GetMasterAccountByOwner(ctx context.Context, owner string) (type
 
 // EnsureMasterAccount returns the master account for `owner`, creating one if
 // necessary. Used during deposit auto-create.
+//
+// Only `ErrAccountNotFound` is treated as "missing" so the helper creates a
+// new master. Any other error (codec failure, stale OwnerToIndex pointing at
+// a deleted account, etc.) is surfaced so callers can't accidentally stamp
+// out a second master and orphan the old one.
 func (k Keeper) EnsureMasterAccount(ctx context.Context, owner sdk.AccAddress) (types.Account, error) {
 	bech := owner.String()
-	if a, err := k.GetMasterAccountByOwner(ctx, bech); err == nil {
+	a, err := k.GetMasterAccountByOwner(ctx, bech)
+	if err == nil {
 		return a, nil
+	}
+	if !errors.Is(err, types.ErrAccountNotFound) {
+		return types.Account{}, err
 	}
 
 	idx, err := k.NextMasterIndex.Next(ctx)
@@ -74,7 +83,7 @@ func (k Keeper) EnsureMasterAccount(ctx context.Context, owner sdk.AccAddress) (
 	if idx > perptypes.MaxMasterAccountIndex {
 		return types.Account{}, types.ErrAccountIndexExceed.Wrapf("master idx=%d", idx)
 	}
-	a := types.Account{
+	newAcc := types.Account{
 		AccountIndex:       idx,
 		MasterAccountIndex: perptypes.NilMasterAccountIndex,
 		OwnerAddress:       bech,
@@ -83,10 +92,10 @@ func (k Keeper) EnsureMasterAccount(ctx context.Context, owner sdk.AccAddress) (
 		Collateral:         math.ZeroInt(),
 		CreatedAt:          sdk.UnwrapSDKContext(ctx).BlockTime().UnixMilli(),
 	}
-	if err := k.SetAccount(ctx, a); err != nil {
+	if err := k.SetAccount(ctx, newAcc); err != nil {
 		return types.Account{}, err
 	}
-	return a, nil
+	return newAcc, nil
 }
 
 // CreateSubAccount mints a new sub account under `master`.

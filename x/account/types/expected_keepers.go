@@ -8,6 +8,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	assettypes "github.com/perpdex/perpdex-l1/x/asset/types"
+	markettypes "github.com/perpdex/perpdex-l1/x/market/types"
 )
 
 // AssetKeeper is the subset of the asset keeper interface required by x/account.
@@ -29,6 +30,14 @@ type FundingKeeper interface {
 	SettlePositionFunding(ctx context.Context, accountIndex uint64, marketIndex uint32) error
 }
 
+// MarketKeeper lets account validate `market` related fields such as
+// `UpdateLeverage`'s margin chain (default/min IMF) without importing the
+// full market keeper.
+type MarketKeeper interface {
+	GetMarketDetails(ctx context.Context, index uint32) (markettypes.MarketDetails, error)
+	GetMarket(ctx context.Context, index uint32) (markettypes.Market, error)
+}
+
 // RiskKeeper is consulted to ensure each state change leaves the account
 // healthy or strictly improving.
 type RiskKeeper interface {
@@ -40,4 +49,8 @@ type RiskKeeper interface {
 	// GetHealthStatus mirrors x/risk health classification used by the
 	// freeze invariants (freeze requires HEALTHY).
 	GetHealthStatus(ctx context.Context, accountIndex uint64) (uint32, error)
+	// SnapshotPreRisk caches the current risk parameters for an account
+	// so a later IsValidRiskChange call can compare against them rather
+	// than only accepting strictly-healthy post-states.
+	SnapshotPreRisk(ctx context.Context, accountIndex uint64) error
 }

@@ -19,6 +19,7 @@ type Keeper struct {
 	marketKeeper  types.MarketKeeper
 	bookKeeper    types.OrderbookKeeper
 	tradeKeeper   types.TradeKeeper
+	oracleKeeper  types.OracleKeeper
 
 	Schema collections.Schema
 	Params collections.Item[types.Params]
@@ -46,5 +47,10 @@ func NewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, authori
 	k.Schema = schema
 	return k
 }
+
+// SetOracleKeeper wires the oracle keeper after construction. Required for
+// EndBlocker trigger resolution; the keeper is oracle-agnostic at NewKeeper
+// time to avoid import cycles with modules that depend on matching.
+func (k *Keeper) SetOracleKeeper(o types.OracleKeeper) { k.oracleKeeper = o }
 
 func (k Keeper) Authority() string { return k.authority }

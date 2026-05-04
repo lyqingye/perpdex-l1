@@ -49,6 +49,11 @@ func PlaceLimitOrderRaw(
 	if opts.ClientOrderIndex == 0 {
 		opts.ClientOrderIndex = perptypes.MinClientOrderIndex
 	}
+	// GTT orders need a positive expiry; fall back to a far-future
+	// sentinel when the caller doesn't care about expiry behaviour.
+	if opts.TimeInForce == perptypes.GTT && opts.Expiry == 0 {
+		opts.Expiry = ctx.BlockTime().UnixMilli() + 365*24*3600*1000
+	}
 	return srv.CreateOrder(ctx, &matchingtypes.MsgCreateOrder{
 		Sender:           opts.Sender,
 		AccountIndex:     opts.AccountIndex,
@@ -83,6 +88,11 @@ func PlaceLimitOrder(
 	}
 	if opts.ClientOrderIndex == 0 {
 		opts.ClientOrderIndex = perptypes.MinClientOrderIndex
+	}
+	// GTT orders now require expiry > 0; provide a far-future default so
+	// legacy helpers that only cared about price / size still compile.
+	if opts.TimeInForce == perptypes.GTT && opts.Expiry == 0 {
+		opts.Expiry = ctx.BlockTime().UnixMilli() + 365*24*3600*1000
 	}
 	return srv.CreateOrder(ctx, &matchingtypes.MsgCreateOrder{
 		Sender:           user.Address.String(),

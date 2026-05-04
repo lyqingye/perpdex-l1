@@ -61,16 +61,32 @@ func (h *VoteExtensionHandler) VerifyVoteExtension() sdk.VerifyVoteExtensionHand
 
 // PrepareProposal aggregates collected vote extensions via weighted median and
 // injects an MsgAggregateOracleVotes Tx as the first transaction in the block.
-// MVP: we do not actually inject; this returns the underlying baseapp default.
+//
+// The aggregation-injection pipeline is still under construction; until it
+// lands, enabling `Params.VoteExtensionEnabled` without the matching
+// aggregator wiring would produce a block that silently uses stale oracle
+// data. To make the regression loud, we return an explicit error instead of
+// silently forwarding to the default handler when VE is toggled on.
 func (h *VoteExtensionHandler) PrepareProposal(defaultHandler sdk.PrepareProposalHandler) sdk.PrepareProposalHandler {
 	return func(ctx sdk.Context, req *abci.RequestPrepareProposal) (*abci.ResponsePrepareProposal, error) {
+		params, err := h.keeper.Params.Get(ctx)
+		if err == nil && params.VoteExtensionEnabled {
+			return nil, types.ErrVoteExtDisabled.Wrap(
+				"PrepareProposal aggregator not wired; keep Params.VoteExtensionEnabled=false until the full pipeline is in place",
+			)
+		}
 		return defaultHandler(ctx, req)
 	}
 }
 
-// ProcessProposal validates the injected aggregation Tx (when present).
+// ProcessProposal validates the injected aggregation Tx (when present). Same
+// rationale as PrepareProposal for the explicit error.
 func (h *VoteExtensionHandler) ProcessProposal(defaultHandler sdk.ProcessProposalHandler) sdk.ProcessProposalHandler {
 	return func(ctx sdk.Context, req *abci.RequestProcessProposal) (*abci.ResponseProcessProposal, error) {
+		params, err := h.keeper.Params.Get(ctx)
+		if err == nil && params.VoteExtensionEnabled {
+			return &abci.ResponseProcessProposal{Status: abci.ResponseProcessProposal_REJECT}, nil
+		}
 		return defaultHandler(ctx, req)
 	}
 }
