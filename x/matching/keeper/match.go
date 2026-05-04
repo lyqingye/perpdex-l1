@@ -23,6 +23,7 @@ import (
 //  7. maker GTT expiry skip
 //  8. maker reduce-only invariant
 //  9. trade_base = min(remaining_taker, remaining_maker)
+//
 // 10. fee accounting (delegated to ApplyPerpsMatching/ApplySpotMatching)
 // 11. apply matching via trade keeper
 // 12. orderbook update (PartialFill / Remove)
@@ -48,11 +49,17 @@ func (k Keeper) matchOrder(ctx context.Context, taker *orderbooktypes.Order, max
 		if !ok {
 			break
 		}
-		if taker.IsAsk && taker.Price > best.Price {
-			break
-		}
-		if !taker.IsAsk && taker.Price < best.Price {
-			break
+		// MarketOrder has no limit price (Price==0); the price-reachable
+		// check only applies to limit-style orders. This prevents a buy
+		// MarketOrder (or a triggered STOP/TAKE that became a buy
+		// MarketOrder) from being self-cancelled by 0 < best.Price.
+		if taker.OrderType != perptypes.MarketOrder {
+			if taker.IsAsk && taker.Price > best.Price {
+				break
+			}
+			if !taker.IsAsk && taker.Price < best.Price {
+				break
+			}
 		}
 		if best.OwnerAccountIndex == taker.OwnerAccountIndex {
 			// Self-trade prevention: cancel taker remainder.
@@ -79,8 +86,7 @@ func (k Keeper) matchOrder(ctx context.Context, taker *orderbooktypes.Order, max
 				break
 			}
 		}
-		// Maker reduce-only check is best-effort: maker's stored reduce_only
-		// flag is honoured when present.
+		// Maker reduce-only direction check.
 		if isPerp && best.ReduceOnly {
 			pos, err := k.accountKeeper.GetPosition(ctx, best.OwnerAccountIndex, taker.MarketIndex)
 			if err != nil {
@@ -113,6 +119,30 @@ func (k Keeper) matchOrder(ctx context.Context, taker *orderbooktypes.Order, max
 			if tradeBase > limit {
 				tradeBase = limit
 			}
+		}
+		// Symmetric cap on the maker side: a reduce-only maker may not
+		// flip its own position. If the maker's reduce capacity is less
+		// than its resting size, only fill up to that capacity and let
+		// the remainder stay on the book (or get evicted by a follow-up
+		// reduce-only direction check).
+		if isPerp && best.ReduceOnly && tradeBase > 0 {
+			pos, err := k.accountKeeper.GetPosition(ctx, best.OwnerAccountIndex, taker.MarketIndex)
+			if err != nil {
+				return totalFilled, perptypes.OrderStatusCancelled, err
+			}
+			makerLimit := pos.Position.Abs().Uint64()
+			if makerLimit == 0 {
+				if err := k.bookKeeper.RemoveOrderbookEntry(ctx, taker.MarketIndex, !taker.IsAsk, best.OrderIndex); err != nil {
+					return totalFilled, perptypes.OrderStatusCancelled, err
+				}
+				continue
+			}
+			if tradeBase > makerLimit {
+				tradeBase = makerLimit
+			}
+		}
+		if tradeBase == 0 {
+			break
 		}
 
 		fill := tradekeeper.Fill{
@@ -148,6 +178,7 @@ func (k Keeper) matchOrder(ctx context.Context, taker *orderbooktypes.Order, max
 				makerOrder.RemainingBaseAmount = 0
 				makerOrder.Status = perptypes.OrderStatusFilled
 				_ = k.bookKeeper.UnindexClientOrder(ctx, makerOrder)
+				_ = k.bookKeeper.UnindexAccountOpenOrder(ctx, makerOrder)
 			}
 			_ = k.bookKeeper.SetOrder(ctx, makerOrder)
 		}

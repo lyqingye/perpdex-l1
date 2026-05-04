@@ -22,10 +22,6 @@ func (m msgServer) RegisterAsset(ctx context.Context, msg *types.MsgRegisterAsse
 	if msg.Authority != m.authority {
 		return nil, types.ErrInvalidAuthority.Wrapf("expected %s, got %s", m.authority, msg.Authority)
 	}
-	if err := msg.ValidateBasic(); err != nil {
-		return nil, err
-	}
-
 	exists, err := m.HasDenom(ctx, msg.Denom)
 	if err != nil {
 		return nil, err
@@ -92,9 +88,6 @@ func (m msgServer) RegisterAsset(ctx context.Context, msg *types.MsgRegisterAsse
 func (m msgServer) UpdateAsset(ctx context.Context, msg *types.MsgUpdateAsset) (*types.MsgUpdateAssetResponse, error) {
 	if msg.Authority != m.authority {
 		return nil, types.ErrInvalidAuthority
-	}
-	if err := msg.ValidateBasic(); err != nil {
-		return nil, err
 	}
 	a, err := m.GetAsset(ctx, msg.AssetIndex)
 	if err != nil {

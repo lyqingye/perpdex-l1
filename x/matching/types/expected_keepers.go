@@ -48,6 +48,14 @@ type OrderbookKeeper interface {
 	// IterateUserOrders walks every (market, account, clientID) ->
 	// order_index mapping owned by `account`. `cb` returns true to stop.
 	IterateUserOrders(ctx context.Context, account uint64, cb func(orderbooktypes.Order) bool) error
+	// IndexAccountOpenOrder marks an order as resting/non-terminal so
+	// cancel-all can find it regardless of client_order_index.
+	IndexAccountOpenOrder(ctx context.Context, o orderbooktypes.Order) error
+	// UnindexAccountOpenOrder removes the resting marker for `o`.
+	UnindexAccountOpenOrder(ctx context.Context, o orderbooktypes.Order) error
+	// IterateAccountOpenOrders yields every resting order owned by
+	// `account`, optionally filtered by market (0 = all markets).
+	IterateAccountOpenOrders(ctx context.Context, account uint64, marketFilter uint32, cb func(orderbooktypes.Order) bool) error
 }
 
 type TradeKeeper interface {

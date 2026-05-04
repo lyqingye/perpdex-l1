@@ -25,9 +25,6 @@ import (
 // when master == InsuranceFundOperatorAccountIdx the new pool is
 // INSURANCE_FUND + UNIFIED; otherwise PUBLIC_POOL + SIMPLE.
 func (m msgServer) CreatePublicPool(ctx context.Context, msg *types.MsgCreatePublicPool) (*types.MsgCreatePublicPoolResponse, error) {
-	if err := msg.ValidateBasic(); err != nil {
-		return nil, err
-	}
 	if msg.InitialTotalShares == 0 {
 		return nil, types.ErrInvalidParams.Wrap("initial_total_shares must be > 0")
 	}
@@ -156,9 +153,6 @@ func (m msgServer) allocatePoolSubAccountIndex(ctx context.Context) (uint64, err
 // healthy + position-free + no open orders. Freezing the LLP also
 // clears the system Params.LiquidityPoolIndex (lighter parity).
 func (m msgServer) UpdatePublicPool(ctx context.Context, msg *types.MsgUpdatePublicPool) (*types.MsgUpdatePublicPoolResponse, error) {
-	if err := msg.ValidateBasic(); err != nil {
-		return nil, err
-	}
 	pool, err := m.GetAccount(ctx, msg.PoolAccountIndex)
 	if err != nil {
 		return nil, err
@@ -237,14 +231,12 @@ func (m msgServer) UpdatePublicPool(ctx context.Context, msg *types.MsgUpdatePub
 // assertPoolEmpty verifies the pool is HEALTHY + has no perp position
 // in any market + holds no open orders (TotalOrderCount == 0).
 func (m msgServer) assertPoolEmpty(ctx context.Context, pool types.Account) error {
-	if m.riskKeeper != nil {
-		status, err := m.riskKeeper.GetHealthStatus(ctx, pool.AccountIndex)
-		if err != nil {
-			return err
-		}
-		if status != perptypes.HealthHealthy {
-			return types.ErrPoolMustBeEmpty.Wrapf("pool not healthy (status=%d)", status)
-		}
+	status, err := m.riskKeeper.GetHealthStatus(ctx, pool.AccountIndex)
+	if err != nil {
+		return err
+	}
+	if status != perptypes.HealthHealthy {
+		return types.ErrPoolMustBeEmpty.Wrapf("pool not healthy (status=%d)", status)
 	}
 	if pool.TotalOrderCount != 0 {
 		return types.ErrPoolMustBeEmpty.Wrapf(
@@ -332,9 +324,6 @@ func (m msgServer) isPoolOperator(ctx context.Context, pool types.Account, sende
 // future burn profit calc; entry_timestamp is reset on every non-
 // operator mint and gates the LLP burn cooldown.
 func (m msgServer) MintShares(ctx context.Context, msg *types.MsgMintShares) (*types.MsgMintSharesResponse, error) {
-	if err := msg.ValidateBasic(); err != nil {
-		return nil, err
-	}
 	pool, err := m.GetAccount(ctx, msg.PoolAccountIndex)
 	if err != nil {
 		return nil, err
@@ -447,9 +436,6 @@ func (m msgServer) MintShares(ctx context.Context, msg *types.MsgMintShares) (*t
 // (computed as in lighter `l2_burn_shares.rs`) is split out from
 // realised profit and credited to operator_shares.
 func (m msgServer) BurnShares(ctx context.Context, msg *types.MsgBurnShares) (*types.MsgBurnSharesResponse, error) {
-	if err := msg.ValidateBasic(); err != nil {
-		return nil, err
-	}
 	resp, err := m.burnSharesCore(ctx, msg.Sender, msg.PoolAccountIndex, msg.ShareAmount, false /* skipCooldown */, false /* asAuthority */)
 	if err != nil {
 		return nil, err
@@ -694,9 +680,6 @@ func (m msgServer) burnSharesCore(
 // frozen, sender must be the pool operator, from != to, and the from
 // bucket must hold the requested amount.
 func (m msgServer) StrategyTransfer(ctx context.Context, msg *types.MsgStrategyTransfer) (*types.MsgStrategyTransferResponse, error) {
-	if err := msg.ValidateBasic(); err != nil {
-		return nil, err
-	}
 	pool, err := m.GetAccount(ctx, msg.PoolAccountIndex)
 	if err != nil {
 		return nil, err
@@ -761,9 +744,6 @@ func (m msgServer) StrategyTransfer(ctx context.Context, msg *types.MsgStrategyT
 // ForceBurnShares is the gov-authority escape hatch on the LLP pool.
 // Bypasses the cooldown, otherwise mirrors BurnShares.
 func (m msgServer) ForceBurnShares(ctx context.Context, msg *types.MsgForceBurnShares) (*types.MsgForceBurnSharesResponse, error) {
-	if err := msg.ValidateBasic(); err != nil {
-		return nil, err
-	}
 	if msg.Authority != m.authority {
 		return nil, types.ErrInvalidAuthority
 	}

@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 
+	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
@@ -26,31 +27,18 @@ func isTriggerOrder(t uint32) bool {
 }
 
 // quoteExceedsLimit returns true when base * price exceeds the market's
-// configured `OrderQuoteLimit`. Returned in per-order quote units (price *
-// base), matching how the orderbook stores quote aggregates.
+// configured `OrderQuoteLimit`. The multiplication is done over `math.Int`
+// (arbitrary-precision) so overflow can never wrap a malicious order back
+// under the cap — even with `base ~ 2^48` and `price ~ 2^32` legal inputs.
 func quoteExceedsLimit(base uint64, price uint32, limit int64) bool {
-	if limit <= 0 {
+	if limit <= 0 || base == 0 || price == 0 {
 		return false
 	}
-	// Fast overflow short-circuit: if base * price would overflow int64
-	// we can safely declare the limit exceeded.
-	if price == 0 {
-		return false
-	}
-	if base > uint64(1<<31) && uint64(price) > uint64(1<<31) {
-		return true
-	}
-	prod := int64(base) * int64(price)
-	if prod < 0 {
-		return true
-	}
-	return prod > limit
+	prod := math.NewIntFromUint64(base).Mul(math.NewIntFromUint64(uint64(price)))
+	return prod.GT(math.NewInt(limit))
 }
 
 func (m msgServer) CreateOrder(ctx context.Context, msg *types.MsgCreateOrder) (*types.MsgCreateOrderResponse, error) {
-	if err := msg.ValidateBasic(); err != nil {
-		return nil, err
-	}
 	if ok, err := m.accountKeeper.IsAuthorized(ctx, msg.Sender, msg.AccountIndex); err != nil {
 		return nil, err
 	} else if !ok {
@@ -132,22 +120,22 @@ func (m msgServer) CreateOrder(ctx context.Context, msg *types.MsgCreateOrder) (
 
 	now := sdk.UnwrapSDKContext(ctx).BlockTime().UnixMilli()
 	order := orderbooktypes.Order{
-		OrderIndex:           idx,
-		ClientOrderIndex:     msg.ClientOrderIndex,
-		OwnerAccountIndex:    msg.AccountIndex,
-		MarketIndex:          msg.MarketIndex,
-		IsAsk:                msg.IsAsk,
-		OrderType:            msg.OrderType,
-		TimeInForce:          msg.TimeInForce,
-		ReduceOnly:           msg.ReduceOnly,
-		Price:                msg.Price,
-		Nonce:                nonce,
-		InitialBaseAmount:    msg.BaseAmount,
-		RemainingBaseAmount:  msg.BaseAmount,
-		TriggerPrice:         msg.TriggerPrice,
-		Expiry:               msg.Expiry,
-		CreatedAt:            now,
-		Status:               perptypes.OrderStatusOpen,
+		OrderIndex:          idx,
+		ClientOrderIndex:    msg.ClientOrderIndex,
+		OwnerAccountIndex:   msg.AccountIndex,
+		MarketIndex:         msg.MarketIndex,
+		IsAsk:               msg.IsAsk,
+		OrderType:           msg.OrderType,
+		TimeInForce:         msg.TimeInForce,
+		ReduceOnly:          msg.ReduceOnly,
+		Price:               msg.Price,
+		Nonce:               nonce,
+		InitialBaseAmount:   msg.BaseAmount,
+		RemainingBaseAmount: msg.BaseAmount,
+		TriggerPrice:        msg.TriggerPrice,
+		Expiry:              msg.Expiry,
+		CreatedAt:           now,
+		Status:              perptypes.OrderStatusOpen,
 	}
 	// Trigger orders (stop/take) are parked in the trigger index until a
 	// price crossover activates them in EndBlocker.
@@ -161,6 +149,9 @@ func (m msgServer) CreateOrder(ctx context.Context, msg *types.MsgCreateOrder) (
 			return nil, err
 		}
 		if err := m.bookKeeper.IndexClientOrder(ctx, order); err != nil {
+			return nil, err
+		}
+		if err := m.bookKeeper.IndexAccountOpenOrder(ctx, order); err != nil {
 			return nil, err
 		}
 		return &types.MsgCreateOrderResponse{OrderIndex: idx, Status: order.Status}, nil
@@ -209,12 +200,15 @@ func (m msgServer) CreateOrder(ctx context.Context, msg *types.MsgCreateOrder) (
 		if err := m.bookKeeper.IndexClientOrder(ctx, order); err != nil {
 			return nil, err
 		}
+		if err := m.bookKeeper.IndexAccountOpenOrder(ctx, order); err != nil {
+			return nil, err
+		}
 	}
 
 	return &types.MsgCreateOrderResponse{
-		OrderIndex:        idx,
-		Status:            order.Status,
-		FilledBaseAmount:  filled,
+		OrderIndex:       idx,
+		Status:           order.Status,
+		FilledBaseAmount: filled,
 	}, nil
 }
 
@@ -237,9 +231,6 @@ func (m msgServer) reduceOnlyCompatible(ctx context.Context, accIdx uint64, mark
 }
 
 func (m msgServer) CancelOrder(ctx context.Context, msg *types.MsgCancelOrder) (*types.MsgCancelOrderResponse, error) {
-	if err := msg.ValidateBasic(); err != nil {
-		return nil, err
-	}
 	o, err := m.bookKeeper.GetOrder(ctx, msg.OrderIndex)
 	if err != nil {
 		return nil, err
@@ -280,13 +271,13 @@ func (m msgServer) cancelOrderInternal(ctx context.Context, o orderbooktypes.Ord
 	if err := m.bookKeeper.SetOrder(ctx, o); err != nil {
 		return err
 	}
-	return m.bookKeeper.UnindexClientOrderIfMatches(ctx, o)
+	if err := m.bookKeeper.UnindexClientOrderIfMatches(ctx, o); err != nil {
+		return err
+	}
+	return m.bookKeeper.UnindexAccountOpenOrder(ctx, o)
 }
 
 func (m msgServer) CancelAllOrders(ctx context.Context, msg *types.MsgCancelAllOrders) (*types.MsgCancelAllOrdersResponse, error) {
-	if err := msg.ValidateBasic(); err != nil {
-		return nil, err
-	}
 	if ok, err := m.accountKeeper.IsAuthorized(ctx, msg.Sender, msg.AccountIndex); err != nil {
 		return nil, err
 	} else if !ok {
@@ -309,10 +300,12 @@ func (m msgServer) CancelAllOrders(ctx context.Context, msg *types.MsgCancelAllO
 	if maxCancels == 0 {
 		maxCancels = 128
 	}
-	// Collect first; some order-book iterators do not tolerate writes during
-	// iteration.
+	// Collect first; the AccountOpenOrders iterator does not tolerate
+	// writes during iteration. The index covers every resting order
+	// regardless of client_order_index, and `MarketIndexFilter==0`
+	// means all markets per the proto contract.
 	targets := make([]orderbooktypes.Order, 0, maxCancels)
-	if err := m.bookKeeper.IterateUserOrders(ctx, msg.AccountIndex, func(o orderbooktypes.Order) bool {
+	if err := m.bookKeeper.IterateAccountOpenOrders(ctx, msg.AccountIndex, msg.MarketIndexFilter, func(o orderbooktypes.Order) bool {
 		if uint32(len(targets)) >= maxCancels {
 			return true
 		}
@@ -335,9 +328,6 @@ func (m msgServer) CancelAllOrders(ctx context.Context, msg *types.MsgCancelAllO
 }
 
 func (m msgServer) ModifyOrder(ctx context.Context, msg *types.MsgModifyOrder) (*types.MsgModifyOrderResponse, error) {
-	if err := msg.ValidateBasic(); err != nil {
-		return nil, err
-	}
 	o, err := m.bookKeeper.GetOrder(ctx, msg.OrderIndex)
 	if err != nil {
 		return nil, err

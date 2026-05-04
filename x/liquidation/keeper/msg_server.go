@@ -14,9 +14,6 @@ func NewMsgServerImpl(k Keeper) types.MsgServer { return &msgServer{Keeper: k} }
 var _ types.MsgServer = msgServer{}
 
 func (m msgServer) Liquidate(ctx context.Context, msg *types.MsgLiquidate) (*types.MsgLiquidateResponse, error) {
-	if err := msg.ValidateBasic(); err != nil {
-		return nil, err
-	}
 	// Resolve the absorbing liquidator account. Callers either set
 	// LiquidatorAccountIndex explicitly or let it default to 0, in which
 	// case we fall back to the sender's master account.
@@ -47,9 +44,6 @@ func (m msgServer) Liquidate(ctx context.Context, msg *types.MsgLiquidate) (*typ
 }
 
 func (m msgServer) Deleverage(ctx context.Context, msg *types.MsgDeleverage) (*types.MsgDeleverageResponse, error) {
-	if err := msg.ValidateBasic(); err != nil {
-		return nil, err
-	}
 	base := msg.BaseAmount
 	if base == 0 {
 		base = 1

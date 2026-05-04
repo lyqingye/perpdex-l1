@@ -47,6 +47,12 @@ type Keeper struct {
 
 	// TriggerIndex tracks orders awaiting trigger price activation.
 	TriggerIndex collections.KeySet[collections.Triple[uint32, uint32, uint64]]
+
+	// AccountOpenOrders[(account, order_index)]: tracks every order
+	// belonging to `account` that is in a non-terminal status (open /
+	// partially_filled / triggered_pending). Independent of
+	// client_order_index so cancel-all can find every resting order.
+	AccountOpenOrders collections.KeySet[collections.Pair[uint64, uint64]]
 }
 
 func NewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, authority string, mk types.MarketKeeper) Keeper {
@@ -79,6 +85,9 @@ func NewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, authori
 
 		TriggerIndex: collections.NewKeySet(sb, types.TriggerIndexKey, "trigger_index",
 			collections.TripleKeyCodec(collections.Uint32Key, collections.Uint32Key, collections.Uint64Key)),
+
+		AccountOpenOrders: collections.NewKeySet(sb, types.AccountOpenOrdersKey, "account_open_orders",
+			collections.PairKeyCodec(collections.Uint64Key, collections.Uint64Key)),
 	}
 	schema, err := sb.Build()
 	if err != nil {

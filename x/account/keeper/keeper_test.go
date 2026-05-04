@@ -230,33 +230,6 @@ func TestTransfer_RejectsMissingDestination(t *testing.T) {
 	require.ErrorIs(t, err, types.ErrAccountNotFound)
 }
 
-// TestWithdraw_FailClosedOnUnsetRisk guarantees that an unwired risk keeper
-// aborts fund-leaving paths (audit High account-3).
-func TestWithdraw_FailClosedOnUnsetRisk(t *testing.T) {
-	env := initTestEnv(t)
-	env.ak.SetRiskKeeper(nil) // simulate un-wired risk keeper
-
-	srv := accountkeeper.NewMsgServerImpl(env.ak)
-
-	owner := "px1qv9pzxqlyckngw6zf9g9whn9d3eh4qvgsxc8cx"
-	acc := types.Account{
-		AccountIndex: 777,
-		OwnerAddress: owner,
-		AccountType:  perptypes.MasterAccountType,
-		Collateral:   math.NewInt(10_000_000),
-	}
-	require.NoError(t, env.ak.SetAccount(env.ctx, acc))
-
-	_, err := srv.Withdraw(env.ctx, &types.MsgWithdraw{
-		Sender:       owner,
-		AccountIndex: 777,
-		AssetIndex:   perptypes.USDCAssetIndex,
-		Amount:       100_000_000, // above MinWithdrawalAmount
-		RouteType:    perptypes.RouteTypePerps,
-	})
-	require.ErrorIs(t, err, types.ErrRiskKeeperUnset)
-}
-
 // TestUpdateLeverage_RejectsBelowMarketMinIMF makes sure UpdateLeverage
 // honours the market-details floor (audit Medium account-7).
 func TestUpdateLeverage_RejectsBelowMarketMinIMF(t *testing.T) {

@@ -29,11 +29,6 @@ func (k Keeper) rejectPoolAccount(ctx context.Context, idx uint64) error {
 // so the subsequent risk check sees the post-funding EntryQuote and not a
 // stale snapshot.
 func (k Keeper) settleAllPositionFunding(ctx context.Context, accountIdx uint64) error {
-	if k.fundingKeeper == nil {
-		// Funding keeper must be wired for any production path; tests
-		// that explicitly omit it can still succeed (no positions).
-		return nil
-	}
 	for marketIdx := uint32(0); marketIdx <= perptypes.MaxPerpsMarketIndex; marketIdx++ {
 		pos, err := k.GetPosition(ctx, accountIdx, marketIdx)
 		if err != nil {
@@ -49,13 +44,10 @@ func (k Keeper) settleAllPositionFunding(ctx context.Context, accountIdx uint64)
 	return nil
 }
 
-// requireRiskOK enforces a post-state risk check. Unlike the previous
-// `if m.riskKeeper != nil` pattern, an unset risk keeper is now a hard
-// failure: fund-reducing Msg paths cannot silently skip risk validation.
+// requireRiskOK enforces a post-state risk check. The risk keeper is wired
+// at app construction and is always non-nil at runtime; missing wiring is a
+// programming error and will panic, which is the desired fail-fast behaviour.
 func (k Keeper) requireRiskOK(ctx context.Context, accountIdx uint64) error {
-	if k.riskKeeper == nil {
-		return types.ErrRiskKeeperUnset
-	}
 	ok, err := k.riskKeeper.IsValidRiskChange(ctx, accountIdx)
 	if err != nil {
 		return err
@@ -68,11 +60,7 @@ func (k Keeper) requireRiskOK(ctx context.Context, accountIdx uint64) error {
 
 // snapshotPreRisk captures the account's pre-state risk so a later
 // IsValidRiskChange call can compare deltas instead of demanding a
-// strictly-healthy post state. Silently no-ops when no risk keeper is wired
-// (test fixtures that deliberately skip risk).
+// strictly-healthy post state.
 func (k Keeper) snapshotPreRisk(ctx context.Context, accountIdx uint64) error {
-	if k.riskKeeper == nil {
-		return nil
-	}
 	return k.riskKeeper.SnapshotPreRisk(ctx, accountIdx)
 }

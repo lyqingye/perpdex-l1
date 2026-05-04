@@ -22,9 +22,6 @@ var _ types.MsgServer = msgServer{}
 // spot balance. If the beneficiary has no master account yet, one is created
 // automatically.
 func (m msgServer) Deposit(ctx context.Context, msg *types.MsgDeposit) (*types.MsgDepositResponse, error) {
-	if err := msg.ValidateBasic(); err != nil {
-		return nil, err
-	}
 	sender, err := sdk.AccAddressFromBech32(msg.Sender)
 	if err != nil {
 		return nil, err
@@ -94,9 +91,6 @@ func (m msgServer) Deposit(ctx context.Context, msg *types.MsgDeposit) (*types.M
 }
 
 func (m msgServer) Withdraw(ctx context.Context, msg *types.MsgWithdraw) (*types.MsgWithdrawResponse, error) {
-	if err := msg.ValidateBasic(); err != nil {
-		return nil, err
-	}
 	if ok, err := m.IsAuthorized(ctx, msg.Sender, msg.AccountIndex); err != nil {
 		return nil, err
 	} else if !ok {
@@ -172,9 +166,6 @@ func (m msgServer) Withdraw(ctx context.Context, msg *types.MsgWithdraw) (*types
 }
 
 func (m msgServer) CreateSubAccount(ctx context.Context, msg *types.MsgCreateSubAccount) (*types.MsgCreateSubAccountResponse, error) {
-	if err := msg.ValidateBasic(); err != nil {
-		return nil, err
-	}
 	master, err := m.GetAccount(ctx, msg.MasterAccountIndex)
 	if err != nil {
 		return nil, err
@@ -195,9 +186,6 @@ func (m msgServer) CreateSubAccount(ctx context.Context, msg *types.MsgCreateSub
 }
 
 func (m msgServer) UpdateAccountConfig(ctx context.Context, msg *types.MsgUpdateAccountConfig) (*types.MsgUpdateAccountConfigResponse, error) {
-	if err := msg.ValidateBasic(); err != nil {
-		return nil, err
-	}
 	if msg.NewTradingMode != perptypes.AccountTradingModeSimple && msg.NewTradingMode != perptypes.AccountTradingModeUnified {
 		return nil, types.ErrInvalidTradingMode
 	}
@@ -220,9 +208,6 @@ func (m msgServer) UpdateAccountConfig(ctx context.Context, msg *types.MsgUpdate
 }
 
 func (m msgServer) UpdateAccountAssetConfig(ctx context.Context, msg *types.MsgUpdateAccountAssetConfig) (*types.MsgUpdateAccountAssetConfigResponse, error) {
-	if err := msg.ValidateBasic(); err != nil {
-		return nil, err
-	}
 	if msg.NewMarginMode != perptypes.MarginModeDisabled &&
 		msg.NewMarginMode != perptypes.MarginModeEnabled {
 		return nil, types.ErrInvalidMarginMode.Wrapf("new_margin_mode=%d", msg.NewMarginMode)
@@ -250,9 +235,6 @@ func (m msgServer) UpdateAccountAssetConfig(ctx context.Context, msg *types.MsgU
 }
 
 func (m msgServer) Transfer(ctx context.Context, msg *types.MsgTransfer) (*types.MsgTransferResponse, error) {
-	if err := msg.ValidateBasic(); err != nil {
-		return nil, err
-	}
 	if ok, err := m.IsAuthorized(ctx, msg.Sender, msg.FromAccountIndex); err != nil {
 		return nil, err
 	} else if !ok {
@@ -309,9 +291,6 @@ func (m msgServer) Transfer(ctx context.Context, msg *types.MsgTransfer) (*types
 }
 
 func (m msgServer) UpdateMargin(ctx context.Context, msg *types.MsgUpdateMargin) (*types.MsgUpdateMarginResponse, error) {
-	if err := msg.ValidateBasic(); err != nil {
-		return nil, err
-	}
 	if ok, err := m.IsAuthorized(ctx, msg.Sender, msg.AccountIndex); err != nil {
 		return nil, err
 	} else if !ok {
@@ -326,10 +305,8 @@ func (m msgServer) UpdateMargin(ctx context.Context, msg *types.MsgUpdateMargin)
 	// Settle pending funding on the touched isolated position so its
 	// allocated_margin/entry_quote/collateral reflect the latest rate
 	// before the risk check fires.
-	if m.fundingKeeper != nil {
-		if err := m.fundingKeeper.SettlePositionFunding(ctx, msg.AccountIndex, msg.MarketIndex); err != nil {
-			return nil, err
-		}
+	if err := m.fundingKeeper.SettlePositionFunding(ctx, msg.AccountIndex, msg.MarketIndex); err != nil {
+		return nil, err
 	}
 	if err := m.snapshotPreRisk(ctx, msg.AccountIndex); err != nil {
 		return nil, err
@@ -371,9 +348,6 @@ func (m msgServer) UpdateMargin(ctx context.Context, msg *types.MsgUpdateMargin)
 }
 
 func (m msgServer) UpdateLeverage(ctx context.Context, msg *types.MsgUpdateLeverage) (*types.MsgUpdateLeverageResponse, error) {
-	if err := msg.ValidateBasic(); err != nil {
-		return nil, err
-	}
 	if ok, err := m.IsAuthorized(ctx, msg.Sender, msg.AccountIndex); err != nil {
 		return nil, err
 	} else if !ok {
@@ -387,23 +361,21 @@ func (m msgServer) UpdateLeverage(ctx context.Context, msg *types.MsgUpdateLever
 	}
 	// Market + IMF validation: the market must exist, and the new IMF
 	// must satisfy market_min <= new_imf <= margin_tick.
-	if m.marketKeeper != nil {
-		md, err := m.marketKeeper.GetMarketDetails(ctx, msg.MarketIndex)
-		if err != nil {
-			return nil, err
-		}
-		if msg.NewInitialMarginFraction < md.MinInitialMarginFraction {
-			return nil, types.ErrInvalidParams.Wrapf(
-				"new_initial_margin_fraction=%d below market min=%d",
-				msg.NewInitialMarginFraction, md.MinInitialMarginFraction,
-			)
-		}
-		if msg.NewInitialMarginFraction > uint32(perptypes.MarginTick) {
-			return nil, types.ErrInvalidParams.Wrapf(
-				"new_initial_margin_fraction=%d exceeds MarginTick=%d",
-				msg.NewInitialMarginFraction, perptypes.MarginTick,
-			)
-		}
+	md, err := m.marketKeeper.GetMarketDetails(ctx, msg.MarketIndex)
+	if err != nil {
+		return nil, err
+	}
+	if msg.NewInitialMarginFraction < md.MinInitialMarginFraction {
+		return nil, types.ErrInvalidParams.Wrapf(
+			"new_initial_margin_fraction=%d below market min=%d",
+			msg.NewInitialMarginFraction, md.MinInitialMarginFraction,
+		)
+	}
+	if msg.NewInitialMarginFraction > uint32(perptypes.MarginTick) {
+		return nil, types.ErrInvalidParams.Wrapf(
+			"new_initial_margin_fraction=%d exceeds MarginTick=%d",
+			msg.NewInitialMarginFraction, perptypes.MarginTick,
+		)
 	}
 	pos, err := m.GetPosition(ctx, msg.AccountIndex, msg.MarketIndex)
 	if err != nil {
@@ -432,4 +404,3 @@ func (m msgServer) UpdateParams(ctx context.Context, msg *types.MsgUpdateParams)
 	}
 	return &types.MsgUpdateParamsResponse{}, nil
 }
-

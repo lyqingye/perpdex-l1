@@ -16,9 +16,6 @@ import (
 // market are emitted as events but do not short-circuit the loop so a stale
 // oracle for one market cannot jam the rest.
 func (k Keeper) EndBlocker(ctx context.Context) error {
-	if k.oracleKeeper == nil {
-		return nil
-	}
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	type triggered struct {
 		market       uint32
@@ -105,6 +102,7 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 		if err != nil {
 			o.Status = perptypes.OrderStatusCancelled
 			_ = k.bookKeeper.SetOrder(ctx, o)
+			_ = k.bookKeeper.UnindexAccountOpenOrder(ctx, o)
 			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
 				"trigger_match_error",
 				sdk.NewAttribute("order_index", uintToStr(o.OrderIndex)),
@@ -135,6 +133,13 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 			}
 		}
 		_ = k.bookKeeper.SetOrder(ctx, o)
+		// If the activated trigger reached a terminal status, drop the
+		// account-level open marker that was set when the order was
+		// originally accepted.
+		switch o.Status {
+		case perptypes.OrderStatusFilled, perptypes.OrderStatusCancelled:
+			_ = k.bookKeeper.UnindexAccountOpenOrder(ctx, o)
+		}
 	}
 	return nil
 }

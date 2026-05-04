@@ -426,6 +426,57 @@ func (k Keeper) HasOpenClientOrder(ctx context.Context, market uint32, account u
 	return false, 0, nil
 }
 
+// IndexAccountOpenOrder marks `o` as a non-terminal order owned by
+// `o.OwnerAccountIndex`. Independent of client_order_index so cancel-all
+// can find every resting order.
+func (k Keeper) IndexAccountOpenOrder(ctx context.Context, o types.Order) error {
+	return k.AccountOpenOrders.Set(ctx, collections.Join(o.OwnerAccountIndex, o.OrderIndex))
+}
+
+// UnindexAccountOpenOrder removes the (account, order_index) tuple. Safe
+// to call on a tuple that was never indexed.
+func (k Keeper) UnindexAccountOpenOrder(ctx context.Context, o types.Order) error {
+	return k.AccountOpenOrders.Remove(ctx, collections.Join(o.OwnerAccountIndex, o.OrderIndex))
+}
+
+// IterateAccountOpenOrders walks every order currently indexed as open
+// for `account`. When `marketFilter != 0` only orders whose MarketIndex
+// equals `marketFilter` are yielded; passing 0 yields all markets.
+// Callers can return true from `cb` to stop early.
+func (k Keeper) IterateAccountOpenOrders(
+	ctx context.Context,
+	account uint64,
+	marketFilter uint32,
+	cb func(types.Order) bool,
+) error {
+	rng := collections.NewPrefixedPairRange[uint64, uint64](account)
+	iter, err := k.AccountOpenOrders.Iterate(ctx, rng)
+	if err != nil {
+		return err
+	}
+	defer iter.Close()
+	for ; iter.Valid(); iter.Next() {
+		key, err := iter.Key()
+		if err != nil {
+			return err
+		}
+		o, err := k.GetOrder(ctx, key.K2())
+		if err != nil {
+			if errors.Is(err, types.ErrOrderNotFound) {
+				continue
+			}
+			return err
+		}
+		if marketFilter != 0 && o.MarketIndex != marketFilter {
+			continue
+		}
+		if cb(o) {
+			return nil
+		}
+	}
+	return nil
+}
+
 // IterateUserOrders visits every (market, account, clientID) mapping owned
 // by `account` and yields the corresponding `Order`. Callers can return
 // true from `cb` to stop early.

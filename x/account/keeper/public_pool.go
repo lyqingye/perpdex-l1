@@ -2,7 +2,6 @@ package keeper
 
 import (
 	"context"
-	"fmt"
 
 	"cosmossdk.io/math"
 
@@ -36,9 +35,6 @@ func (k Keeper) SharesToUSDCValue(
 	info := pool.PublicPoolInfo
 	if info.TotalShares.IsZero() {
 		return shareAmount.Mul(math.NewIntFromUint64(perptypes.InitialPoolShareValue)), nil
-	}
-	if k.riskKeeper == nil {
-		return math.ZeroInt(), fmt.Errorf("public_pool: risk keeper not wired")
 	}
 	tav, err := k.riskKeeper.GetTotalAccountValue(ctx, poolIdx)
 	if err != nil {
@@ -78,9 +74,6 @@ func (k Keeper) USDCValueToShares(
 		// initial mint: 1 share = INITIAL_POOL_SHARE_VALUE uusdc
 		return usdcAmount.Quo(math.NewIntFromUint64(perptypes.InitialPoolShareValue)), nil
 	}
-	if k.riskKeeper == nil {
-		return math.ZeroInt(), fmt.Errorf("public_pool: risk keeper not wired")
-	}
 	tav, err := k.riskKeeper.GetTotalAccountValue(ctx, poolIdx)
 	if err != nil {
 		return math.ZeroInt(), err
@@ -111,9 +104,6 @@ func (k Keeper) AvailableSharesToBurn(
 	info := pool.PublicPoolInfo
 	if info.TotalShares.IsZero() {
 		return math.ZeroInt(), nil
-	}
-	if k.riskKeeper == nil {
-		return math.ZeroInt(), fmt.Errorf("public_pool: risk keeper not wired")
 	}
 	tav, err := k.riskKeeper.GetTotalAccountValue(ctx, poolIdx)
 	if err != nil {

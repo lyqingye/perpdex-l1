@@ -19,9 +19,6 @@ func (m msgServer) CreateMarket(ctx context.Context, msg *types.MsgCreateMarket)
 	if msg.Authority != m.authority {
 		return nil, types.ErrInvalidAuthority
 	}
-	if err := msg.ValidateBasic(); err != nil {
-		return nil, err
-	}
 	market := msg.Market
 	details := msg.MarketDetails
 	if market.MarketIndex != details.MarketIndex {
