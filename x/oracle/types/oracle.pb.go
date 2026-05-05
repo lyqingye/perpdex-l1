@@ -5,6 +5,7 @@ package types
 
 import (
 	fmt "fmt"
+	_ "github.com/cosmos/gogoproto/gogoproto"
 	proto "github.com/cosmos/gogoproto/proto"
 	io "io"
 	math "math"
@@ -22,15 +23,15 @@ var _ = math.Inf
 // proto package needs to be updated.
 const _ = proto.GoGoProtoPackageIsVersion3 // please upgrade the proto package
 
+// OraclePrice is the canonical per-market index/mark price stored on chain.
 type OraclePrice struct {
 	MarketIndex          uint32 `protobuf:"varint,1,opt,name=market_index,json=marketIndex,proto3" json:"market_index,omitempty"`
 	IndexPrice           uint32 `protobuf:"varint,2,opt,name=index_price,json=indexPrice,proto3" json:"index_price,omitempty"`
 	MarkPrice            uint32 `protobuf:"varint,3,opt,name=mark_price,json=markPrice,proto3" json:"mark_price,omitempty"`
 	LastUpdatedTimestamp int64  `protobuf:"varint,4,opt,name=last_updated_timestamp,json=lastUpdatedTimestamp,proto3" json:"last_updated_timestamp,omitempty"`
 	LastUpdatedHeight    int64  `protobuf:"varint,5,opt,name=last_updated_height,json=lastUpdatedHeight,proto3" json:"last_updated_height,omitempty"`
-	AggregationMethod    uint32 `protobuf:"varint,6,opt,name=aggregation_method,json=aggregationMethod,proto3" json:"aggregation_method,omitempty"`
-	ParticipantCount     uint32 `protobuf:"varint,7,opt,name=participant_count,json=participantCount,proto3" json:"participant_count,omitempty"`
-	TotalVotingPower     uint64 `protobuf:"varint,8,opt,name=total_voting_power,json=totalVotingPower,proto3" json:"total_voting_power,omitempty"`
+	ParticipantCount     uint32 `protobuf:"varint,6,opt,name=participant_count,json=participantCount,proto3" json:"participant_count,omitempty"`
+	TotalVotingPower     uint64 `protobuf:"varint,7,opt,name=total_voting_power,json=totalVotingPower,proto3" json:"total_voting_power,omitempty"`
 }
 
 func (m *OraclePrice) Reset()         { *m = OraclePrice{} }
@@ -101,13 +102,6 @@ func (m *OraclePrice) GetLastUpdatedHeight() int64 {
 	return 0
 }
 
-func (m *OraclePrice) GetAggregationMethod() uint32 {
-	if m != nil {
-		return m.AggregationMethod
-	}
-	return 0
-}
-
 func (m *OraclePrice) GetParticipantCount() uint32 {
 	if m != nil {
 		return m.ParticipantCount
@@ -122,253 +116,38 @@ func (m *OraclePrice) GetTotalVotingPower() uint64 {
 	return 0
 }
 
-type OracleProvider struct {
-	Address     string `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`
-	Enabled     bool   `protobuf:"varint,2,opt,name=enabled,proto3" json:"enabled,omitempty"`
-	AddedAt     int64  `protobuf:"varint,3,opt,name=added_at,json=addedAt,proto3" json:"added_at,omitempty"`
-	Description string `protobuf:"bytes,4,opt,name=description,proto3" json:"description,omitempty"`
-}
-
-func (m *OracleProvider) Reset()         { *m = OracleProvider{} }
-func (m *OracleProvider) String() string { return proto.CompactTextString(m) }
-func (*OracleProvider) ProtoMessage()    {}
-func (*OracleProvider) Descriptor() ([]byte, []int) {
-	return fileDescriptor_317a9f3233098654, []int{1}
-}
-func (m *OracleProvider) XXX_Unmarshal(b []byte) error {
-	return m.Unmarshal(b)
-}
-func (m *OracleProvider) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	if deterministic {
-		return xxx_messageInfo_OracleProvider.Marshal(b, m, deterministic)
-	} else {
-		b = b[:cap(b)]
-		n, err := m.MarshalToSizedBuffer(b)
-		if err != nil {
-			return nil, err
-		}
-		return b[:n], nil
-	}
-}
-func (m *OracleProvider) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_OracleProvider.Merge(m, src)
-}
-func (m *OracleProvider) XXX_Size() int {
-	return m.Size()
-}
-func (m *OracleProvider) XXX_DiscardUnknown() {
-	xxx_messageInfo_OracleProvider.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_OracleProvider proto.InternalMessageInfo
-
-func (m *OracleProvider) GetAddress() string {
-	if m != nil {
-		return m.Address
-	}
-	return ""
-}
-
-func (m *OracleProvider) GetEnabled() bool {
-	if m != nil {
-		return m.Enabled
-	}
-	return false
-}
-
-func (m *OracleProvider) GetAddedAt() int64 {
-	if m != nil {
-		return m.AddedAt
-	}
-	return 0
-}
-
-func (m *OracleProvider) GetDescription() string {
-	if m != nil {
-		return m.Description
-	}
-	return ""
-}
-
-type ValidatorOracleBinding struct {
-	ValidatorAddress      string `protobuf:"bytes,1,opt,name=validator_address,json=validatorAddress,proto3" json:"validator_address,omitempty"`
-	OracleOperatorAddress string `protobuf:"bytes,2,opt,name=oracle_operator_address,json=oracleOperatorAddress,proto3" json:"oracle_operator_address,omitempty"`
-	BoundAtBlock          int64  `protobuf:"varint,3,opt,name=bound_at_block,json=boundAtBlock,proto3" json:"bound_at_block,omitempty"`
-	BoundAtTime           int64  `protobuf:"varint,4,opt,name=bound_at_time,json=boundAtTime,proto3" json:"bound_at_time,omitempty"`
-	Metadata              string `protobuf:"bytes,5,opt,name=metadata,proto3" json:"metadata,omitempty"`
-}
-
-func (m *ValidatorOracleBinding) Reset()         { *m = ValidatorOracleBinding{} }
-func (m *ValidatorOracleBinding) String() string { return proto.CompactTextString(m) }
-func (*ValidatorOracleBinding) ProtoMessage()    {}
-func (*ValidatorOracleBinding) Descriptor() ([]byte, []int) {
-	return fileDescriptor_317a9f3233098654, []int{2}
-}
-func (m *ValidatorOracleBinding) XXX_Unmarshal(b []byte) error {
-	return m.Unmarshal(b)
-}
-func (m *ValidatorOracleBinding) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	if deterministic {
-		return xxx_messageInfo_ValidatorOracleBinding.Marshal(b, m, deterministic)
-	} else {
-		b = b[:cap(b)]
-		n, err := m.MarshalToSizedBuffer(b)
-		if err != nil {
-			return nil, err
-		}
-		return b[:n], nil
-	}
-}
-func (m *ValidatorOracleBinding) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_ValidatorOracleBinding.Merge(m, src)
-}
-func (m *ValidatorOracleBinding) XXX_Size() int {
-	return m.Size()
-}
-func (m *ValidatorOracleBinding) XXX_DiscardUnknown() {
-	xxx_messageInfo_ValidatorOracleBinding.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_ValidatorOracleBinding proto.InternalMessageInfo
-
-func (m *ValidatorOracleBinding) GetValidatorAddress() string {
-	if m != nil {
-		return m.ValidatorAddress
-	}
-	return ""
-}
-
-func (m *ValidatorOracleBinding) GetOracleOperatorAddress() string {
-	if m != nil {
-		return m.OracleOperatorAddress
-	}
-	return ""
-}
-
-func (m *ValidatorOracleBinding) GetBoundAtBlock() int64 {
-	if m != nil {
-		return m.BoundAtBlock
-	}
-	return 0
-}
-
-func (m *ValidatorOracleBinding) GetBoundAtTime() int64 {
-	if m != nil {
-		return m.BoundAtTime
-	}
-	return 0
-}
-
-func (m *ValidatorOracleBinding) GetMetadata() string {
-	if m != nil {
-		return m.Metadata
-	}
-	return ""
-}
-
-type ValidatorOracleStats struct {
-	ValidatorAddress    string `protobuf:"bytes,1,opt,name=validator_address,json=validatorAddress,proto3" json:"validator_address,omitempty"`
-	TotalVotesSubmitted uint64 `protobuf:"varint,2,opt,name=total_votes_submitted,json=totalVotesSubmitted,proto3" json:"total_votes_submitted,omitempty"`
-	TotalVotesMissed    uint64 `protobuf:"varint,3,opt,name=total_votes_missed,json=totalVotesMissed,proto3" json:"total_votes_missed,omitempty"`
-	TotalVotesDeviant   uint64 `protobuf:"varint,4,opt,name=total_votes_deviant,json=totalVotesDeviant,proto3" json:"total_votes_deviant,omitempty"`
-	LastActiveHeight    int64  `protobuf:"varint,5,opt,name=last_active_height,json=lastActiveHeight,proto3" json:"last_active_height,omitempty"`
-	ConsecutiveMissed   uint32 `protobuf:"varint,6,opt,name=consecutive_missed,json=consecutiveMissed,proto3" json:"consecutive_missed,omitempty"`
-}
-
-func (m *ValidatorOracleStats) Reset()         { *m = ValidatorOracleStats{} }
-func (m *ValidatorOracleStats) String() string { return proto.CompactTextString(m) }
-func (*ValidatorOracleStats) ProtoMessage()    {}
-func (*ValidatorOracleStats) Descriptor() ([]byte, []int) {
-	return fileDescriptor_317a9f3233098654, []int{3}
-}
-func (m *ValidatorOracleStats) XXX_Unmarshal(b []byte) error {
-	return m.Unmarshal(b)
-}
-func (m *ValidatorOracleStats) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	if deterministic {
-		return xxx_messageInfo_ValidatorOracleStats.Marshal(b, m, deterministic)
-	} else {
-		b = b[:cap(b)]
-		n, err := m.MarshalToSizedBuffer(b)
-		if err != nil {
-			return nil, err
-		}
-		return b[:n], nil
-	}
-}
-func (m *ValidatorOracleStats) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_ValidatorOracleStats.Merge(m, src)
-}
-func (m *ValidatorOracleStats) XXX_Size() int {
-	return m.Size()
-}
-func (m *ValidatorOracleStats) XXX_DiscardUnknown() {
-	xxx_messageInfo_ValidatorOracleStats.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_ValidatorOracleStats proto.InternalMessageInfo
-
-func (m *ValidatorOracleStats) GetValidatorAddress() string {
-	if m != nil {
-		return m.ValidatorAddress
-	}
-	return ""
-}
-
-func (m *ValidatorOracleStats) GetTotalVotesSubmitted() uint64 {
-	if m != nil {
-		return m.TotalVotesSubmitted
-	}
-	return 0
-}
-
-func (m *ValidatorOracleStats) GetTotalVotesMissed() uint64 {
-	if m != nil {
-		return m.TotalVotesMissed
-	}
-	return 0
-}
-
-func (m *ValidatorOracleStats) GetTotalVotesDeviant() uint64 {
-	if m != nil {
-		return m.TotalVotesDeviant
-	}
-	return 0
-}
-
-func (m *ValidatorOracleStats) GetLastActiveHeight() int64 {
-	if m != nil {
-		return m.LastActiveHeight
-	}
-	return 0
-}
-
-func (m *ValidatorOracleStats) GetConsecutiveMissed() uint32 {
-	if m != nil {
-		return m.ConsecutiveMissed
-	}
-	return 0
-}
-
+// Params controls oracle aggregation behaviour.
+//
+// `vote_extension_enabled` mirrors the consensus-level
+// `ConsensusParams.Abci.VoteExtensionsEnableHeight` flag: when true the
+// VoteExtension oracle pipeline (ExtendVote / PrepareProposal /
+// ProcessProposal) is exercised; when false the chain runs without an
+// oracle data plane (test-only, prices must be seeded manually).
 type Params struct {
-	AggregationMode        uint32 `protobuf:"varint,1,opt,name=aggregation_mode,json=aggregationMode,proto3" json:"aggregation_mode,omitempty"`
-	MaxAgeMs               int64  `protobuf:"varint,2,opt,name=max_age_ms,json=maxAgeMs,proto3" json:"max_age_ms,omitempty"`
-	MarkPriceEmaAlpha      uint32 `protobuf:"varint,3,opt,name=mark_price_ema_alpha,json=markPriceEmaAlpha,proto3" json:"mark_price_ema_alpha,omitempty"`
-	MinVotingPowerRatio    uint32 `protobuf:"varint,4,opt,name=min_voting_power_ratio,json=minVotingPowerRatio,proto3" json:"min_voting_power_ratio,omitempty"`
-	DeviationThresholdBps  uint32 `protobuf:"varint,5,opt,name=deviation_threshold_bps,json=deviationThresholdBps,proto3" json:"deviation_threshold_bps,omitempty"`
-	SlashFractionDeviation string `protobuf:"bytes,6,opt,name=slash_fraction_deviation,json=slashFractionDeviation,proto3" json:"slash_fraction_deviation,omitempty"`
-	SlashFractionDowntime  string `protobuf:"bytes,7,opt,name=slash_fraction_downtime,json=slashFractionDowntime,proto3" json:"slash_fraction_downtime,omitempty"`
-	MinActiveRatioBps      uint32 `protobuf:"varint,8,opt,name=min_active_ratio_bps,json=minActiveRatioBps,proto3" json:"min_active_ratio_bps,omitempty"`
-	ActiveWindowBlocks     uint32 `protobuf:"varint,9,opt,name=active_window_blocks,json=activeWindowBlocks,proto3" json:"active_window_blocks,omitempty"`
-	MaxConsecutiveMissed   uint32 `protobuf:"varint,10,opt,name=max_consecutive_missed,json=maxConsecutiveMissed,proto3" json:"max_consecutive_missed,omitempty"`
-	VoteExtensionEnabled   bool   `protobuf:"varint,11,opt,name=vote_extension_enabled,json=voteExtensionEnabled,proto3" json:"vote_extension_enabled,omitempty"`
+	// Maximum age of an OraclePrice (in milliseconds) before risk / funding /
+	// liquidation refuse to use it.
+	MaxAgeMs int64 `protobuf:"varint,1,opt,name=max_age_ms,json=maxAgeMs,proto3" json:"max_age_ms,omitempty"`
+	// EMA smoothing coefficient applied on top of aggregated mark prices,
+	// expressed in basis points (10000 = no smoothing).
+	MarkPriceEmaAlpha uint32 `protobuf:"varint,2,opt,name=mark_price_ema_alpha,json=markPriceEmaAlpha,proto3" json:"mark_price_ema_alpha,omitempty"`
+	// Minimum total voting power (in basis points of bonded power) that must
+	// participate in a market's vote-extension aggregation before the
+	// proposer accepts the aggregated price for that market.
+	MinVotingPowerRatio uint32 `protobuf:"varint,3,opt,name=min_voting_power_ratio,json=minVotingPowerRatio,proto3" json:"min_voting_power_ratio,omitempty"`
+	// Bps deviation between an individual validator vote and the median that
+	// VerifyVoteExtension / PrepareProposal use as a sanity bound. Votes
+	// outside this band are dropped from the aggregation set.
+	DeviationThresholdBps uint32 `protobuf:"varint,4,opt,name=deviation_threshold_bps,json=deviationThresholdBps,proto3" json:"deviation_threshold_bps,omitempty"`
+	// Whether the ABCI++ vote-extension oracle pipeline is active. Should be
+	// kept consistent with ConsensusParams.Abci.VoteExtensionsEnableHeight.
+	VoteExtensionEnabled bool `protobuf:"varint,5,opt,name=vote_extension_enabled,json=voteExtensionEnabled,proto3" json:"vote_extension_enabled,omitempty"`
 }
 
 func (m *Params) Reset()         { *m = Params{} }
 func (m *Params) String() string { return proto.CompactTextString(m) }
 func (*Params) ProtoMessage()    {}
 func (*Params) Descriptor() ([]byte, []int) {
-	return fileDescriptor_317a9f3233098654, []int{4}
+	return fileDescriptor_317a9f3233098654, []int{1}
 }
 func (m *Params) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -396,13 +175,6 @@ func (m *Params) XXX_DiscardUnknown() {
 }
 
 var xxx_messageInfo_Params proto.InternalMessageInfo
-
-func (m *Params) GetAggregationMode() uint32 {
-	if m != nil {
-		return m.AggregationMode
-	}
-	return 0
-}
 
 func (m *Params) GetMaxAgeMs() int64 {
 	if m != nil {
@@ -432,41 +204,6 @@ func (m *Params) GetDeviationThresholdBps() uint32 {
 	return 0
 }
 
-func (m *Params) GetSlashFractionDeviation() string {
-	if m != nil {
-		return m.SlashFractionDeviation
-	}
-	return ""
-}
-
-func (m *Params) GetSlashFractionDowntime() string {
-	if m != nil {
-		return m.SlashFractionDowntime
-	}
-	return ""
-}
-
-func (m *Params) GetMinActiveRatioBps() uint32 {
-	if m != nil {
-		return m.MinActiveRatioBps
-	}
-	return 0
-}
-
-func (m *Params) GetActiveWindowBlocks() uint32 {
-	if m != nil {
-		return m.ActiveWindowBlocks
-	}
-	return 0
-}
-
-func (m *Params) GetMaxConsecutiveMissed() uint32 {
-	if m != nil {
-		return m.MaxConsecutiveMissed
-	}
-	return 0
-}
-
 func (m *Params) GetVoteExtensionEnabled() bool {
 	if m != nil {
 		return m.VoteExtensionEnabled
@@ -474,6 +211,9 @@ func (m *Params) GetVoteExtensionEnabled() bool {
 	return false
 }
 
+// MarketPrice is a (market_index, index, mark) triple emitted both by
+// validators (inside vote extensions) and by the proposer (inside
+// MsgAggregateOracleVotes).
 type MarketPrice struct {
 	MarketIndex uint32 `protobuf:"varint,1,opt,name=market_index,json=marketIndex,proto3" json:"market_index,omitempty"`
 	IndexPrice  uint32 `protobuf:"varint,2,opt,name=index_price,json=indexPrice,proto3" json:"index_price,omitempty"`
@@ -484,7 +224,7 @@ func (m *MarketPrice) Reset()         { *m = MarketPrice{} }
 func (m *MarketPrice) String() string { return proto.CompactTextString(m) }
 func (*MarketPrice) ProtoMessage()    {}
 func (*MarketPrice) Descriptor() ([]byte, []int) {
-	return fileDescriptor_317a9f3233098654, []int{5}
+	return fileDescriptor_317a9f3233098654, []int{2}
 }
 func (m *MarketPrice) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -534,19 +274,21 @@ func (m *MarketPrice) GetMarkPrice() uint32 {
 	return 0
 }
 
-// OracleVote is the payload that a validator's oracle operator signs and
-// attaches to its prevote via ABCI++ ExtendVote.
+// OracleVote is the payload that a validator's local node serialises into
+// its ABCI++ vote extension. The validator's consensus key signs the
+// containing prevote; we therefore do not include the validator address
+// in the payload and rely on cometbft's commit info (LocalLastCommit /
+// ProposedLastCommit) to attribute votes to validators.
 type OracleVote struct {
-	ValidatorAddress  string         `protobuf:"bytes,1,opt,name=validator_address,json=validatorAddress,proto3" json:"validator_address,omitempty"`
-	Prices            []*MarketPrice `protobuf:"bytes,2,rep,name=prices,proto3" json:"prices,omitempty"`
-	SubmittedAtHeight int64          `protobuf:"varint,3,opt,name=submitted_at_height,json=submittedAtHeight,proto3" json:"submitted_at_height,omitempty"`
+	Prices            []MarketPrice `protobuf:"bytes,1,rep,name=prices,proto3" json:"prices"`
+	SubmittedAtHeight int64         `protobuf:"varint,2,opt,name=submitted_at_height,json=submittedAtHeight,proto3" json:"submitted_at_height,omitempty"`
 }
 
 func (m *OracleVote) Reset()         { *m = OracleVote{} }
 func (m *OracleVote) String() string { return proto.CompactTextString(m) }
 func (*OracleVote) ProtoMessage()    {}
 func (*OracleVote) Descriptor() ([]byte, []int) {
-	return fileDescriptor_317a9f3233098654, []int{6}
+	return fileDescriptor_317a9f3233098654, []int{3}
 }
 func (m *OracleVote) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -575,14 +317,7 @@ func (m *OracleVote) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_OracleVote proto.InternalMessageInfo
 
-func (m *OracleVote) GetValidatorAddress() string {
-	if m != nil {
-		return m.ValidatorAddress
-	}
-	return ""
-}
-
-func (m *OracleVote) GetPrices() []*MarketPrice {
+func (m *OracleVote) GetPrices() []MarketPrice {
 	if m != nil {
 		return m.Prices
 	}
@@ -596,212 +331,51 @@ func (m *OracleVote) GetSubmittedAtHeight() int64 {
 	return 0
 }
 
-type MarketAggregation struct {
-	MarketIndex uint32 `protobuf:"varint,1,opt,name=market_index,json=marketIndex,proto3" json:"market_index,omitempty"`
-	IndexPrice  uint32 `protobuf:"varint,2,opt,name=index_price,json=indexPrice,proto3" json:"index_price,omitempty"`
-	MarkPrice   uint32 `protobuf:"varint,3,opt,name=mark_price,json=markPrice,proto3" json:"mark_price,omitempty"`
-}
-
-func (m *MarketAggregation) Reset()         { *m = MarketAggregation{} }
-func (m *MarketAggregation) String() string { return proto.CompactTextString(m) }
-func (*MarketAggregation) ProtoMessage()    {}
-func (*MarketAggregation) Descriptor() ([]byte, []int) {
-	return fileDescriptor_317a9f3233098654, []int{7}
-}
-func (m *MarketAggregation) XXX_Unmarshal(b []byte) error {
-	return m.Unmarshal(b)
-}
-func (m *MarketAggregation) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	if deterministic {
-		return xxx_messageInfo_MarketAggregation.Marshal(b, m, deterministic)
-	} else {
-		b = b[:cap(b)]
-		n, err := m.MarshalToSizedBuffer(b)
-		if err != nil {
-			return nil, err
-		}
-		return b[:n], nil
-	}
-}
-func (m *MarketAggregation) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_MarketAggregation.Merge(m, src)
-}
-func (m *MarketAggregation) XXX_Size() int {
-	return m.Size()
-}
-func (m *MarketAggregation) XXX_DiscardUnknown() {
-	xxx_messageInfo_MarketAggregation.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_MarketAggregation proto.InternalMessageInfo
-
-func (m *MarketAggregation) GetMarketIndex() uint32 {
-	if m != nil {
-		return m.MarketIndex
-	}
-	return 0
-}
-
-func (m *MarketAggregation) GetIndexPrice() uint32 {
-	if m != nil {
-		return m.IndexPrice
-	}
-	return 0
-}
-
-func (m *MarketAggregation) GetMarkPrice() uint32 {
-	if m != nil {
-		return m.MarkPrice
-	}
-	return 0
-}
-
-type VoterRecord struct {
-	ValidatorAddress   string `protobuf:"bytes,1,opt,name=validator_address,json=validatorAddress,proto3" json:"validator_address,omitempty"`
-	VotingPower        uint64 `protobuf:"varint,2,opt,name=voting_power,json=votingPower,proto3" json:"voting_power,omitempty"`
-	Participated       bool   `protobuf:"varint,3,opt,name=participated,proto3" json:"participated,omitempty"`
-	DeviantMarketCount uint32 `protobuf:"varint,4,opt,name=deviant_market_count,json=deviantMarketCount,proto3" json:"deviant_market_count,omitempty"`
-}
-
-func (m *VoterRecord) Reset()         { *m = VoterRecord{} }
-func (m *VoterRecord) String() string { return proto.CompactTextString(m) }
-func (*VoterRecord) ProtoMessage()    {}
-func (*VoterRecord) Descriptor() ([]byte, []int) {
-	return fileDescriptor_317a9f3233098654, []int{8}
-}
-func (m *VoterRecord) XXX_Unmarshal(b []byte) error {
-	return m.Unmarshal(b)
-}
-func (m *VoterRecord) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	if deterministic {
-		return xxx_messageInfo_VoterRecord.Marshal(b, m, deterministic)
-	} else {
-		b = b[:cap(b)]
-		n, err := m.MarshalToSizedBuffer(b)
-		if err != nil {
-			return nil, err
-		}
-		return b[:n], nil
-	}
-}
-func (m *VoterRecord) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_VoterRecord.Merge(m, src)
-}
-func (m *VoterRecord) XXX_Size() int {
-	return m.Size()
-}
-func (m *VoterRecord) XXX_DiscardUnknown() {
-	xxx_messageInfo_VoterRecord.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_VoterRecord proto.InternalMessageInfo
-
-func (m *VoterRecord) GetValidatorAddress() string {
-	if m != nil {
-		return m.ValidatorAddress
-	}
-	return ""
-}
-
-func (m *VoterRecord) GetVotingPower() uint64 {
-	if m != nil {
-		return m.VotingPower
-	}
-	return 0
-}
-
-func (m *VoterRecord) GetParticipated() bool {
-	if m != nil {
-		return m.Participated
-	}
-	return false
-}
-
-func (m *VoterRecord) GetDeviantMarketCount() uint32 {
-	if m != nil {
-		return m.DeviantMarketCount
-	}
-	return 0
-}
-
 func init() {
 	proto.RegisterType((*OraclePrice)(nil), "perpdex.oracle.v1.OraclePrice")
-	proto.RegisterType((*OracleProvider)(nil), "perpdex.oracle.v1.OracleProvider")
-	proto.RegisterType((*ValidatorOracleBinding)(nil), "perpdex.oracle.v1.ValidatorOracleBinding")
-	proto.RegisterType((*ValidatorOracleStats)(nil), "perpdex.oracle.v1.ValidatorOracleStats")
 	proto.RegisterType((*Params)(nil), "perpdex.oracle.v1.Params")
 	proto.RegisterType((*MarketPrice)(nil), "perpdex.oracle.v1.MarketPrice")
 	proto.RegisterType((*OracleVote)(nil), "perpdex.oracle.v1.OracleVote")
-	proto.RegisterType((*MarketAggregation)(nil), "perpdex.oracle.v1.MarketAggregation")
-	proto.RegisterType((*VoterRecord)(nil), "perpdex.oracle.v1.VoterRecord")
 }
 
 func init() { proto.RegisterFile("perpdex/oracle/v1/oracle.proto", fileDescriptor_317a9f3233098654) }
 
 var fileDescriptor_317a9f3233098654 = []byte{
-	// 991 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xbc, 0x96, 0x4f, 0x6f, 0x1b, 0x45,
-	0x14, 0xc0, 0xb3, 0x49, 0x48, 0xec, 0x71, 0x52, 0xe2, 0x89, 0x13, 0x16, 0x04, 0x26, 0x5d, 0x71,
-	0x08, 0xa2, 0x75, 0x48, 0x8b, 0x10, 0x57, 0xa7, 0x4d, 0x05, 0x87, 0xa8, 0xd1, 0xb6, 0x14, 0x89,
-	0xcb, 0x68, 0xbc, 0xf3, 0xb0, 0x47, 0xdd, 0xdd, 0x59, 0xed, 0x8c, 0x1d, 0x73, 0xe4, 0x1b, 0xf0,
-	0x15, 0xf8, 0x06, 0x08, 0xbe, 0x04, 0xc7, 0x1e, 0x39, 0x56, 0xc9, 0x17, 0x41, 0xf3, 0x66, 0x76,
-	0xbd, 0x1b, 0x7a, 0xc9, 0xa5, 0xa7, 0x64, 0xde, 0xef, 0xbd, 0xf1, 0xfb, 0x3f, 0x4b, 0x86, 0x05,
-	0x94, 0x85, 0x80, 0xe5, 0x89, 0x2a, 0x79, 0x92, 0xc2, 0xc9, 0xe2, 0xd4, 0xff, 0x37, 0x2a, 0x4a,
-	0x65, 0x14, 0xed, 0x7b, 0x3e, 0xf2, 0xd2, 0xc5, 0x69, 0xf4, 0x76, 0x9d, 0xf4, 0x9e, 0xe3, 0xe9,
-	0xb2, 0x94, 0x09, 0xd0, 0xfb, 0x64, 0x27, 0xe3, 0xe5, 0x6b, 0x30, 0x4c, 0xe6, 0x02, 0x96, 0x61,
-	0x70, 0x14, 0x1c, 0xef, 0xc6, 0x3d, 0x27, 0xfb, 0xc1, 0x8a, 0xe8, 0xe7, 0xa4, 0x87, 0x8c, 0x15,
-	0xd6, 0x22, 0x5c, 0x47, 0x0d, 0x82, 0x22, 0x77, 0xc7, 0x67, 0x84, 0x58, 0x7d, 0xcf, 0x37, 0x90,
-	0x77, 0xad, 0xc4, 0xe1, 0x6f, 0xc8, 0x61, 0xca, 0xb5, 0x61, 0xf3, 0x42, 0x70, 0x03, 0x82, 0x19,
-	0x99, 0x81, 0x36, 0x3c, 0x2b, 0xc2, 0xcd, 0xa3, 0xe0, 0x78, 0x23, 0x1e, 0x58, 0xfa, 0xa3, 0x83,
-	0x2f, 0x2b, 0x46, 0x47, 0x64, 0xbf, 0x65, 0x35, 0x03, 0x39, 0x9d, 0x99, 0xf0, 0x03, 0x34, 0xe9,
-	0x37, 0x4c, 0xbe, 0x47, 0x40, 0x1f, 0x12, 0xca, 0xa7, 0xd3, 0x12, 0xa6, 0xdc, 0x48, 0x95, 0xb3,
-	0x0c, 0xcc, 0x4c, 0x89, 0x70, 0x0b, 0x9d, 0xe9, 0x37, 0xc8, 0x05, 0x02, 0xfa, 0x15, 0xe9, 0x17,
-	0xbc, 0x34, 0x32, 0x91, 0x05, 0xcf, 0x0d, 0x4b, 0xd4, 0x3c, 0x37, 0xe1, 0x36, 0x6a, 0xef, 0x35,
-	0xc0, 0x13, 0x2b, 0xa7, 0x0f, 0x08, 0x35, 0xca, 0xf0, 0x94, 0x2d, 0x94, 0x91, 0xf9, 0x94, 0x15,
-	0xea, 0x0a, 0xca, 0xb0, 0x73, 0x14, 0x1c, 0x6f, 0xc6, 0x7b, 0x48, 0x5e, 0x21, 0xb8, 0xb4, 0xf2,
-	0xe8, 0xb7, 0x80, 0xdc, 0xab, 0x52, 0xac, 0x16, 0x52, 0x40, 0x49, 0x43, 0xb2, 0xcd, 0x85, 0x28,
-	0x41, 0x6b, 0x4c, 0x70, 0x37, 0xae, 0x8e, 0x96, 0x40, 0xce, 0x27, 0x29, 0x08, 0x4c, 0x6c, 0x27,
-	0xae, 0x8e, 0xf4, 0x63, 0xd2, 0xe1, 0x42, 0x80, 0x60, 0xdc, 0x60, 0x4e, 0x37, 0xd0, 0x08, 0xc4,
-	0xd8, 0xd0, 0x23, 0xd2, 0x13, 0xa0, 0x93, 0x52, 0x16, 0x36, 0x22, 0x4c, 0x63, 0x37, 0x6e, 0x8a,
-	0xa2, 0x9b, 0x80, 0x1c, 0xbe, 0xe2, 0xa9, 0x14, 0xdc, 0xa8, 0xd2, 0x39, 0x73, 0x26, 0x73, 0x21,
-	0xf3, 0xa9, 0x8d, 0x7c, 0x51, 0x11, 0xd6, 0xf6, 0x6a, 0xaf, 0x06, 0x63, 0xef, 0xde, 0xb7, 0xe4,
-	0x23, 0xd7, 0x3b, 0x4c, 0x15, 0x50, 0xb6, 0x4c, 0xd6, 0xd1, 0xe4, 0xc0, 0xe1, 0xe7, 0x9e, 0x56,
-	0x76, 0x5f, 0x90, 0x7b, 0x13, 0x35, 0xcf, 0xad, 0xf3, 0x6c, 0x92, 0xaa, 0xe4, 0xb5, 0x0f, 0x61,
-	0x07, 0xa5, 0x63, 0x73, 0x66, 0x65, 0x34, 0x22, 0xbb, 0xb5, 0x96, 0xed, 0x0a, 0xdf, 0x10, 0x3d,
-	0xaf, 0x64, 0x9b, 0x81, 0x7e, 0x42, 0x3a, 0x19, 0x18, 0x2e, 0xb8, 0xe1, 0x58, 0xfc, 0x6e, 0x5c,
-	0x9f, 0xa3, 0xbf, 0xd6, 0xc9, 0xe0, 0x56, 0x94, 0x2f, 0x0c, 0x37, 0xfa, 0x6e, 0x31, 0x3e, 0x22,
-	0x07, 0x75, 0x75, 0x41, 0x33, 0x3d, 0x9f, 0x64, 0xd2, 0x18, 0x5f, 0x90, 0xcd, 0x78, 0xbf, 0x2a,
-	0x30, 0xe8, 0x17, 0x15, 0x6a, 0x75, 0x04, 0x68, 0x96, 0x49, 0xad, 0x41, 0x60, 0x8c, 0x8d, 0x8e,
-	0x00, 0x7d, 0x81, 0x72, 0xdb, 0xcb, 0x4d, 0x6d, 0x01, 0x0b, 0xc9, 0x73, 0x83, 0xd1, 0x6e, 0xc6,
-	0xfd, 0x95, 0xfa, 0x53, 0x07, 0xec, 0xed, 0xd8, 0xfb, 0x3c, 0x31, 0x72, 0x01, 0xed, 0xd6, 0xdf,
-	0xb3, 0x64, 0x8c, 0x60, 0xd5, 0xf9, 0x89, 0xca, 0x35, 0x24, 0x73, 0xd4, 0xf6, 0xbe, 0xf8, 0xce,
-	0x6f, 0x10, 0xe7, 0x4c, 0xf4, 0xe7, 0x26, 0xd9, 0xba, 0xe4, 0x25, 0xcf, 0x34, 0xfd, 0x92, 0xec,
-	0xb5, 0x66, 0x46, 0x09, 0xf0, 0x0b, 0xe0, 0xc3, 0xe6, 0xc4, 0x28, 0x01, 0xf4, 0x53, 0x3b, 0xe3,
-	0x4b, 0xc6, 0xa7, 0xc0, 0x32, 0x57, 0xfb, 0x8d, 0xb8, 0x93, 0xf1, 0xe5, 0x78, 0x0a, 0x17, 0x9a,
-	0x9e, 0x90, 0xc1, 0x6a, 0x03, 0x30, 0xc8, 0x38, 0xe3, 0x69, 0x31, 0xe3, 0x7e, 0x17, 0xf4, 0xeb,
-	0x5d, 0x70, 0x9e, 0xf1, 0xb1, 0x05, 0xf4, 0x31, 0x39, 0xcc, 0x64, 0xde, 0x9a, 0x27, 0x56, 0xda,
-	0x5f, 0xc3, 0xa4, 0xec, 0xc6, 0xfb, 0x99, 0xcc, 0x1b, 0x33, 0x15, 0x5b, 0x64, 0x9b, 0x11, 0x53,
-	0x87, 0xce, 0x9a, 0x59, 0x09, 0x7a, 0xa6, 0x52, 0xc1, 0x26, 0x85, 0xc6, 0xdc, 0xec, 0xc6, 0x07,
-	0x35, 0x7e, 0x59, 0xd1, 0xb3, 0x42, 0xd3, 0xef, 0x48, 0xa8, 0x53, 0xae, 0x67, 0xec, 0x97, 0xd2,
-	0x66, 0x54, 0xe5, 0xac, 0xd6, 0xc3, 0x34, 0x75, 0xe3, 0x43, 0xe4, 0xcf, 0x3c, 0x7e, 0x5a, 0x51,
-	0xfb, 0x8b, 0xb7, 0x2d, 0xd5, 0x55, 0x8e, 0xad, 0xba, 0xed, 0xda, 0xbf, 0x6d, 0xe8, 0x21, 0xe6,
-	0x43, 0xe6, 0x55, 0xfd, 0x30, 0x30, 0x74, 0xb3, 0xe3, 0xf3, 0x21, 0x73, 0x57, 0x41, 0x8c, 0xcb,
-	0xba, 0xf8, 0x35, 0x19, 0x78, 0xe5, 0x2b, 0x99, 0x0b, 0x75, 0xe5, 0x86, 0x46, 0x87, 0x5d, 0x34,
-	0xa0, 0x8e, 0xfd, 0x84, 0x08, 0x47, 0x47, 0xdb, 0xad, 0x6a, 0x0b, 0xf2, 0x8e, 0xca, 0x13, 0xb4,
-	0x19, 0x64, 0x7c, 0xf9, 0xe4, 0x76, 0xf1, 0xad, 0x95, 0xed, 0x41, 0x06, 0x4b, 0x03, 0xb9, 0xb6,
-	0x01, 0x55, 0xdb, 0xa7, 0x87, 0xdb, 0x67, 0x60, 0xe9, 0x79, 0x05, 0xcf, 0x1d, 0x8b, 0x0a, 0xd2,
-	0xbb, 0xc0, 0x07, 0xe1, 0x7d, 0xbd, 0x19, 0xd1, 0x1f, 0x01, 0x21, 0x6e, 0xa0, 0xed, 0x60, 0xdc,
-	0x75, 0x67, 0x6d, 0xe1, 0xad, 0xb6, 0x4d, 0x37, 0x8e, 0x7b, 0x8f, 0x86, 0xa3, 0xff, 0x3d, 0x83,
-	0xa3, 0x46, 0x38, 0xb1, 0xd7, 0xb6, 0x53, 0x5a, 0xcf, 0xbe, 0xdd, 0x48, 0x7e, 0xec, 0xdc, 0xe2,
-	0xea, 0xd7, 0x68, 0x6c, 0xdc, 0xdc, 0x45, 0x0b, 0xd2, 0x77, 0xd7, 0x8c, 0x57, 0xb3, 0xf2, 0x3e,
-	0x72, 0xf3, 0x77, 0x40, 0x7a, 0x36, 0x2b, 0x65, 0x0c, 0x89, 0x2a, 0xc5, 0xdd, 0x92, 0x73, 0x9f,
-	0xec, 0xb4, 0x1e, 0x31, 0xb7, 0xe3, 0x7a, 0x8b, 0xd5, 0xac, 0xd1, 0x88, 0xec, 0xd4, 0x2f, 0xa0,
-	0xf1, 0x5b, 0xad, 0x13, 0xb7, 0x64, 0xb6, 0x5f, 0xfd, 0x16, 0x63, 0x3e, 0x5c, 0xf7, 0x82, 0xba,
-	0xe9, 0xa5, 0x9e, 0xb9, 0xf4, 0xe0, 0x1b, 0x7a, 0xf6, 0xec, 0x9f, 0xeb, 0x61, 0xf0, 0xe6, 0x7a,
-	0x18, 0xbc, 0xbd, 0x1e, 0x06, 0xbf, 0xdf, 0x0c, 0xd7, 0xde, 0xdc, 0x0c, 0xd7, 0xfe, 0xbd, 0x19,
-	0xae, 0xfd, 0xfc, 0x60, 0x2a, 0xcd, 0x6c, 0x3e, 0x19, 0x25, 0x2a, 0x3b, 0xa9, 0x3e, 0x68, 0xfc,
-	0xdf, 0x87, 0xe9, 0xe9, 0x49, 0xfd, 0x75, 0x63, 0x7e, 0x2d, 0x40, 0x4f, 0xb6, 0xf0, 0xd3, 0xe6,
-	0xf1, 0x7f, 0x01, 0x00, 0x00, 0xff, 0xff, 0x01, 0xbc, 0xe9, 0x32, 0xfc, 0x08, 0x00, 0x00,
+	// 533 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xbc, 0x93, 0xc1, 0x6e, 0xd3, 0x4c,
+	0x14, 0x85, 0xe3, 0x24, 0x7f, 0xfe, 0x32, 0xa1, 0x52, 0x33, 0x0d, 0xc5, 0x42, 0xe0, 0x86, 0xac,
+	0x22, 0x51, 0x6c, 0x85, 0x22, 0x56, 0x6c, 0x12, 0x14, 0x04, 0x8b, 0x8a, 0xc8, 0x2a, 0x5d, 0xb0,
+	0x19, 0x4d, 0xe2, 0x2b, 0x7b, 0x84, 0xc7, 0x33, 0xb2, 0x6f, 0x42, 0xe0, 0x29, 0x78, 0x15, 0xde,
+	0xa2, 0xcb, 0x2e, 0x59, 0x21, 0x94, 0xbc, 0x05, 0x2b, 0x34, 0x63, 0x27, 0xa4, 0x62, 0xcf, 0xca,
+	0xa3, 0xf3, 0xdd, 0x63, 0x5d, 0x1f, 0x9f, 0x21, 0x9e, 0x86, 0x5c, 0x47, 0xb0, 0x0a, 0x54, 0xce,
+	0xe7, 0x29, 0x04, 0xcb, 0x61, 0x75, 0xf2, 0x75, 0xae, 0x50, 0xd1, 0x4e, 0xc5, 0xfd, 0x4a, 0x5d,
+	0x0e, 0x1f, 0x74, 0x63, 0x15, 0x2b, 0x4b, 0x03, 0x73, 0x2a, 0x07, 0xfb, 0xdf, 0xea, 0xa4, 0xfd,
+	0xce, 0xce, 0x4c, 0x73, 0x31, 0x07, 0xfa, 0x98, 0xdc, 0x95, 0x3c, 0xff, 0x08, 0xc8, 0x44, 0x16,
+	0xc1, 0xca, 0x75, 0x7a, 0xce, 0xe0, 0x30, 0x6c, 0x97, 0xda, 0x5b, 0x23, 0xd1, 0x53, 0xd2, 0xb6,
+	0x8c, 0x69, 0xe3, 0x70, 0xeb, 0x76, 0x82, 0x58, 0xa9, 0x7c, 0xc7, 0x23, 0x42, 0xcc, 0x7c, 0xc5,
+	0x1b, 0x96, 0xdf, 0x31, 0x4a, 0x89, 0x9f, 0x93, 0x93, 0x94, 0x17, 0xc8, 0x16, 0x3a, 0xe2, 0x08,
+	0x11, 0x43, 0x21, 0xa1, 0x40, 0x2e, 0xb5, 0xdb, 0xec, 0x39, 0x83, 0x46, 0xd8, 0x35, 0xf4, 0x7d,
+	0x09, 0x2f, 0xb7, 0x8c, 0xfa, 0xe4, 0xf8, 0x96, 0x2b, 0x01, 0x11, 0x27, 0xe8, 0xfe, 0x67, 0x2d,
+	0x9d, 0x3d, 0xcb, 0x1b, 0x0b, 0xe8, 0x13, 0xd2, 0xd1, 0x3c, 0x47, 0x31, 0x17, 0x9a, 0x67, 0xc8,
+	0xe6, 0x6a, 0x91, 0xa1, 0xdb, 0xb2, 0xbb, 0x1c, 0xed, 0x81, 0x57, 0x46, 0xa7, 0x67, 0x84, 0xa2,
+	0x42, 0x9e, 0xb2, 0xa5, 0x42, 0x91, 0xc5, 0x4c, 0xab, 0x4f, 0x90, 0xbb, 0xff, 0xf7, 0x9c, 0x41,
+	0x33, 0x3c, 0xb2, 0xe4, 0xca, 0x82, 0xa9, 0xd1, 0xfb, 0xbf, 0x1c, 0xd2, 0x9a, 0xf2, 0x9c, 0xcb,
+	0x82, 0x3e, 0x34, 0x9f, 0xba, 0x62, 0x3c, 0x06, 0x26, 0x0b, 0x1b, 0x56, 0x23, 0x3c, 0x90, 0x7c,
+	0x35, 0x8a, 0xe1, 0xa2, 0xa0, 0x01, 0xe9, 0xfe, 0x09, 0x82, 0x81, 0xe4, 0x8c, 0xa7, 0x3a, 0xe1,
+	0x55, 0x64, 0x9d, 0x5d, 0x24, 0x13, 0xc9, 0x47, 0x06, 0xd0, 0x73, 0x72, 0x22, 0x45, 0x76, 0x6b,
+	0x0b, 0x96, 0x73, 0x14, 0xaa, 0x4a, 0xf1, 0x58, 0x8a, 0x6c, 0x6f, 0x93, 0xd0, 0x20, 0xfa, 0x82,
+	0xdc, 0x8f, 0x60, 0x29, 0xcc, 0x39, 0x63, 0x98, 0xe4, 0x50, 0x24, 0x2a, 0x8d, 0xd8, 0x4c, 0x17,
+	0x36, 0xd0, 0xc3, 0xf0, 0xde, 0x0e, 0x5f, 0x6e, 0xe9, 0x58, 0x17, 0xe6, 0x3f, 0x2c, 0x15, 0x02,
+	0x83, 0x15, 0x42, 0x56, 0x18, 0x33, 0x64, 0x7c, 0x96, 0x42, 0x64, 0x43, 0x3d, 0x08, 0xbb, 0x86,
+	0x4e, 0xb6, 0x70, 0x52, 0xb2, 0xbe, 0x26, 0xed, 0x0b, 0x5b, 0x86, 0x7f, 0xd5, 0x97, 0xfe, 0x17,
+	0x42, 0xca, 0x86, 0x5e, 0x29, 0x04, 0xfa, 0x92, 0xb4, 0xec, 0x9c, 0x49, 0xbb, 0x31, 0x68, 0x3f,
+	0xf3, 0xfc, 0xbf, 0xaa, 0xee, 0xef, 0x2d, 0x38, 0x6e, 0x5e, 0xff, 0x38, 0xad, 0x85, 0x95, 0xc7,
+	0xb4, 0xa8, 0x58, 0xcc, 0xa4, 0x40, 0x53, 0x21, 0x8e, 0xdb, 0x16, 0xd5, 0xcb, 0x16, 0xed, 0xd0,
+	0x08, 0xcb, 0x16, 0x8d, 0x5f, 0x5f, 0xaf, 0x3d, 0xe7, 0x66, 0xed, 0x39, 0x3f, 0xd7, 0x9e, 0xf3,
+	0x75, 0xe3, 0xd5, 0x6e, 0x36, 0x5e, 0xed, 0xfb, 0xc6, 0xab, 0x7d, 0x38, 0x8b, 0x05, 0x26, 0x8b,
+	0x99, 0x3f, 0x57, 0x32, 0xd8, 0x5e, 0xc6, 0xea, 0xf9, 0x34, 0x1d, 0x06, 0xbb, 0x9b, 0x89, 0x9f,
+	0x35, 0x14, 0xb3, 0x96, 0xbd, 0x6d, 0xe7, 0xbf, 0x03, 0x00, 0x00, 0xff, 0xff, 0xec, 0xd7, 0xa4,
+	0xa4, 0xb8, 0x03, 0x00, 0x00,
 }
 
 func (m *OraclePrice) Marshal() (dAtA []byte, err error) {
@@ -827,15 +401,10 @@ func (m *OraclePrice) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	if m.TotalVotingPower != 0 {
 		i = encodeVarintOracle(dAtA, i, uint64(m.TotalVotingPower))
 		i--
-		dAtA[i] = 0x40
+		dAtA[i] = 0x38
 	}
 	if m.ParticipantCount != 0 {
 		i = encodeVarintOracle(dAtA, i, uint64(m.ParticipantCount))
-		i--
-		dAtA[i] = 0x38
-	}
-	if m.AggregationMethod != 0 {
-		i = encodeVarintOracle(dAtA, i, uint64(m.AggregationMethod))
 		i--
 		dAtA[i] = 0x30
 	}
@@ -863,167 +432,6 @@ func (m *OraclePrice) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 		i = encodeVarintOracle(dAtA, i, uint64(m.MarketIndex))
 		i--
 		dAtA[i] = 0x8
-	}
-	return len(dAtA) - i, nil
-}
-
-func (m *OracleProvider) Marshal() (dAtA []byte, err error) {
-	size := m.Size()
-	dAtA = make([]byte, size)
-	n, err := m.MarshalToSizedBuffer(dAtA[:size])
-	if err != nil {
-		return nil, err
-	}
-	return dAtA[:n], nil
-}
-
-func (m *OracleProvider) MarshalTo(dAtA []byte) (int, error) {
-	size := m.Size()
-	return m.MarshalToSizedBuffer(dAtA[:size])
-}
-
-func (m *OracleProvider) MarshalToSizedBuffer(dAtA []byte) (int, error) {
-	i := len(dAtA)
-	_ = i
-	var l int
-	_ = l
-	if len(m.Description) > 0 {
-		i -= len(m.Description)
-		copy(dAtA[i:], m.Description)
-		i = encodeVarintOracle(dAtA, i, uint64(len(m.Description)))
-		i--
-		dAtA[i] = 0x22
-	}
-	if m.AddedAt != 0 {
-		i = encodeVarintOracle(dAtA, i, uint64(m.AddedAt))
-		i--
-		dAtA[i] = 0x18
-	}
-	if m.Enabled {
-		i--
-		if m.Enabled {
-			dAtA[i] = 1
-		} else {
-			dAtA[i] = 0
-		}
-		i--
-		dAtA[i] = 0x10
-	}
-	if len(m.Address) > 0 {
-		i -= len(m.Address)
-		copy(dAtA[i:], m.Address)
-		i = encodeVarintOracle(dAtA, i, uint64(len(m.Address)))
-		i--
-		dAtA[i] = 0xa
-	}
-	return len(dAtA) - i, nil
-}
-
-func (m *ValidatorOracleBinding) Marshal() (dAtA []byte, err error) {
-	size := m.Size()
-	dAtA = make([]byte, size)
-	n, err := m.MarshalToSizedBuffer(dAtA[:size])
-	if err != nil {
-		return nil, err
-	}
-	return dAtA[:n], nil
-}
-
-func (m *ValidatorOracleBinding) MarshalTo(dAtA []byte) (int, error) {
-	size := m.Size()
-	return m.MarshalToSizedBuffer(dAtA[:size])
-}
-
-func (m *ValidatorOracleBinding) MarshalToSizedBuffer(dAtA []byte) (int, error) {
-	i := len(dAtA)
-	_ = i
-	var l int
-	_ = l
-	if len(m.Metadata) > 0 {
-		i -= len(m.Metadata)
-		copy(dAtA[i:], m.Metadata)
-		i = encodeVarintOracle(dAtA, i, uint64(len(m.Metadata)))
-		i--
-		dAtA[i] = 0x2a
-	}
-	if m.BoundAtTime != 0 {
-		i = encodeVarintOracle(dAtA, i, uint64(m.BoundAtTime))
-		i--
-		dAtA[i] = 0x20
-	}
-	if m.BoundAtBlock != 0 {
-		i = encodeVarintOracle(dAtA, i, uint64(m.BoundAtBlock))
-		i--
-		dAtA[i] = 0x18
-	}
-	if len(m.OracleOperatorAddress) > 0 {
-		i -= len(m.OracleOperatorAddress)
-		copy(dAtA[i:], m.OracleOperatorAddress)
-		i = encodeVarintOracle(dAtA, i, uint64(len(m.OracleOperatorAddress)))
-		i--
-		dAtA[i] = 0x12
-	}
-	if len(m.ValidatorAddress) > 0 {
-		i -= len(m.ValidatorAddress)
-		copy(dAtA[i:], m.ValidatorAddress)
-		i = encodeVarintOracle(dAtA, i, uint64(len(m.ValidatorAddress)))
-		i--
-		dAtA[i] = 0xa
-	}
-	return len(dAtA) - i, nil
-}
-
-func (m *ValidatorOracleStats) Marshal() (dAtA []byte, err error) {
-	size := m.Size()
-	dAtA = make([]byte, size)
-	n, err := m.MarshalToSizedBuffer(dAtA[:size])
-	if err != nil {
-		return nil, err
-	}
-	return dAtA[:n], nil
-}
-
-func (m *ValidatorOracleStats) MarshalTo(dAtA []byte) (int, error) {
-	size := m.Size()
-	return m.MarshalToSizedBuffer(dAtA[:size])
-}
-
-func (m *ValidatorOracleStats) MarshalToSizedBuffer(dAtA []byte) (int, error) {
-	i := len(dAtA)
-	_ = i
-	var l int
-	_ = l
-	if m.ConsecutiveMissed != 0 {
-		i = encodeVarintOracle(dAtA, i, uint64(m.ConsecutiveMissed))
-		i--
-		dAtA[i] = 0x30
-	}
-	if m.LastActiveHeight != 0 {
-		i = encodeVarintOracle(dAtA, i, uint64(m.LastActiveHeight))
-		i--
-		dAtA[i] = 0x28
-	}
-	if m.TotalVotesDeviant != 0 {
-		i = encodeVarintOracle(dAtA, i, uint64(m.TotalVotesDeviant))
-		i--
-		dAtA[i] = 0x20
-	}
-	if m.TotalVotesMissed != 0 {
-		i = encodeVarintOracle(dAtA, i, uint64(m.TotalVotesMissed))
-		i--
-		dAtA[i] = 0x18
-	}
-	if m.TotalVotesSubmitted != 0 {
-		i = encodeVarintOracle(dAtA, i, uint64(m.TotalVotesSubmitted))
-		i--
-		dAtA[i] = 0x10
-	}
-	if len(m.ValidatorAddress) > 0 {
-		i -= len(m.ValidatorAddress)
-		copy(dAtA[i:], m.ValidatorAddress)
-		i = encodeVarintOracle(dAtA, i, uint64(len(m.ValidatorAddress)))
-		i--
-		dAtA[i] = 0xa
 	}
 	return len(dAtA) - i, nil
 }
@@ -1056,59 +464,25 @@ func (m *Params) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 			dAtA[i] = 0
 		}
 		i--
-		dAtA[i] = 0x58
-	}
-	if m.MaxConsecutiveMissed != 0 {
-		i = encodeVarintOracle(dAtA, i, uint64(m.MaxConsecutiveMissed))
-		i--
-		dAtA[i] = 0x50
-	}
-	if m.ActiveWindowBlocks != 0 {
-		i = encodeVarintOracle(dAtA, i, uint64(m.ActiveWindowBlocks))
-		i--
-		dAtA[i] = 0x48
-	}
-	if m.MinActiveRatioBps != 0 {
-		i = encodeVarintOracle(dAtA, i, uint64(m.MinActiveRatioBps))
-		i--
-		dAtA[i] = 0x40
-	}
-	if len(m.SlashFractionDowntime) > 0 {
-		i -= len(m.SlashFractionDowntime)
-		copy(dAtA[i:], m.SlashFractionDowntime)
-		i = encodeVarintOracle(dAtA, i, uint64(len(m.SlashFractionDowntime)))
-		i--
-		dAtA[i] = 0x3a
-	}
-	if len(m.SlashFractionDeviation) > 0 {
-		i -= len(m.SlashFractionDeviation)
-		copy(dAtA[i:], m.SlashFractionDeviation)
-		i = encodeVarintOracle(dAtA, i, uint64(len(m.SlashFractionDeviation)))
-		i--
-		dAtA[i] = 0x32
+		dAtA[i] = 0x28
 	}
 	if m.DeviationThresholdBps != 0 {
 		i = encodeVarintOracle(dAtA, i, uint64(m.DeviationThresholdBps))
 		i--
-		dAtA[i] = 0x28
+		dAtA[i] = 0x20
 	}
 	if m.MinVotingPowerRatio != 0 {
 		i = encodeVarintOracle(dAtA, i, uint64(m.MinVotingPowerRatio))
 		i--
-		dAtA[i] = 0x20
+		dAtA[i] = 0x18
 	}
 	if m.MarkPriceEmaAlpha != 0 {
 		i = encodeVarintOracle(dAtA, i, uint64(m.MarkPriceEmaAlpha))
 		i--
-		dAtA[i] = 0x18
+		dAtA[i] = 0x10
 	}
 	if m.MaxAgeMs != 0 {
 		i = encodeVarintOracle(dAtA, i, uint64(m.MaxAgeMs))
-		i--
-		dAtA[i] = 0x10
-	}
-	if m.AggregationMode != 0 {
-		i = encodeVarintOracle(dAtA, i, uint64(m.AggregationMode))
 		i--
 		dAtA[i] = 0x8
 	}
@@ -1176,7 +550,7 @@ func (m *OracleVote) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	if m.SubmittedAtHeight != 0 {
 		i = encodeVarintOracle(dAtA, i, uint64(m.SubmittedAtHeight))
 		i--
-		dAtA[i] = 0x18
+		dAtA[i] = 0x10
 	}
 	if len(m.Prices) > 0 {
 		for iNdEx := len(m.Prices) - 1; iNdEx >= 0; iNdEx-- {
@@ -1189,103 +563,8 @@ func (m *OracleVote) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 				i = encodeVarintOracle(dAtA, i, uint64(size))
 			}
 			i--
-			dAtA[i] = 0x12
+			dAtA[i] = 0xa
 		}
-	}
-	if len(m.ValidatorAddress) > 0 {
-		i -= len(m.ValidatorAddress)
-		copy(dAtA[i:], m.ValidatorAddress)
-		i = encodeVarintOracle(dAtA, i, uint64(len(m.ValidatorAddress)))
-		i--
-		dAtA[i] = 0xa
-	}
-	return len(dAtA) - i, nil
-}
-
-func (m *MarketAggregation) Marshal() (dAtA []byte, err error) {
-	size := m.Size()
-	dAtA = make([]byte, size)
-	n, err := m.MarshalToSizedBuffer(dAtA[:size])
-	if err != nil {
-		return nil, err
-	}
-	return dAtA[:n], nil
-}
-
-func (m *MarketAggregation) MarshalTo(dAtA []byte) (int, error) {
-	size := m.Size()
-	return m.MarshalToSizedBuffer(dAtA[:size])
-}
-
-func (m *MarketAggregation) MarshalToSizedBuffer(dAtA []byte) (int, error) {
-	i := len(dAtA)
-	_ = i
-	var l int
-	_ = l
-	if m.MarkPrice != 0 {
-		i = encodeVarintOracle(dAtA, i, uint64(m.MarkPrice))
-		i--
-		dAtA[i] = 0x18
-	}
-	if m.IndexPrice != 0 {
-		i = encodeVarintOracle(dAtA, i, uint64(m.IndexPrice))
-		i--
-		dAtA[i] = 0x10
-	}
-	if m.MarketIndex != 0 {
-		i = encodeVarintOracle(dAtA, i, uint64(m.MarketIndex))
-		i--
-		dAtA[i] = 0x8
-	}
-	return len(dAtA) - i, nil
-}
-
-func (m *VoterRecord) Marshal() (dAtA []byte, err error) {
-	size := m.Size()
-	dAtA = make([]byte, size)
-	n, err := m.MarshalToSizedBuffer(dAtA[:size])
-	if err != nil {
-		return nil, err
-	}
-	return dAtA[:n], nil
-}
-
-func (m *VoterRecord) MarshalTo(dAtA []byte) (int, error) {
-	size := m.Size()
-	return m.MarshalToSizedBuffer(dAtA[:size])
-}
-
-func (m *VoterRecord) MarshalToSizedBuffer(dAtA []byte) (int, error) {
-	i := len(dAtA)
-	_ = i
-	var l int
-	_ = l
-	if m.DeviantMarketCount != 0 {
-		i = encodeVarintOracle(dAtA, i, uint64(m.DeviantMarketCount))
-		i--
-		dAtA[i] = 0x20
-	}
-	if m.Participated {
-		i--
-		if m.Participated {
-			dAtA[i] = 1
-		} else {
-			dAtA[i] = 0
-		}
-		i--
-		dAtA[i] = 0x18
-	}
-	if m.VotingPower != 0 {
-		i = encodeVarintOracle(dAtA, i, uint64(m.VotingPower))
-		i--
-		dAtA[i] = 0x10
-	}
-	if len(m.ValidatorAddress) > 0 {
-		i -= len(m.ValidatorAddress)
-		copy(dAtA[i:], m.ValidatorAddress)
-		i = encodeVarintOracle(dAtA, i, uint64(len(m.ValidatorAddress)))
-		i--
-		dAtA[i] = 0xa
 	}
 	return len(dAtA) - i, nil
 }
@@ -1322,92 +601,11 @@ func (m *OraclePrice) Size() (n int) {
 	if m.LastUpdatedHeight != 0 {
 		n += 1 + sovOracle(uint64(m.LastUpdatedHeight))
 	}
-	if m.AggregationMethod != 0 {
-		n += 1 + sovOracle(uint64(m.AggregationMethod))
-	}
 	if m.ParticipantCount != 0 {
 		n += 1 + sovOracle(uint64(m.ParticipantCount))
 	}
 	if m.TotalVotingPower != 0 {
 		n += 1 + sovOracle(uint64(m.TotalVotingPower))
-	}
-	return n
-}
-
-func (m *OracleProvider) Size() (n int) {
-	if m == nil {
-		return 0
-	}
-	var l int
-	_ = l
-	l = len(m.Address)
-	if l > 0 {
-		n += 1 + l + sovOracle(uint64(l))
-	}
-	if m.Enabled {
-		n += 2
-	}
-	if m.AddedAt != 0 {
-		n += 1 + sovOracle(uint64(m.AddedAt))
-	}
-	l = len(m.Description)
-	if l > 0 {
-		n += 1 + l + sovOracle(uint64(l))
-	}
-	return n
-}
-
-func (m *ValidatorOracleBinding) Size() (n int) {
-	if m == nil {
-		return 0
-	}
-	var l int
-	_ = l
-	l = len(m.ValidatorAddress)
-	if l > 0 {
-		n += 1 + l + sovOracle(uint64(l))
-	}
-	l = len(m.OracleOperatorAddress)
-	if l > 0 {
-		n += 1 + l + sovOracle(uint64(l))
-	}
-	if m.BoundAtBlock != 0 {
-		n += 1 + sovOracle(uint64(m.BoundAtBlock))
-	}
-	if m.BoundAtTime != 0 {
-		n += 1 + sovOracle(uint64(m.BoundAtTime))
-	}
-	l = len(m.Metadata)
-	if l > 0 {
-		n += 1 + l + sovOracle(uint64(l))
-	}
-	return n
-}
-
-func (m *ValidatorOracleStats) Size() (n int) {
-	if m == nil {
-		return 0
-	}
-	var l int
-	_ = l
-	l = len(m.ValidatorAddress)
-	if l > 0 {
-		n += 1 + l + sovOracle(uint64(l))
-	}
-	if m.TotalVotesSubmitted != 0 {
-		n += 1 + sovOracle(uint64(m.TotalVotesSubmitted))
-	}
-	if m.TotalVotesMissed != 0 {
-		n += 1 + sovOracle(uint64(m.TotalVotesMissed))
-	}
-	if m.TotalVotesDeviant != 0 {
-		n += 1 + sovOracle(uint64(m.TotalVotesDeviant))
-	}
-	if m.LastActiveHeight != 0 {
-		n += 1 + sovOracle(uint64(m.LastActiveHeight))
-	}
-	if m.ConsecutiveMissed != 0 {
-		n += 1 + sovOracle(uint64(m.ConsecutiveMissed))
 	}
 	return n
 }
@@ -1418,9 +616,6 @@ func (m *Params) Size() (n int) {
 	}
 	var l int
 	_ = l
-	if m.AggregationMode != 0 {
-		n += 1 + sovOracle(uint64(m.AggregationMode))
-	}
 	if m.MaxAgeMs != 0 {
 		n += 1 + sovOracle(uint64(m.MaxAgeMs))
 	}
@@ -1432,23 +627,6 @@ func (m *Params) Size() (n int) {
 	}
 	if m.DeviationThresholdBps != 0 {
 		n += 1 + sovOracle(uint64(m.DeviationThresholdBps))
-	}
-	l = len(m.SlashFractionDeviation)
-	if l > 0 {
-		n += 1 + l + sovOracle(uint64(l))
-	}
-	l = len(m.SlashFractionDowntime)
-	if l > 0 {
-		n += 1 + l + sovOracle(uint64(l))
-	}
-	if m.MinActiveRatioBps != 0 {
-		n += 1 + sovOracle(uint64(m.MinActiveRatioBps))
-	}
-	if m.ActiveWindowBlocks != 0 {
-		n += 1 + sovOracle(uint64(m.ActiveWindowBlocks))
-	}
-	if m.MaxConsecutiveMissed != 0 {
-		n += 1 + sovOracle(uint64(m.MaxConsecutiveMissed))
 	}
 	if m.VoteExtensionEnabled {
 		n += 2
@@ -1480,10 +658,6 @@ func (m *OracleVote) Size() (n int) {
 	}
 	var l int
 	_ = l
-	l = len(m.ValidatorAddress)
-	if l > 0 {
-		n += 1 + l + sovOracle(uint64(l))
-	}
 	if len(m.Prices) > 0 {
 		for _, e := range m.Prices {
 			l = e.Size()
@@ -1492,46 +666,6 @@ func (m *OracleVote) Size() (n int) {
 	}
 	if m.SubmittedAtHeight != 0 {
 		n += 1 + sovOracle(uint64(m.SubmittedAtHeight))
-	}
-	return n
-}
-
-func (m *MarketAggregation) Size() (n int) {
-	if m == nil {
-		return 0
-	}
-	var l int
-	_ = l
-	if m.MarketIndex != 0 {
-		n += 1 + sovOracle(uint64(m.MarketIndex))
-	}
-	if m.IndexPrice != 0 {
-		n += 1 + sovOracle(uint64(m.IndexPrice))
-	}
-	if m.MarkPrice != 0 {
-		n += 1 + sovOracle(uint64(m.MarkPrice))
-	}
-	return n
-}
-
-func (m *VoterRecord) Size() (n int) {
-	if m == nil {
-		return 0
-	}
-	var l int
-	_ = l
-	l = len(m.ValidatorAddress)
-	if l > 0 {
-		n += 1 + l + sovOracle(uint64(l))
-	}
-	if m.VotingPower != 0 {
-		n += 1 + sovOracle(uint64(m.VotingPower))
-	}
-	if m.Participated {
-		n += 2
-	}
-	if m.DeviantMarketCount != 0 {
-		n += 1 + sovOracle(uint64(m.DeviantMarketCount))
 	}
 	return n
 }
@@ -1668,25 +802,6 @@ func (m *OraclePrice) Unmarshal(dAtA []byte) error {
 			}
 		case 6:
 			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field AggregationMethod", wireType)
-			}
-			m.AggregationMethod = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowOracle
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.AggregationMethod |= uint32(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 7:
-			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field ParticipantCount", wireType)
 			}
 			m.ParticipantCount = 0
@@ -1704,7 +819,7 @@ func (m *OraclePrice) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
-		case 8:
+		case 7:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field TotalVotingPower", wireType)
 			}
@@ -1719,520 +834,6 @@ func (m *OraclePrice) Unmarshal(dAtA []byte) error {
 				b := dAtA[iNdEx]
 				iNdEx++
 				m.TotalVotingPower |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		default:
-			iNdEx = preIndex
-			skippy, err := skipOracle(dAtA[iNdEx:])
-			if err != nil {
-				return err
-			}
-			if (skippy < 0) || (iNdEx+skippy) < 0 {
-				return ErrInvalidLengthOracle
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
-}
-func (m *OracleProvider) Unmarshal(dAtA []byte) error {
-	l := len(dAtA)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowOracle
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := dAtA[iNdEx]
-			iNdEx++
-			wire |= uint64(b&0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: OracleProvider: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: OracleProvider: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		case 1:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Address", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowOracle
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthOracle
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthOracle
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Address = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		case 2:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Enabled", wireType)
-			}
-			var v int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowOracle
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				v |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			m.Enabled = bool(v != 0)
-		case 3:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field AddedAt", wireType)
-			}
-			m.AddedAt = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowOracle
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.AddedAt |= int64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 4:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Description", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowOracle
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthOracle
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthOracle
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Description = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		default:
-			iNdEx = preIndex
-			skippy, err := skipOracle(dAtA[iNdEx:])
-			if err != nil {
-				return err
-			}
-			if (skippy < 0) || (iNdEx+skippy) < 0 {
-				return ErrInvalidLengthOracle
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
-}
-func (m *ValidatorOracleBinding) Unmarshal(dAtA []byte) error {
-	l := len(dAtA)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowOracle
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := dAtA[iNdEx]
-			iNdEx++
-			wire |= uint64(b&0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: ValidatorOracleBinding: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: ValidatorOracleBinding: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		case 1:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field ValidatorAddress", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowOracle
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthOracle
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthOracle
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.ValidatorAddress = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		case 2:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field OracleOperatorAddress", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowOracle
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthOracle
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthOracle
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.OracleOperatorAddress = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		case 3:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field BoundAtBlock", wireType)
-			}
-			m.BoundAtBlock = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowOracle
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.BoundAtBlock |= int64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 4:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field BoundAtTime", wireType)
-			}
-			m.BoundAtTime = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowOracle
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.BoundAtTime |= int64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 5:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Metadata", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowOracle
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthOracle
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthOracle
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Metadata = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		default:
-			iNdEx = preIndex
-			skippy, err := skipOracle(dAtA[iNdEx:])
-			if err != nil {
-				return err
-			}
-			if (skippy < 0) || (iNdEx+skippy) < 0 {
-				return ErrInvalidLengthOracle
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
-}
-func (m *ValidatorOracleStats) Unmarshal(dAtA []byte) error {
-	l := len(dAtA)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowOracle
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := dAtA[iNdEx]
-			iNdEx++
-			wire |= uint64(b&0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: ValidatorOracleStats: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: ValidatorOracleStats: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		case 1:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field ValidatorAddress", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowOracle
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthOracle
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthOracle
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.ValidatorAddress = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		case 2:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field TotalVotesSubmitted", wireType)
-			}
-			m.TotalVotesSubmitted = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowOracle
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.TotalVotesSubmitted |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 3:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field TotalVotesMissed", wireType)
-			}
-			m.TotalVotesMissed = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowOracle
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.TotalVotesMissed |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 4:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field TotalVotesDeviant", wireType)
-			}
-			m.TotalVotesDeviant = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowOracle
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.TotalVotesDeviant |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 5:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field LastActiveHeight", wireType)
-			}
-			m.LastActiveHeight = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowOracle
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.LastActiveHeight |= int64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 6:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field ConsecutiveMissed", wireType)
-			}
-			m.ConsecutiveMissed = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowOracle
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.ConsecutiveMissed |= uint32(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -2289,25 +890,6 @@ func (m *Params) Unmarshal(dAtA []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field AggregationMode", wireType)
-			}
-			m.AggregationMode = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowOracle
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.AggregationMode |= uint32(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 2:
-			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field MaxAgeMs", wireType)
 			}
 			m.MaxAgeMs = 0
@@ -2325,7 +907,7 @@ func (m *Params) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
-		case 3:
+		case 2:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field MarkPriceEmaAlpha", wireType)
 			}
@@ -2344,7 +926,7 @@ func (m *Params) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
-		case 4:
+		case 3:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field MinVotingPowerRatio", wireType)
 			}
@@ -2363,7 +945,7 @@ func (m *Params) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
-		case 5:
+		case 4:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field DeviationThresholdBps", wireType)
 			}
@@ -2382,128 +964,7 @@ func (m *Params) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
-		case 6:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field SlashFractionDeviation", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowOracle
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthOracle
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthOracle
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.SlashFractionDeviation = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		case 7:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field SlashFractionDowntime", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowOracle
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthOracle
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthOracle
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.SlashFractionDowntime = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		case 8:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field MinActiveRatioBps", wireType)
-			}
-			m.MinActiveRatioBps = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowOracle
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.MinActiveRatioBps |= uint32(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 9:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field ActiveWindowBlocks", wireType)
-			}
-			m.ActiveWindowBlocks = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowOracle
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.ActiveWindowBlocks |= uint32(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 10:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field MaxConsecutiveMissed", wireType)
-			}
-			m.MaxConsecutiveMissed = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowOracle
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.MaxConsecutiveMissed |= uint32(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 11:
+		case 5:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field VoteExtensionEnabled", wireType)
 			}
@@ -2682,38 +1143,6 @@ func (m *OracleVote) Unmarshal(dAtA []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field ValidatorAddress", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowOracle
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthOracle
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthOracle
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.ValidatorAddress = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		case 2:
-			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field Prices", wireType)
 			}
 			var msglen int
@@ -2741,12 +1170,12 @@ func (m *OracleVote) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Prices = append(m.Prices, &MarketPrice{})
+			m.Prices = append(m.Prices, MarketPrice{})
 			if err := m.Prices[len(m.Prices)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
-		case 3:
+		case 2:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field SubmittedAtHeight", wireType)
 			}
@@ -2761,253 +1190,6 @@ func (m *OracleVote) Unmarshal(dAtA []byte) error {
 				b := dAtA[iNdEx]
 				iNdEx++
 				m.SubmittedAtHeight |= int64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		default:
-			iNdEx = preIndex
-			skippy, err := skipOracle(dAtA[iNdEx:])
-			if err != nil {
-				return err
-			}
-			if (skippy < 0) || (iNdEx+skippy) < 0 {
-				return ErrInvalidLengthOracle
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
-}
-func (m *MarketAggregation) Unmarshal(dAtA []byte) error {
-	l := len(dAtA)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowOracle
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := dAtA[iNdEx]
-			iNdEx++
-			wire |= uint64(b&0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: MarketAggregation: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: MarketAggregation: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		case 1:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field MarketIndex", wireType)
-			}
-			m.MarketIndex = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowOracle
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.MarketIndex |= uint32(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 2:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field IndexPrice", wireType)
-			}
-			m.IndexPrice = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowOracle
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.IndexPrice |= uint32(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 3:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field MarkPrice", wireType)
-			}
-			m.MarkPrice = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowOracle
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.MarkPrice |= uint32(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		default:
-			iNdEx = preIndex
-			skippy, err := skipOracle(dAtA[iNdEx:])
-			if err != nil {
-				return err
-			}
-			if (skippy < 0) || (iNdEx+skippy) < 0 {
-				return ErrInvalidLengthOracle
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
-}
-func (m *VoterRecord) Unmarshal(dAtA []byte) error {
-	l := len(dAtA)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowOracle
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := dAtA[iNdEx]
-			iNdEx++
-			wire |= uint64(b&0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: VoterRecord: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: VoterRecord: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		case 1:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field ValidatorAddress", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowOracle
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthOracle
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthOracle
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.ValidatorAddress = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		case 2:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field VotingPower", wireType)
-			}
-			m.VotingPower = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowOracle
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.VotingPower |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 3:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Participated", wireType)
-			}
-			var v int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowOracle
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				v |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			m.Participated = bool(v != 0)
-		case 4:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field DeviantMarketCount", wireType)
-			}
-			m.DeviantMarketCount = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowOracle
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.DeviantMarketCount |= uint32(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}

@@ -48,10 +48,11 @@ func (s *LiquidationSuite) SetupTest() {
 	})
 	s.MarketIndex = s.CreatePerpMarket(msg.DefaultPerpMarketOpts(1, s.BTCAssetIndex))
 
-	// Whitelist user3 as the oracle provider used by every liquidation
-	// scenario. Tests then call `s.InjectPrice(s.Users[3].Address, ...)`
-	// to seed mark / index prices.
-	s.AddOracleProvider(s.Users[3].Address, "liquidation-test-provider")
+	// Note: oracle prices are seeded directly via `s.SetOraclePrice`. The
+	// runtime path is the dydx/Connect-style ABCI++ pipeline (validators
+	// emit per-market prices via vote extensions; PreBlock decodes the
+	// proposer-injected ExtendedCommitInfo and runs the weighted median).
+	// That pipeline has its own dedicated suite in `e2e_oracle_test.go`.
 }
 
 // openHurtablePosition deposits 10 USDC for user0 (the future victim) and
@@ -72,7 +73,7 @@ func (s *LiquidationSuite) openHurtablePosition() (entryPrice uint32, qty uint64
 
 	// Seed the entry oracle so the post-trade risk check in the trade
 	// keeper has a live mark price to classify the fresh positions.
-	s.InjectPrice(s.Users[3].Address, s.MarketIndex, entryPrice, entryPrice)
+	s.SetOraclePrice(s.MarketIndex, entryPrice, entryPrice)
 
 	askResp := s.PlaceLimitOrder(s.Users[1], msg.OrderOpts{
 		MarketIndex:      s.MarketIndex,
@@ -113,7 +114,7 @@ func (s *LiquidationSuite) TestRejectsHealthyVictim() {
 	entry, qty := s.openHurtablePosition()
 	// Inject the oracle at the entry price so uPnL ≈ 0 and TAV is at its
 	// post-fee maximum.
-	s.InjectPrice(s.Users[3].Address, s.MarketIndex, entry, entry)
+	s.SetOraclePrice(s.MarketIndex, entry, entry)
 
 	health := s.QueryHealthStatus(s.Users[0].AccountIndex)
 	s.Require().Equal(perptypes.HealthHealthy, health, "victim must be healthy at the entry price")
@@ -130,13 +131,13 @@ func (s *LiquidationSuite) TestPartialLiquidation() {
 	entry, qty := s.openHurtablePosition()
 	// Anchor oracle at entry first so the trade keeper risk-check during
 	// the open uses a non-zero IM.
-	s.InjectPrice(s.Users[3].Address, s.MarketIndex, entry, entry)
+	s.SetOraclePrice(s.MarketIndex, entry, entry)
 
 	// Drop to 41_000 ⇒ uPnL = qty * (41000 - 50000) = -9e12; with 10 USDC
 	// of collateral (~1e13 internal) the resulting TAV lands inside
 	// (CM, MM) and the classifier returns PARTIAL_LIQUIDATION.
 	const distressedPrice = uint32(41_000)
-	s.InjectPrice(s.Users[3].Address, s.MarketIndex, distressedPrice, distressedPrice)
+	s.SetOraclePrice(s.MarketIndex, distressedPrice, distressedPrice)
 
 	health := s.QueryHealthStatus(s.Users[0].AccountIndex)
 	s.Require().True(
@@ -180,12 +181,12 @@ func (s *LiquidationSuite) TestPartialLiquidation() {
 // insurance fund if the close-out leaves them under-water.
 func (s *LiquidationSuite) TestBankruptcyDeleverage() {
 	entry, qty := s.openHurtablePosition()
-	s.InjectPrice(s.Users[3].Address, s.MarketIndex, entry, entry)
+	s.SetOraclePrice(s.MarketIndex, entry, entry)
 
 	// 30_000 ⇒ uPnL = qty * (30000-50000) = -2e13; collateral 1e13 →
 	// TAV ≈ -1e13 → BANKRUPTCY.
 	const wipeoutPrice = uint32(30_000)
-	s.InjectPrice(s.Users[3].Address, s.MarketIndex, wipeoutPrice, wipeoutPrice)
+	s.SetOraclePrice(s.MarketIndex, wipeoutPrice, wipeoutPrice)
 
 	health := s.QueryHealthStatus(s.Users[0].AccountIndex)
 	s.Require().Equal(perptypes.HealthBankruptcy, health,
@@ -223,7 +224,7 @@ func (s *LiquidationSuite) TestBankruptcyDeleverage() {
 // price move back.
 func (s *LiquidationSuite) TestEndBlockerFlagsLifecycle() {
 	entry, _ := s.openHurtablePosition()
-	s.InjectPrice(s.Users[3].Address, s.MarketIndex, entry, entry)
+	s.SetOraclePrice(s.MarketIndex, entry, entry)
 	s.AdvanceBlock()
 
 	// At entry price the victim is HEALTHY and no flag should exist.
@@ -231,7 +232,7 @@ func (s *LiquidationSuite) TestEndBlockerFlagsLifecycle() {
 	s.Require().False(present, "healthy account must not have a liquidation flag")
 
 	// Drop the oracle to put the victim into PARTIAL/FULL.
-	s.InjectPrice(s.Users[3].Address, s.MarketIndex, 41_000, 41_000)
+	s.SetOraclePrice(s.MarketIndex, 41_000, 41_000)
 	s.AdvanceBlock()
 
 	flag, present := s.QueryLiquidationFlag(s.Users[0].AccountIndex, s.MarketIndex)
@@ -243,7 +244,7 @@ func (s *LiquidationSuite) TestEndBlockerFlagsLifecycle() {
 
 	// Recover the price; EndBlocker should clear the flag on the next
 	// block.
-	s.InjectPrice(s.Users[3].Address, s.MarketIndex, entry, entry)
+	s.SetOraclePrice(s.MarketIndex, entry, entry)
 	s.AdvanceBlock()
 
 	_, present = s.QueryLiquidationFlag(s.Users[0].AccountIndex, s.MarketIndex)
@@ -257,9 +258,9 @@ func (s *LiquidationSuite) TestEndBlockerFlagsLifecycle() {
 // (entryPrice, qty) tuple for assertions.
 func (s *LiquidationSuite) pushVictimToBankruptcy() (entry, wipeout uint32, qty uint64) {
 	entry, qty = s.openHurtablePosition()
-	s.InjectPrice(s.Users[3].Address, s.MarketIndex, entry, entry)
+	s.SetOraclePrice(s.MarketIndex, entry, entry)
 	wipeout = uint32(30_000)
-	s.InjectPrice(s.Users[3].Address, s.MarketIndex, wipeout, wipeout)
+	s.SetOraclePrice(s.MarketIndex, wipeout, wipeout)
 	health := s.QueryHealthStatus(s.Users[0].AccountIndex)
 	s.Require().Equal(perptypes.HealthBankruptcy, health,
 		"victim must be in BANKRUPTCY before ADL test (got %d)", health)
@@ -422,7 +423,7 @@ func (s *LiquidationSuite) TestADLRespectsPerBlockCap() {
 
 	// Seed the oracle so the risk keeper can classify these fresh
 	// crossing fills (audit fix: missing prices now fail closed).
-	s.InjectPrice(s.Users[3].Address, s.MarketIndex, entry, entry)
+	s.SetOraclePrice(s.MarketIndex, entry, entry)
 
 	// user1 rests a short of 2*qty; victims A & B each cross half.
 	askResp := s.PlaceLimitOrder(s.Users[1], msg.OrderOpts{
@@ -451,8 +452,8 @@ func (s *LiquidationSuite) TestADLRespectsPerBlockCap() {
 	s.Require().Equal(perptypes.OrderStatusFilled, bidB.Status)
 
 	// Push both A & B into BANKRUPTCY simultaneously.
-	s.InjectPrice(s.Users[3].Address, s.MarketIndex, entry, entry)
-	s.InjectPrice(s.Users[3].Address, s.MarketIndex, 30_000, 30_000)
+	s.SetOraclePrice(s.MarketIndex, entry, entry)
+	s.SetOraclePrice(s.MarketIndex, 30_000, 30_000)
 	s.Require().Equal(perptypes.HealthBankruptcy,
 		s.QueryHealthStatus(s.Users[0].AccountIndex))
 	s.Require().Equal(perptypes.HealthBankruptcy,

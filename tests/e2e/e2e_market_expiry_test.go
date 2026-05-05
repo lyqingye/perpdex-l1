@@ -109,10 +109,6 @@ func (s *MarketExpirySuite) TestMarketStillActiveBeforeExpiry() {
 // ApplyExitPosition zeroes out every non-insurance-fund position in the
 // expired market against `InsuranceFundOperatorAccountIdx`.
 func (s *MarketExpirySuite) TestExpiryClosesOpenPositions() {
-	// Need an oracle provider so the funding BeginBlocker can latch
-	// MarkPrice into MarketDetails.
-	s.AddOracleProvider(s.Users[3].Address, "expiry-test-provider")
-
 	// Two well-funded users so they can open opposite sides.
 	const deposit = uint64(1_000_000_000_000) // 1e6 USDC external
 	s.DepositUSDC(&s.Users[0], deposit)
@@ -122,7 +118,7 @@ func (s *MarketExpirySuite) TestExpiryClosesOpenPositions() {
 	const entry = uint32(50_000)
 	// Seed the oracle before the first fill so the risk keeper can
 	// classify the resulting positions.
-	s.InjectPrice(s.Users[3].Address, s.MarketIndex, entry, entry)
+	s.SetOraclePrice(s.MarketIndex, entry, entry)
 	const qty = uint64(100_000_000) // 1 BTC at 8 decimals
 	askResp := s.PlaceLimitOrder(s.Users[1], msg.OrderOpts{
 		MarketIndex:      s.MarketIndex,
@@ -141,9 +137,9 @@ func (s *MarketExpirySuite) TestExpiryClosesOpenPositions() {
 	})
 	s.Require().Equal(perptypes.OrderStatusFilled, bidResp.Status)
 
-	// Inject and advance one block so x/funding latches the mark price
-	// into MarketDetails before x/market expires the market.
-	s.InjectPrice(s.Users[3].Address, s.MarketIndex, entry, entry)
+	// Refresh the oracle and advance one block so x/funding latches the
+	// mark price into MarketDetails before x/market expires the market.
+	s.SetOraclePrice(s.MarketIndex, entry, entry)
 	s.AdvanceBlock()
 
 	md := s.QueryMarketDetails(s.MarketIndex)

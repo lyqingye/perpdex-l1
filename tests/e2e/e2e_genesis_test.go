@@ -40,13 +40,15 @@ func (s *GenesisSuite) TestSpecialAccountsExist() {
 	s.Require().Equal(perptypes.InsuranceFundAccountType, insurance.AccountType)
 }
 
-// TestOracleWhitelistByDefault confirms the oracle starts in WHITELIST
-// mode (cold-start friendly); governance must explicitly switch to
-// PoS_MEDIAN with MsgSetAggregationMode for the vote-extension code path.
-func (s *GenesisSuite) TestOracleWhitelistByDefault() {
+// TestOracleParamsDefault confirms the oracle module ships with the
+// dydx/Slinky-style ABCI++ vote-extension pipeline switched on. Risk /
+// liquidation / funding all rely on `MaxAgeMs` to refuse stale prices,
+// so the default value must be non-zero too.
+func (s *GenesisSuite) TestOracleParamsDefault() {
 	params := s.QueryOracleParams()
-	s.Require().Equal(perptypes.OracleAggWhitelist, params.AggregationMode,
-		"default oracle mode must be WHITELIST until governance flips it")
-	s.Require().False(params.VoteExtensionEnabled,
-		"vote extensions must be disabled by default to keep the cold start safe")
+	s.Require().True(params.VoteExtensionEnabled,
+		"vote extensions must default on so the oracle pipeline activates without governance intervention")
+	s.Require().Greater(params.MaxAgeMs, int64(0),
+		"max_age_ms must be positive so freshness checks can refuse stale prices")
 }
+

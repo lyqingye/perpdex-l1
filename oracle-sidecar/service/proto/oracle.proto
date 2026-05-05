@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package perpdex.oracle.sidecar.v1;
+
+option go_package = "github.com/perpdex/perpdex-l1/oracle-sidecar/service/proto;sidecarpb";
+
+// Oracle is the gRPC service the perpdex-l1 chain daemon polls every block to
+// retrieve the latest aggregated prices the local sidecar has decided on.
+//
+// The protocol intentionally mirrors `connect.service.v2.Oracle` so existing
+// Connect/Slinky tooling can call this service with minimal adaptation, but is
+// re-namespaced under `perpdex.oracle.sidecar.v1` because we vendor our own
+// implementation.
+service Oracle {
+  // Prices returns the latest, post-aggregation prices the sidecar has for the
+  // configured currency pairs. It is intended to be polled at a fixed interval
+  // (typically 250-500ms) by the chain daemon. The server SHOULD respond
+  // entirely from a local in-memory cache and SHOULD NOT block on upstream
+  // exchanges.
+  rpc Prices(PricesRequest) returns (PricesResponse);
+
+  // Version returns build metadata the chain daemon uses to log compatibility
+  // warnings on startup.
+  rpc Version(VersionRequest) returns (VersionResponse);
+}
+
+message PricesRequest {}
+
+message PricesResponse {
+  // prices maps currency pair string (e.g. "BTC/USD") to the integer-encoded
+  // price as a decimal string. Decimal places are determined by the
+  // per-market configuration on the chain side.
+  map<string, string> prices = 1;
+
+  // timestamp is the wall-clock time at which the aggregated snapshot was
+  // produced, in unix nanoseconds.
+  int64 timestamp = 2;
+}
+
+message VersionRequest {}
+
+message VersionResponse {
+  string version = 1;
+  string git_commit = 2;
+  string build_date = 3;
+}

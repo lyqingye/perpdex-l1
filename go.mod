@@ -20,6 +20,7 @@ require (
 	github.com/cosmos/gogoproto v1.7.2
 	github.com/cosmos/ibc-go/v10 v10.6.0
 	github.com/gorilla/mux v1.8.1
+	github.com/perpdex/perpdex-l1/oracle-sidecar v0.0.0-00010101000000-000000000000
 	github.com/spf13/cast v1.10.0
 	github.com/spf13/cobra v1.10.1
 	github.com/spf13/viper v1.21.0
@@ -138,7 +139,7 @@ require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/jmhodges/levigo v1.0.0 // indirect
-	github.com/klauspost/compress v1.18.0 // indirect
+	github.com/klauspost/compress v1.18.0
 	github.com/klauspost/cpuid/v2 v2.2.10 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/kr/text v0.2.0 // indirect
@@ -228,6 +229,15 @@ require (
 replace (
 	// Use the cosmos fork to avoid the deprecated 99designs/keyring v1.2.2 stub.
 	github.com/99designs/keyring => github.com/cosmos/keyring v1.2.0
+
+	// The oracle-sidecar lives in a sibling module under the same repo.
+	// `go.work` makes this transparent for normal `go test` invocations,
+	// but `go mod tidy` does NOT consult workspaces and would otherwise
+	// try to download oracle-sidecar from the network. Pinning a
+	// path-replace here keeps tidy local-only; the placeholder require
+	// version below is required by the spec but ignored at build time
+	// because the replace short-circuits resolution.
+	github.com/perpdex/perpdex-l1/oracle-sidecar => ./oracle-sidecar
 
 	// goleveldb v1.0.1+ has known issues; pin to a stable revision.
 	github.com/syndtr/goleveldb => github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7

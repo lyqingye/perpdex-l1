@@ -101,8 +101,7 @@ func (s *FundingSuite) TestPremiumAccumulatesAndSettles() {
 	// Seed the oracle up front so the risk keeper can classify the
 	// fresh positions created by the crossing fill below (audit fix:
 	// missing prices on non-zero positions now fail closed).
-	s.AddOracleProvider(s.Users[3].Address, "test-funding-provider")
-	s.InjectPrice(s.Users[3].Address, s.MarketIndex, tradePrice, tradePrice)
+	s.SetOraclePrice(s.MarketIndex, tradePrice, tradePrice)
 
 	// 1. Open opposite positions: user0 short 1M @ 50000, user1 long 1M.
 	askResp := s.PlaceLimitOrder(s.Users[0], msg.OrderOpts{
@@ -152,7 +151,7 @@ func (s *FundingSuite) TestPremiumAccumulatesAndSettles() {
 	// applied before the fills above.
 	const indexPrice = uint32(49_500)
 	const markPrice = uint32(50_000)
-	s.InjectPrice(s.Users[3].Address, s.MarketIndex, indexPrice, markPrice)
+	s.SetOraclePrice(s.MarketIndex, indexPrice, markPrice)
 
 	// Pre-condition checks that pin down the inputs the funding sampler
 	// will see during the next BeginBlocker.

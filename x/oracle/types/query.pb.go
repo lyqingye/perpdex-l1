@@ -117,166 +117,6 @@ func (m *QueryOraclePriceResponse) GetPrice() OraclePrice {
 	return OraclePrice{}
 }
 
-type QueryOracleProvidersRequest struct {
-}
-
-func (m *QueryOracleProvidersRequest) Reset()         { *m = QueryOracleProvidersRequest{} }
-func (m *QueryOracleProvidersRequest) String() string { return proto.CompactTextString(m) }
-func (*QueryOracleProvidersRequest) ProtoMessage()    {}
-func (*QueryOracleProvidersRequest) Descriptor() ([]byte, []int) {
-	return fileDescriptor_645cf19a05b34321, []int{2}
-}
-func (m *QueryOracleProvidersRequest) XXX_Unmarshal(b []byte) error {
-	return m.Unmarshal(b)
-}
-func (m *QueryOracleProvidersRequest) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	if deterministic {
-		return xxx_messageInfo_QueryOracleProvidersRequest.Marshal(b, m, deterministic)
-	} else {
-		b = b[:cap(b)]
-		n, err := m.MarshalToSizedBuffer(b)
-		if err != nil {
-			return nil, err
-		}
-		return b[:n], nil
-	}
-}
-func (m *QueryOracleProvidersRequest) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_QueryOracleProvidersRequest.Merge(m, src)
-}
-func (m *QueryOracleProvidersRequest) XXX_Size() int {
-	return m.Size()
-}
-func (m *QueryOracleProvidersRequest) XXX_DiscardUnknown() {
-	xxx_messageInfo_QueryOracleProvidersRequest.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_QueryOracleProvidersRequest proto.InternalMessageInfo
-
-type QueryOracleProvidersResponse struct {
-	Providers []OracleProvider `protobuf:"bytes,1,rep,name=providers,proto3" json:"providers"`
-}
-
-func (m *QueryOracleProvidersResponse) Reset()         { *m = QueryOracleProvidersResponse{} }
-func (m *QueryOracleProvidersResponse) String() string { return proto.CompactTextString(m) }
-func (*QueryOracleProvidersResponse) ProtoMessage()    {}
-func (*QueryOracleProvidersResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_645cf19a05b34321, []int{3}
-}
-func (m *QueryOracleProvidersResponse) XXX_Unmarshal(b []byte) error {
-	return m.Unmarshal(b)
-}
-func (m *QueryOracleProvidersResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	if deterministic {
-		return xxx_messageInfo_QueryOracleProvidersResponse.Marshal(b, m, deterministic)
-	} else {
-		b = b[:cap(b)]
-		n, err := m.MarshalToSizedBuffer(b)
-		if err != nil {
-			return nil, err
-		}
-		return b[:n], nil
-	}
-}
-func (m *QueryOracleProvidersResponse) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_QueryOracleProvidersResponse.Merge(m, src)
-}
-func (m *QueryOracleProvidersResponse) XXX_Size() int {
-	return m.Size()
-}
-func (m *QueryOracleProvidersResponse) XXX_DiscardUnknown() {
-	xxx_messageInfo_QueryOracleProvidersResponse.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_QueryOracleProvidersResponse proto.InternalMessageInfo
-
-func (m *QueryOracleProvidersResponse) GetProviders() []OracleProvider {
-	if m != nil {
-		return m.Providers
-	}
-	return nil
-}
-
-type QueryBindingsRequest struct {
-}
-
-func (m *QueryBindingsRequest) Reset()         { *m = QueryBindingsRequest{} }
-func (m *QueryBindingsRequest) String() string { return proto.CompactTextString(m) }
-func (*QueryBindingsRequest) ProtoMessage()    {}
-func (*QueryBindingsRequest) Descriptor() ([]byte, []int) {
-	return fileDescriptor_645cf19a05b34321, []int{4}
-}
-func (m *QueryBindingsRequest) XXX_Unmarshal(b []byte) error {
-	return m.Unmarshal(b)
-}
-func (m *QueryBindingsRequest) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	if deterministic {
-		return xxx_messageInfo_QueryBindingsRequest.Marshal(b, m, deterministic)
-	} else {
-		b = b[:cap(b)]
-		n, err := m.MarshalToSizedBuffer(b)
-		if err != nil {
-			return nil, err
-		}
-		return b[:n], nil
-	}
-}
-func (m *QueryBindingsRequest) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_QueryBindingsRequest.Merge(m, src)
-}
-func (m *QueryBindingsRequest) XXX_Size() int {
-	return m.Size()
-}
-func (m *QueryBindingsRequest) XXX_DiscardUnknown() {
-	xxx_messageInfo_QueryBindingsRequest.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_QueryBindingsRequest proto.InternalMessageInfo
-
-type QueryBindingsResponse struct {
-	Bindings []ValidatorOracleBinding `protobuf:"bytes,1,rep,name=bindings,proto3" json:"bindings"`
-}
-
-func (m *QueryBindingsResponse) Reset()         { *m = QueryBindingsResponse{} }
-func (m *QueryBindingsResponse) String() string { return proto.CompactTextString(m) }
-func (*QueryBindingsResponse) ProtoMessage()    {}
-func (*QueryBindingsResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_645cf19a05b34321, []int{5}
-}
-func (m *QueryBindingsResponse) XXX_Unmarshal(b []byte) error {
-	return m.Unmarshal(b)
-}
-func (m *QueryBindingsResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	if deterministic {
-		return xxx_messageInfo_QueryBindingsResponse.Marshal(b, m, deterministic)
-	} else {
-		b = b[:cap(b)]
-		n, err := m.MarshalToSizedBuffer(b)
-		if err != nil {
-			return nil, err
-		}
-		return b[:n], nil
-	}
-}
-func (m *QueryBindingsResponse) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_QueryBindingsResponse.Merge(m, src)
-}
-func (m *QueryBindingsResponse) XXX_Size() int {
-	return m.Size()
-}
-func (m *QueryBindingsResponse) XXX_DiscardUnknown() {
-	xxx_messageInfo_QueryBindingsResponse.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_QueryBindingsResponse proto.InternalMessageInfo
-
-func (m *QueryBindingsResponse) GetBindings() []ValidatorOracleBinding {
-	if m != nil {
-		return m.Bindings
-	}
-	return nil
-}
-
 type QueryParamsRequest struct {
 }
 
@@ -284,7 +124,7 @@ func (m *QueryParamsRequest) Reset()         { *m = QueryParamsRequest{} }
 func (m *QueryParamsRequest) String() string { return proto.CompactTextString(m) }
 func (*QueryParamsRequest) ProtoMessage()    {}
 func (*QueryParamsRequest) Descriptor() ([]byte, []int) {
-	return fileDescriptor_645cf19a05b34321, []int{6}
+	return fileDescriptor_645cf19a05b34321, []int{2}
 }
 func (m *QueryParamsRequest) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -321,7 +161,7 @@ func (m *QueryParamsResponse) Reset()         { *m = QueryParamsResponse{} }
 func (m *QueryParamsResponse) String() string { return proto.CompactTextString(m) }
 func (*QueryParamsResponse) ProtoMessage()    {}
 func (*QueryParamsResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_645cf19a05b34321, []int{7}
+	return fileDescriptor_645cf19a05b34321, []int{3}
 }
 func (m *QueryParamsResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -360,10 +200,6 @@ func (m *QueryParamsResponse) GetParams() Params {
 func init() {
 	proto.RegisterType((*QueryOraclePriceRequest)(nil), "perpdex.oracle.v1.QueryOraclePriceRequest")
 	proto.RegisterType((*QueryOraclePriceResponse)(nil), "perpdex.oracle.v1.QueryOraclePriceResponse")
-	proto.RegisterType((*QueryOracleProvidersRequest)(nil), "perpdex.oracle.v1.QueryOracleProvidersRequest")
-	proto.RegisterType((*QueryOracleProvidersResponse)(nil), "perpdex.oracle.v1.QueryOracleProvidersResponse")
-	proto.RegisterType((*QueryBindingsRequest)(nil), "perpdex.oracle.v1.QueryBindingsRequest")
-	proto.RegisterType((*QueryBindingsResponse)(nil), "perpdex.oracle.v1.QueryBindingsResponse")
 	proto.RegisterType((*QueryParamsRequest)(nil), "perpdex.oracle.v1.QueryParamsRequest")
 	proto.RegisterType((*QueryParamsResponse)(nil), "perpdex.oracle.v1.QueryParamsResponse")
 }
@@ -371,40 +207,31 @@ func init() {
 func init() { proto.RegisterFile("perpdex/oracle/v1/query.proto", fileDescriptor_645cf19a05b34321) }
 
 var fileDescriptor_645cf19a05b34321 = []byte{
-	// 528 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x8c, 0x94, 0xcd, 0x6f, 0x12, 0x4f,
-	0x18, 0xc7, 0xd9, 0xdf, 0xaf, 0x25, 0xf5, 0x41, 0x63, 0x1c, 0x51, 0xe9, 0x02, 0x6b, 0x59, 0x5f,
-	0x4a, 0x7d, 0xd9, 0x09, 0x78, 0x30, 0x31, 0x9e, 0x9a, 0x68, 0x62, 0x4c, 0xb4, 0x72, 0xe8, 0xc1,
-	0x8b, 0x59, 0xd8, 0xc9, 0x3a, 0x11, 0x76, 0xa6, 0xb3, 0x0b, 0x69, 0x35, 0x5e, 0xfa, 0x17, 0x98,
-	0x78, 0xd0, 0x7f, 0xc6, 0x7b, 0x8f, 0x4d, 0xbc, 0x78, 0x32, 0x06, 0xfc, 0x43, 0x0c, 0x33, 0x0f,
-	0x2b, 0x2f, 0x8b, 0xf4, 0x04, 0xf9, 0x3e, 0x2f, 0x9f, 0x2f, 0xf3, 0x7c, 0x03, 0x54, 0x25, 0x53,
-	0x32, 0x60, 0x87, 0x54, 0x28, 0xbf, 0xd3, 0x65, 0x74, 0xd0, 0xa0, 0x07, 0x7d, 0xa6, 0x8e, 0x3c,
-	0xa9, 0x44, 0x22, 0xc8, 0x25, 0x2c, 0x7b, 0xa6, 0xec, 0x0d, 0x1a, 0x76, 0x31, 0x14, 0xa1, 0xd0,
-	0x55, 0x3a, 0xfe, 0x66, 0x1a, 0xed, 0x4a, 0x28, 0x44, 0xd8, 0x65, 0xd4, 0x97, 0x9c, 0xfa, 0x51,
-	0x24, 0x12, 0x3f, 0xe1, 0x22, 0x8a, 0xb1, 0xea, 0x2c, 0x52, 0x70, 0xa1, 0xae, 0xbb, 0x8f, 0xe1,
-	0xda, 0xab, 0x31, 0xf5, 0xa5, 0x16, 0xf7, 0x14, 0xef, 0xb0, 0x16, 0x3b, 0xe8, 0xb3, 0x38, 0x21,
-	0x35, 0x38, 0xdf, 0xf3, 0xd5, 0x3b, 0x96, 0xbc, 0xe1, 0x51, 0xc0, 0x0e, 0x4b, 0xd6, 0x96, 0x55,
-	0xbf, 0xd0, 0x2a, 0x18, 0xed, 0xd9, 0x58, 0x72, 0xf7, 0xa1, 0xb4, 0x38, 0x1d, 0x4b, 0x11, 0xc5,
-	0x8c, 0x3c, 0x82, 0x75, 0x39, 0x16, 0xf4, 0x5c, 0xa1, 0xe9, 0x78, 0x0b, 0x3f, 0xc8, 0x9b, 0x1a,
-	0xdb, 0x5d, 0x3b, 0xf9, 0x79, 0x3d, 0xd7, 0x32, 0x23, 0x6e, 0x15, 0xca, 0x33, 0x7b, 0xc5, 0x80,
-	0x07, 0x4c, 0xc5, 0xe8, 0xcc, 0x65, 0x50, 0xc9, 0x2e, 0x23, 0xfa, 0x09, 0x9c, 0x93, 0x13, 0xb1,
-	0x64, 0x6d, 0xfd, 0x5f, 0x2f, 0x34, 0x6b, 0xff, 0xc0, 0x9b, 0x4e, 0x74, 0xf0, 0x77, 0xd2, 0xbd,
-	0x0a, 0x45, 0x8d, 0xd9, 0xe5, 0x51, 0xc0, 0xa3, 0x30, 0xc5, 0x07, 0x70, 0x65, 0x4e, 0x47, 0xee,
-	0x73, 0xd8, 0x68, 0xa3, 0x86, 0xd8, 0x9d, 0x0c, 0xec, 0xbe, 0xdf, 0xe5, 0x81, 0x9f, 0x08, 0x65,
-	0xf8, 0xb8, 0x05, 0xf1, 0xe9, 0x02, 0xb7, 0x08, 0x44, 0x53, 0xf6, 0x7c, 0xe5, 0xf7, 0x52, 0xf6,
-	0x0b, 0xb8, 0x3c, 0xa3, 0x22, 0xf9, 0x21, 0xe4, 0xa5, 0x56, 0xf0, 0xb5, 0x37, 0x33, 0xb8, 0x66,
-	0x04, 0x39, 0xd8, 0xde, 0xfc, 0xb6, 0x06, 0xeb, 0x7a, 0x21, 0xf9, 0x62, 0x41, 0x61, 0xea, 0x20,
-	0xe4, 0x4e, 0xc6, 0x8a, 0x25, 0x51, 0xb1, 0xef, 0x9e, 0xa9, 0xd7, 0x78, 0x75, 0xe9, 0xf1, 0xf7,
-	0xdf, 0x9f, 0xff, 0xdb, 0x21, 0xdb, 0x74, 0x31, 0x9b, 0xfa, 0xfc, 0xf4, 0xc3, 0x74, 0xee, 0x3e,
-	0x92, 0xaf, 0x16, 0x5c, 0x9c, 0x3b, 0x35, 0xf1, 0x56, 0x11, 0x67, 0x23, 0x63, 0xd3, 0x33, 0xf7,
-	0xa3, 0xcb, 0x9b, 0xda, 0xa5, 0x43, 0x2a, 0x99, 0x2e, 0x27, 0x36, 0x8e, 0x2d, 0xd8, 0x98, 0xc4,
-	0x80, 0x6c, 0x2f, 0x63, 0xcc, 0x05, 0xc8, 0xae, 0xaf, 0x6e, 0x44, 0x17, 0x37, 0xb4, 0x8b, 0x2a,
-	0x29, 0x67, 0xb8, 0x98, 0x24, 0x85, 0xbc, 0x87, 0xbc, 0xb9, 0x2d, 0xb9, 0xb5, 0x6c, 0xf1, 0x4c,
-	0x88, 0xec, 0xdb, 0xab, 0xda, 0x90, 0x5e, 0xd3, 0xf4, 0x32, 0xd9, 0xcc, 0x7a, 0x03, 0x93, 0xa6,
-	0xa7, 0x27, 0x43, 0xc7, 0x3a, 0x1d, 0x3a, 0xd6, 0xaf, 0xa1, 0x63, 0x7d, 0x1a, 0x39, 0xb9, 0xd3,
-	0x91, 0x93, 0xfb, 0x31, 0x72, 0x72, 0xaf, 0xef, 0x85, 0x3c, 0x79, 0xdb, 0x6f, 0x7b, 0x1d, 0xd1,
-	0x4b, 0xc7, 0xf1, 0xf3, 0x7e, 0xb7, 0x41, 0xd3, 0x5d, 0xc9, 0x91, 0x64, 0x71, 0x3b, 0xaf, 0xff,
-	0x8e, 0x1e, 0xfc, 0x09, 0x00, 0x00, 0xff, 0xff, 0xee, 0x94, 0x1f, 0x28, 0x16, 0x05, 0x00, 0x00,
+	// 381 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xe2, 0x92, 0x2d, 0x48, 0x2d, 0x2a,
+	0x48, 0x49, 0xad, 0xd0, 0xcf, 0x2f, 0x4a, 0x4c, 0xce, 0x49, 0xd5, 0x2f, 0x33, 0xd4, 0x2f, 0x2c,
+	0x4d, 0x2d, 0xaa, 0xd4, 0x2b, 0x28, 0xca, 0x2f, 0xc9, 0x17, 0x12, 0x84, 0x4a, 0xeb, 0x41, 0xa4,
+	0xf5, 0xca, 0x0c, 0xa5, 0x44, 0xd2, 0xf3, 0xd3, 0xf3, 0xc1, 0xb2, 0xfa, 0x20, 0x16, 0x44, 0xa1,
+	0x94, 0x4c, 0x7a, 0x7e, 0x7e, 0x7a, 0x4e, 0xaa, 0x7e, 0x62, 0x41, 0xa6, 0x7e, 0x62, 0x5e, 0x5e,
+	0x7e, 0x49, 0x62, 0x49, 0x66, 0x7e, 0x5e, 0x31, 0x54, 0x56, 0x0e, 0xd3, 0x16, 0xa8, 0x81, 0x60,
+	0x79, 0x25, 0x1b, 0x2e, 0xf1, 0x40, 0x90, 0xad, 0xfe, 0x60, 0xc1, 0x80, 0xa2, 0xcc, 0xe4, 0xd4,
+	0xa0, 0xd4, 0xc2, 0xd2, 0xd4, 0xe2, 0x12, 0x21, 0x45, 0x2e, 0x9e, 0xdc, 0xc4, 0xa2, 0xec, 0xd4,
+	0x92, 0xf8, 0xcc, 0xbc, 0x94, 0xd4, 0x0a, 0x09, 0x46, 0x05, 0x46, 0x0d, 0xde, 0x20, 0x6e, 0x88,
+	0x98, 0x27, 0x48, 0x48, 0x29, 0x8c, 0x4b, 0x02, 0x53, 0x77, 0x71, 0x41, 0x7e, 0x5e, 0x71, 0xaa,
+	0x90, 0x15, 0x17, 0x6b, 0x01, 0x48, 0x00, 0xac, 0x8f, 0xdb, 0x48, 0x4e, 0x0f, 0xc3, 0x43, 0x7a,
+	0x48, 0xda, 0x9c, 0x58, 0x4e, 0xdc, 0x93, 0x67, 0x08, 0x82, 0x68, 0x51, 0x12, 0xe1, 0x12, 0x02,
+	0x9b, 0x1b, 0x90, 0x58, 0x94, 0x98, 0x5b, 0x0c, 0x75, 0x90, 0x92, 0x1f, 0x97, 0x30, 0x8a, 0x28,
+	0xd4, 0x22, 0x73, 0x2e, 0xb6, 0x02, 0xb0, 0x08, 0xd4, 0x26, 0x49, 0x2c, 0x36, 0x41, 0xb4, 0x40,
+	0x2d, 0x81, 0x2a, 0x37, 0x9a, 0xcb, 0xc4, 0xc5, 0x0a, 0x36, 0x50, 0x68, 0x3a, 0x23, 0x17, 0x37,
+	0x92, 0x63, 0x84, 0xb4, 0xb0, 0x18, 0x81, 0x23, 0x98, 0xa4, 0xb4, 0x89, 0x52, 0x0b, 0x71, 0xab,
+	0x92, 0x7e, 0xd3, 0xe5, 0x27, 0x93, 0x99, 0x34, 0x85, 0xd4, 0xf5, 0x31, 0xe3, 0x05, 0xec, 0x75,
+	0xfd, 0x6a, 0xe4, 0x30, 0xaf, 0x15, 0xaa, 0xe2, 0x62, 0x83, 0xb8, 0x5d, 0x48, 0x15, 0x97, 0x3d,
+	0x28, 0x81, 0x24, 0xa5, 0x46, 0x48, 0x19, 0xd4, 0x25, 0x8a, 0x60, 0x97, 0x48, 0x0b, 0x49, 0x62,
+	0x73, 0x09, 0x24, 0xb4, 0xdc, 0x4e, 0x3c, 0x92, 0x63, 0xbc, 0xf0, 0x48, 0x8e, 0xf1, 0xc1, 0x23,
+	0x39, 0xc6, 0x09, 0x8f, 0xe5, 0x18, 0x2e, 0x3c, 0x96, 0x63, 0xb8, 0xf1, 0x58, 0x8e, 0x21, 0x4a,
+	0x27, 0x3d, 0xb3, 0x24, 0xa3, 0x34, 0x49, 0x2f, 0x39, 0x3f, 0x17, 0xae, 0x1d, 0x4a, 0xeb, 0xe6,
+	0x18, 0xea, 0xc3, 0xcd, 0x2a, 0xa9, 0x2c, 0x48, 0x2d, 0x4e, 0x62, 0x03, 0x27, 0x35, 0x63, 0x40,
+	0x00, 0x00, 0x00, 0xff, 0xff, 0x48, 0x51, 0x46, 0xc4, 0xf2, 0x02, 0x00, 0x00,
 }
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -420,8 +247,6 @@ const _ = grpc.SupportPackageIsVersion4
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://godoc.org/google.golang.org/grpc#ClientConn.NewStream.
 type QueryClient interface {
 	OraclePrice(ctx context.Context, in *QueryOraclePriceRequest, opts ...grpc.CallOption) (*QueryOraclePriceResponse, error)
-	OracleProviders(ctx context.Context, in *QueryOracleProvidersRequest, opts ...grpc.CallOption) (*QueryOracleProvidersResponse, error)
-	Bindings(ctx context.Context, in *QueryBindingsRequest, opts ...grpc.CallOption) (*QueryBindingsResponse, error)
 	Params(ctx context.Context, in *QueryParamsRequest, opts ...grpc.CallOption) (*QueryParamsResponse, error)
 }
 
@@ -442,24 +267,6 @@ func (c *queryClient) OraclePrice(ctx context.Context, in *QueryOraclePriceReque
 	return out, nil
 }
 
-func (c *queryClient) OracleProviders(ctx context.Context, in *QueryOracleProvidersRequest, opts ...grpc.CallOption) (*QueryOracleProvidersResponse, error) {
-	out := new(QueryOracleProvidersResponse)
-	err := c.cc.Invoke(ctx, "/perpdex.oracle.v1.Query/OracleProviders", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *queryClient) Bindings(ctx context.Context, in *QueryBindingsRequest, opts ...grpc.CallOption) (*QueryBindingsResponse, error) {
-	out := new(QueryBindingsResponse)
-	err := c.cc.Invoke(ctx, "/perpdex.oracle.v1.Query/Bindings", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *queryClient) Params(ctx context.Context, in *QueryParamsRequest, opts ...grpc.CallOption) (*QueryParamsResponse, error) {
 	out := new(QueryParamsResponse)
 	err := c.cc.Invoke(ctx, "/perpdex.oracle.v1.Query/Params", in, out, opts...)
@@ -472,8 +279,6 @@ func (c *queryClient) Params(ctx context.Context, in *QueryParamsRequest, opts .
 // QueryServer is the server API for Query service.
 type QueryServer interface {
 	OraclePrice(context.Context, *QueryOraclePriceRequest) (*QueryOraclePriceResponse, error)
-	OracleProviders(context.Context, *QueryOracleProvidersRequest) (*QueryOracleProvidersResponse, error)
-	Bindings(context.Context, *QueryBindingsRequest) (*QueryBindingsResponse, error)
 	Params(context.Context, *QueryParamsRequest) (*QueryParamsResponse, error)
 }
 
@@ -483,12 +288,6 @@ type UnimplementedQueryServer struct {
 
 func (*UnimplementedQueryServer) OraclePrice(ctx context.Context, req *QueryOraclePriceRequest) (*QueryOraclePriceResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method OraclePrice not implemented")
-}
-func (*UnimplementedQueryServer) OracleProviders(ctx context.Context, req *QueryOracleProvidersRequest) (*QueryOracleProvidersResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method OracleProviders not implemented")
-}
-func (*UnimplementedQueryServer) Bindings(ctx context.Context, req *QueryBindingsRequest) (*QueryBindingsResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Bindings not implemented")
 }
 func (*UnimplementedQueryServer) Params(ctx context.Context, req *QueryParamsRequest) (*QueryParamsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Params not implemented")
@@ -512,42 +311,6 @@ func _Query_OraclePrice_Handler(srv interface{}, ctx context.Context, dec func(i
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(QueryServer).OraclePrice(ctx, req.(*QueryOraclePriceRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Query_OracleProviders_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(QueryOracleProvidersRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(QueryServer).OracleProviders(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/perpdex.oracle.v1.Query/OracleProviders",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(QueryServer).OracleProviders(ctx, req.(*QueryOracleProvidersRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Query_Bindings_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(QueryBindingsRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(QueryServer).Bindings(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/perpdex.oracle.v1.Query/Bindings",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(QueryServer).Bindings(ctx, req.(*QueryBindingsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -578,14 +341,6 @@ var _Query_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "OraclePrice",
 			Handler:    _Query_OraclePrice_Handler,
-		},
-		{
-			MethodName: "OracleProviders",
-			Handler:    _Query_OracleProviders_Handler,
-		},
-		{
-			MethodName: "Bindings",
-			Handler:    _Query_Bindings_Handler,
 		},
 		{
 			MethodName: "Params",
@@ -654,126 +409,6 @@ func (m *QueryOraclePriceResponse) MarshalToSizedBuffer(dAtA []byte) (int, error
 	}
 	i--
 	dAtA[i] = 0xa
-	return len(dAtA) - i, nil
-}
-
-func (m *QueryOracleProvidersRequest) Marshal() (dAtA []byte, err error) {
-	size := m.Size()
-	dAtA = make([]byte, size)
-	n, err := m.MarshalToSizedBuffer(dAtA[:size])
-	if err != nil {
-		return nil, err
-	}
-	return dAtA[:n], nil
-}
-
-func (m *QueryOracleProvidersRequest) MarshalTo(dAtA []byte) (int, error) {
-	size := m.Size()
-	return m.MarshalToSizedBuffer(dAtA[:size])
-}
-
-func (m *QueryOracleProvidersRequest) MarshalToSizedBuffer(dAtA []byte) (int, error) {
-	i := len(dAtA)
-	_ = i
-	var l int
-	_ = l
-	return len(dAtA) - i, nil
-}
-
-func (m *QueryOracleProvidersResponse) Marshal() (dAtA []byte, err error) {
-	size := m.Size()
-	dAtA = make([]byte, size)
-	n, err := m.MarshalToSizedBuffer(dAtA[:size])
-	if err != nil {
-		return nil, err
-	}
-	return dAtA[:n], nil
-}
-
-func (m *QueryOracleProvidersResponse) MarshalTo(dAtA []byte) (int, error) {
-	size := m.Size()
-	return m.MarshalToSizedBuffer(dAtA[:size])
-}
-
-func (m *QueryOracleProvidersResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
-	i := len(dAtA)
-	_ = i
-	var l int
-	_ = l
-	if len(m.Providers) > 0 {
-		for iNdEx := len(m.Providers) - 1; iNdEx >= 0; iNdEx-- {
-			{
-				size, err := m.Providers[iNdEx].MarshalToSizedBuffer(dAtA[:i])
-				if err != nil {
-					return 0, err
-				}
-				i -= size
-				i = encodeVarintQuery(dAtA, i, uint64(size))
-			}
-			i--
-			dAtA[i] = 0xa
-		}
-	}
-	return len(dAtA) - i, nil
-}
-
-func (m *QueryBindingsRequest) Marshal() (dAtA []byte, err error) {
-	size := m.Size()
-	dAtA = make([]byte, size)
-	n, err := m.MarshalToSizedBuffer(dAtA[:size])
-	if err != nil {
-		return nil, err
-	}
-	return dAtA[:n], nil
-}
-
-func (m *QueryBindingsRequest) MarshalTo(dAtA []byte) (int, error) {
-	size := m.Size()
-	return m.MarshalToSizedBuffer(dAtA[:size])
-}
-
-func (m *QueryBindingsRequest) MarshalToSizedBuffer(dAtA []byte) (int, error) {
-	i := len(dAtA)
-	_ = i
-	var l int
-	_ = l
-	return len(dAtA) - i, nil
-}
-
-func (m *QueryBindingsResponse) Marshal() (dAtA []byte, err error) {
-	size := m.Size()
-	dAtA = make([]byte, size)
-	n, err := m.MarshalToSizedBuffer(dAtA[:size])
-	if err != nil {
-		return nil, err
-	}
-	return dAtA[:n], nil
-}
-
-func (m *QueryBindingsResponse) MarshalTo(dAtA []byte) (int, error) {
-	size := m.Size()
-	return m.MarshalToSizedBuffer(dAtA[:size])
-}
-
-func (m *QueryBindingsResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
-	i := len(dAtA)
-	_ = i
-	var l int
-	_ = l
-	if len(m.Bindings) > 0 {
-		for iNdEx := len(m.Bindings) - 1; iNdEx >= 0; iNdEx-- {
-			{
-				size, err := m.Bindings[iNdEx].MarshalToSizedBuffer(dAtA[:i])
-				if err != nil {
-					return 0, err
-				}
-				i -= size
-				i = encodeVarintQuery(dAtA, i, uint64(size))
-			}
-			i--
-			dAtA[i] = 0xa
-		}
-	}
 	return len(dAtA) - i, nil
 }
 
@@ -864,54 +499,6 @@ func (m *QueryOraclePriceResponse) Size() (n int) {
 	_ = l
 	l = m.Price.Size()
 	n += 1 + l + sovQuery(uint64(l))
-	return n
-}
-
-func (m *QueryOracleProvidersRequest) Size() (n int) {
-	if m == nil {
-		return 0
-	}
-	var l int
-	_ = l
-	return n
-}
-
-func (m *QueryOracleProvidersResponse) Size() (n int) {
-	if m == nil {
-		return 0
-	}
-	var l int
-	_ = l
-	if len(m.Providers) > 0 {
-		for _, e := range m.Providers {
-			l = e.Size()
-			n += 1 + l + sovQuery(uint64(l))
-		}
-	}
-	return n
-}
-
-func (m *QueryBindingsRequest) Size() (n int) {
-	if m == nil {
-		return 0
-	}
-	var l int
-	_ = l
-	return n
-}
-
-func (m *QueryBindingsResponse) Size() (n int) {
-	if m == nil {
-		return 0
-	}
-	var l int
-	_ = l
-	if len(m.Bindings) > 0 {
-		for _, e := range m.Bindings {
-			l = e.Size()
-			n += 1 + l + sovQuery(uint64(l))
-		}
-	}
 	return n
 }
 
@@ -1069,274 +656,6 @@ func (m *QueryOraclePriceResponse) Unmarshal(dAtA []byte) error {
 				return io.ErrUnexpectedEOF
 			}
 			if err := m.Price.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
-				return err
-			}
-			iNdEx = postIndex
-		default:
-			iNdEx = preIndex
-			skippy, err := skipQuery(dAtA[iNdEx:])
-			if err != nil {
-				return err
-			}
-			if (skippy < 0) || (iNdEx+skippy) < 0 {
-				return ErrInvalidLengthQuery
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
-}
-func (m *QueryOracleProvidersRequest) Unmarshal(dAtA []byte) error {
-	l := len(dAtA)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowQuery
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := dAtA[iNdEx]
-			iNdEx++
-			wire |= uint64(b&0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: QueryOracleProvidersRequest: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: QueryOracleProvidersRequest: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		default:
-			iNdEx = preIndex
-			skippy, err := skipQuery(dAtA[iNdEx:])
-			if err != nil {
-				return err
-			}
-			if (skippy < 0) || (iNdEx+skippy) < 0 {
-				return ErrInvalidLengthQuery
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
-}
-func (m *QueryOracleProvidersResponse) Unmarshal(dAtA []byte) error {
-	l := len(dAtA)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowQuery
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := dAtA[iNdEx]
-			iNdEx++
-			wire |= uint64(b&0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: QueryOracleProvidersResponse: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: QueryOracleProvidersResponse: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		case 1:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Providers", wireType)
-			}
-			var msglen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowQuery
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				msglen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if msglen < 0 {
-				return ErrInvalidLengthQuery
-			}
-			postIndex := iNdEx + msglen
-			if postIndex < 0 {
-				return ErrInvalidLengthQuery
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Providers = append(m.Providers, OracleProvider{})
-			if err := m.Providers[len(m.Providers)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
-				return err
-			}
-			iNdEx = postIndex
-		default:
-			iNdEx = preIndex
-			skippy, err := skipQuery(dAtA[iNdEx:])
-			if err != nil {
-				return err
-			}
-			if (skippy < 0) || (iNdEx+skippy) < 0 {
-				return ErrInvalidLengthQuery
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
-}
-func (m *QueryBindingsRequest) Unmarshal(dAtA []byte) error {
-	l := len(dAtA)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowQuery
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := dAtA[iNdEx]
-			iNdEx++
-			wire |= uint64(b&0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: QueryBindingsRequest: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: QueryBindingsRequest: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		default:
-			iNdEx = preIndex
-			skippy, err := skipQuery(dAtA[iNdEx:])
-			if err != nil {
-				return err
-			}
-			if (skippy < 0) || (iNdEx+skippy) < 0 {
-				return ErrInvalidLengthQuery
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
-}
-func (m *QueryBindingsResponse) Unmarshal(dAtA []byte) error {
-	l := len(dAtA)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowQuery
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := dAtA[iNdEx]
-			iNdEx++
-			wire |= uint64(b&0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: QueryBindingsResponse: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: QueryBindingsResponse: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		case 1:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Bindings", wireType)
-			}
-			var msglen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowQuery
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				msglen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if msglen < 0 {
-				return ErrInvalidLengthQuery
-			}
-			postIndex := iNdEx + msglen
-			if postIndex < 0 {
-				return ErrInvalidLengthQuery
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Bindings = append(m.Bindings, ValidatorOracleBinding{})
-			if err := m.Bindings[len(m.Bindings)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex

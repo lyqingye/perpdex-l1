@@ -9,17 +9,26 @@ import (
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 )
 
-// StakingKeeper is the subset required to enumerate validator voting power
-// during PoS oracle aggregation.
+// StakingKeeper is the subset required by the vote-extension pipeline:
+// PrepareProposal looks up each voter's voting power by consensus address
+// and the total bonded power for quorum calculation.
 type StakingKeeper interface {
-	IterateBondedValidatorsByPower(ctx context.Context, fn func(index int64, validator stakingtypes.ValidatorI) (stop bool)) error
-	GetValidator(ctx context.Context, addr sdk.ValAddress) (stakingtypes.Validator, error)
+	GetValidatorByConsAddr(ctx context.Context, consAddr sdk.ConsAddress) (stakingtypes.Validator, error)
+	TotalBondedTokens(ctx context.Context) (math.Int, error)
 	BondDenom(ctx context.Context) (string, error)
+	PowerReduction(ctx context.Context) math.Int
 }
 
-// SlashingKeeper is the subset used by oracle to penalize misbehaviour.
-type SlashingKeeper interface {
-	JailUntil(ctx context.Context, consAddr sdk.ConsAddress, jailTime int64) error
-	Jail(ctx context.Context, consAddr sdk.ConsAddress) error
-	Slash(ctx context.Context, consAddr sdk.ConsAddress, fraction math.LegacyDec, power int64, distributionHeight int64) error
+// MarketShim is the minimal market description the oracle daemon needs to
+// build its currency-pair → market-index resolver. The full Market lives in
+// x/market/types but pulling that whole package in from the daemon would be
+// circular at app wiring time, so we expose a copy here.
+type MarketShim struct {
+	MarketIndex  uint32
+	BaseAssetID  uint32
+	QuoteAssetID uint32
+	// Decimals is the number of decimal digits the chain uses to encode the
+	// integer price for this market (e.g. Decimals=2 means price 12345 means
+	// 123.45). Zero means "use the daemon default".
+	Decimals uint8
 }

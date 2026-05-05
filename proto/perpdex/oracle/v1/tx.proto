@@ -8,80 +8,19 @@ import "perpdex/oracle/v1/oracle.proto";
 
 option go_package = "github.com/perpdex/perpdex-l1/x/oracle/types";
 
+// Msg exposes only `UpdateParams` for governance-driven configuration of
+// the oracle aggregation tunables (`max_age_ms`, EMA smoothing, deviation
+// threshold, etc.). The on-chain price data plane is governed entirely
+// by the dydx/Slinky-style ABCI++ vote-extension pipeline (ExtendVote /
+// PrepareProposal / ProcessProposal / PreBlocker) and so requires no
+// runtime SDK message: prices land on chain as a side-effect of finalising
+// a block whose proposer has injected the previous round's
+// ExtendedCommitInfo bytes as Txs[0].
 service Msg {
   option (cosmos.msg.v1.service) = true;
 
-  rpc BindOracleOperator(MsgBindOracleOperator) returns (MsgBindOracleOperatorResponse);
-  rpc UnbindOracleOperator(MsgUnbindOracleOperator) returns (MsgUnbindOracleOperatorResponse);
-  rpc AggregateOracleVotes(MsgAggregateOracleVotes) returns (MsgAggregateOracleVotesResponse);
-  rpc InjectOracle(MsgInjectOracle) returns (MsgInjectOracleResponse);
-  rpc AddOracleProvider(MsgAddOracleProvider) returns (MsgAddOracleProviderResponse);
-  rpc UpdateOracleProvider(MsgUpdateOracleProvider) returns (MsgUpdateOracleProviderResponse);
-  rpc SetAggregationMode(MsgSetAggregationMode) returns (MsgSetAggregationModeResponse);
   rpc UpdateParams(MsgUpdateParams) returns (MsgUpdateParamsResponse);
 }
-
-message MsgBindOracleOperator {
-  option (cosmos.msg.v1.signer) = "sender";
-
-  string sender = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
-  string validator_address = 2;
-  string oracle_operator_address = 3;
-  string metadata = 4;
-}
-message MsgBindOracleOperatorResponse {}
-
-message MsgUnbindOracleOperator {
-  option (cosmos.msg.v1.signer) = "sender";
-
-  string sender = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
-  string validator_address = 2;
-}
-message MsgUnbindOracleOperatorResponse {}
-
-message MsgAggregateOracleVotes {
-  option (cosmos.msg.v1.signer) = "authority";
-
-  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
-  int64 height = 2;
-  repeated MarketAggregation aggregations = 3 [(gogoproto.nullable) = false];
-  repeated VoterRecord voter_records = 4 [(gogoproto.nullable) = false];
-}
-message MsgAggregateOracleVotesResponse {}
-
-message MsgInjectOracle {
-  option (cosmos.msg.v1.signer) = "sender";
-
-  string sender = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
-  repeated MarketPrice prices = 2 [(gogoproto.nullable) = false];
-}
-message MsgInjectOracleResponse {}
-
-message MsgAddOracleProvider {
-  option (cosmos.msg.v1.signer) = "authority";
-
-  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
-  string address = 2;
-  string description = 3;
-}
-message MsgAddOracleProviderResponse {}
-
-message MsgUpdateOracleProvider {
-  option (cosmos.msg.v1.signer) = "authority";
-
-  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
-  string address = 2;
-  bool enabled = 3;
-}
-message MsgUpdateOracleProviderResponse {}
-
-message MsgSetAggregationMode {
-  option (cosmos.msg.v1.signer) = "authority";
-
-  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
-  uint32 new_mode = 2;
-}
-message MsgSetAggregationModeResponse {}
 
 message MsgUpdateParams {
   option (cosmos.msg.v1.signer) = "authority";

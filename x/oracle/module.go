@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 
-	abci "github.com/cometbft/cometbft/abci/types"
 	"github.com/grpc-ecosystem/grpc-gateway/runtime"
 	"github.com/spf13/cobra"
 
@@ -22,10 +21,9 @@ import (
 const ConsensusVersion = 1
 
 var (
-	_ module.AppModuleBasic  = AppModuleBasic{}
-	_ module.HasGenesis      = AppModule{}
-	_ module.HasServices     = AppModule{}
-	_ module.HasABCIEndBlock = AppModule{}
+	_ module.AppModuleBasic = AppModuleBasic{}
+	_ module.HasGenesis     = AppModule{}
+	_ module.HasServices    = AppModule{}
 )
 
 type AppModuleBasic struct{ cdc codec.Codec }
@@ -85,7 +83,4 @@ func (am AppModule) ExportGenesis(ctx sdk.Context, cdc codec.JSONCodec) json.Raw
 		panic(err)
 	}
 	return cdc.MustMarshalJSON(gs)
-}
-func (am AppModule) EndBlock(ctx context.Context) ([]abci.ValidatorUpdate, error) {
-	return nil, am.keeper.EndBlocker(ctx)
 }
