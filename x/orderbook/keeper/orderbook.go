@@ -328,7 +328,15 @@ func (k Keeper) ComputeImpactPrice(ctx context.Context, market uint32, isAsk boo
 		// against `usdcAmount * 1e6 / quote_extension_multiplier` upstream.
 		if accQuote+lv.quote >= usdcAmount {
 			needQuote := usdcAmount - accQuote
-			needBase := needQuote / uint64(lv.price)
+			// Ceiling division: when `needQuote` is not an exact
+			// multiple of `lv.price`, taking floor(needQuote/price)
+			// would leave us a fraction short of `usdcAmount` and
+			// the function would (incorrectly) report insufficient
+			// depth even though the level had headroom. We always
+			// have `lv.base * price >= needQuote` here (the partial
+			// branch is gated on it) so ceil never overshoots
+			// `lv.base`.
+			needBase := (needQuote + uint64(lv.price) - 1) / uint64(lv.price)
 			if needBase == 0 {
 				needBase = 1
 			}
@@ -343,6 +351,18 @@ func (k Keeper) ComputeImpactPrice(ctx context.Context, market uint32, isAsk boo
 		return 0, false, nil
 	}
 	return uint32(accQuote / accBase), true, nil
+}
+
+// ImpactUsdcAmount returns the governance-tunable impact notional consumed
+// by `ComputeImpactPrice`. Exposed so other modules (notably x/funding) can
+// derive their per-minute impact-VWAP samples without duplicating the
+// orderbook params getter.
+func (k Keeper) ImpactUsdcAmount(ctx context.Context) (uint64, error) {
+	p, err := k.Params.Get(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return p.ImpactUsdcAmount, nil
 }
 
 // BestBidAsk returns the best bid and best ask prices.

@@ -13,9 +13,27 @@ import (
 	markettypes "github.com/perpdex/perpdex-l1/x/market/types"
 )
 
-// BeginBlocker recomputes per-market impact prices, accumulates the normalized
-// premium for the current funding window, and when an integer hour boundary is
-// crossed, settles the funding round (double-clamp + prefix sum bump).
+// premiumSampleIntervalMs is the per-market spacing between two consecutive
+// premium samples. Lighter samples once a minute (60 samples per hour); we
+// match that on a per-market basis using `MarketDetails.LastUpdatedTimestamp`.
+const premiumSampleIntervalMs = perptypes.MinuteInMs
+
+// BeginBlocker drives the per-market funding pipeline:
+//
+//  1. For every active perp market that has not been sampled in the last
+//     minute, recompute `ImpactBidPrice` / `ImpactAskPrice` (VWAP over
+//     `ImpactUSDCAmount` of resting depth) and push a Lighter-style premium
+//     sample into `AggregatePremiumSum`.
+//  2. Once `now - LastFundingRoundTimestamp >= FundingPeriodMs` (one hour by
+//     default), close the funding round: average the samples, apply the
+//     double clamp, divide by `FundingPeriodDivisor` to obtain the per-round
+//     rate, and bump `FundingRatePrefixSum` by `mark_price * rate` so
+//     `SettlePositionFunding` can compute `pos * mark * rate` from the
+//     prefix-sum delta alone.
+//
+// Per-market errors are surfaced via dedicated events so observability picks
+// up individual failures, while the first error is returned so the
+// begin-blocker flow signals a degraded state.
 func (k Keeper) BeginBlocker(ctx context.Context) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	now := sdkCtx.BlockTime().UnixMilli()
@@ -27,10 +45,6 @@ func (k Keeper) BeginBlocker(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	// Per-market errors are surfaced via an event per market so observability
-	// picks up individual failures, while the first error is returned so the
-	// begin-blocker flow signals a degraded state. Previously errors from
-	// `processMarketSample` were swallowed with `_ =`.
 	var firstErr error
 	if err := k.marketKeeper.IterateMarkets(ctx, func(m markettypes.Market) bool {
 		if m.MarketType != perptypes.MarketTypePerps || m.Status != perptypes.MarketStatusActive {
@@ -50,8 +64,9 @@ func (k Keeper) BeginBlocker(ctx context.Context) error {
 	}); err != nil {
 		return err
 	}
-	// Settle on hour boundaries: every funding_period_ms / funding_period_divisor.
-	settleEvery := params.FundingPeriodMs / params.FundingPeriodDivisor
+	// Settle on the funding-period boundary (one hour by default). Per the
+	// Lighter spec the divisor is applied to the rate, not to the cadence.
+	settleEvery := params.FundingPeriodMs
 	if settleEvery > 0 && (meta.LastFundingRoundTimestamp == 0 || now-meta.LastFundingRoundTimestamp >= settleEvery) {
 		if err := k.SettleAllMarkets(ctx, params); err != nil {
 			if firstErr == nil {
@@ -66,62 +81,106 @@ func (k Keeper) BeginBlocker(ctx context.Context) error {
 	return firstErr
 }
 
-// processMarketSample updates the running aggregate_premium_sum for a market.
-// When either side of the book is empty the impact aggregate is reset to
-// zero so stale values from a previous sample cannot leak into the premium
-// once the book drains.
-func (k Keeper) processMarketSample(ctx context.Context, marketIdx uint32, _ int64, params types.ParamsAlias) error {
+// processMarketSample updates the running aggregate_premium_sum for a market
+// using Lighter's premium formula:
+//
+//	premium_t = ( max(0, ImpactBid - index) - max(0, index - ImpactAsk) ) / index
+//
+// Sampling is throttled to once every `premiumSampleIntervalMs` per market
+// (see `MarketDetails.LastUpdatedTimestamp`). When either side of the book
+// has insufficient depth to absorb `ImpactUSDCAmount` of quote we skip the
+// sample entirely instead of feeding a degenerate `ImpactBid=0` /
+// `ImpactAsk=0` into the formula (which would otherwise drive the premium to
+// roughly -100%).
+func (k Keeper) processMarketSample(ctx context.Context, marketIdx uint32, now int64, params types.ParamsAlias) error {
 	d, err := k.marketKeeper.GetMarketDetails(ctx, marketIdx)
 	if err != nil {
 		return err
 	}
-	bid, ask, err := k.bookKeeper.BestBidAsk(ctx, marketIdx)
+	// Per-market 1-minute throttle. `LastUpdatedTimestamp == 0` means we
+	// have not sampled yet (fresh market or post-genesis), so always
+	// admit the first sample.
+	if d.LastUpdatedTimestamp != 0 && now-d.LastUpdatedTimestamp < premiumSampleIntervalMs {
+		return nil
+	}
+
+	// Refresh impact prices using the orderbook governance's impact
+	// notional so funding stays in lock-step with the public ImpactPrice
+	// query and stays governance-tunable.
+	impactNotional, err := k.bookKeeper.ImpactUsdcAmount(ctx)
 	if err != nil {
 		return err
 	}
-	d.ImpactBidPrice = bid
-	d.ImpactAskPrice = ask
-	if bid > 0 && ask > 0 {
-		d.ImpactPrice = uint32((uint64(bid) + uint64(ask)) / 2)
+	bidImp, bidOk, err := k.bookKeeper.ComputeImpactPrice(ctx, marketIdx, false, impactNotional)
+	if err != nil {
+		return err
+	}
+	askImp, askOk, err := k.bookKeeper.ComputeImpactPrice(ctx, marketIdx, true, impactNotional)
+	if err != nil {
+		return err
+	}
+	d.ImpactBidPrice = bidImp
+	d.ImpactAskPrice = askImp
+	if bidOk && askOk {
+		d.ImpactPrice = uint32((uint64(bidImp) + uint64(askImp)) / 2)
 	} else {
-		// One-sided or empty book: clear the stale impact price so we
-		// don't accumulate a premium based on a trade that cannot
-		// actually clear at the recorded price.
+		// Observability only; the funding sampler does not consume the
+		// mid in the new formula. Clear it so query consumers do not
+		// see a stale mid when one side of the book has drained.
 		d.ImpactPrice = 0
 	}
+
+	// Refresh oracle prices regardless of book depth so risk / liquidation
+	// continue to see fresh mark/index even when the funding sample is
+	// skipped.
 	if px, err := k.oracleKeeper.GetPrice(ctx, marketIdx); err == nil && px.IndexPrice > 0 {
 		d.IndexPrice = px.IndexPrice
 		d.MarkPrice = px.MarkPrice
-		// Premium = (impact_price - index_price) * tick / index_price (basis points).
-		var premium int64
-		if d.ImpactPrice > 0 {
-			diff := int64(d.ImpactPrice) - int64(d.IndexPrice)
-			premium = diff * perptypes.FundingRateTick / int64(d.IndexPrice)
-		}
-		// Stop accumulating once we've reached the configured sample
-		// cap so a runaway tick count cannot destabilize the clamp.
-		if params.MaxPremiumSampleCount == 0 ||
-			d.TotalPremiumSamples < params.MaxPremiumSampleCount {
-			d.AggregatePremiumSum += premium
-			d.TotalPremiumSamples++
-		}
 	}
-	d.LastUpdatedTimestamp = sdk.UnwrapSDKContext(ctx).BlockTime().UnixMilli()
+
+	// Skip the sample when either side cannot absorb ImpactUSDCAmount of
+	// quote (insufficient depth). Otherwise `max(0, idx - 0) = idx` would
+	// peg the premium at roughly -100% and corrupt the running average.
+	if !bidOk || !askOk || d.IndexPrice == 0 {
+		d.LastUpdatedTimestamp = now
+		return k.marketKeeper.SetMarketDetails(ctx, d)
+	}
+
+	idx := int64(d.IndexPrice)
+	posPart := int64(0)
+	if int64(bidImp) > idx {
+		posPart = int64(bidImp) - idx
+	}
+	negPart := int64(0)
+	if idx > int64(askImp) {
+		negPart = idx - int64(askImp)
+	}
+	premium := (posPart - negPart) * perptypes.FundingRateTick / idx
+
+	// Defense-in-depth: cap the per-window sample count so a runaway tick
+	// rate cannot destabilize the clamp. With 1-minute sampling and a
+	// 1-hour window we expect ~60 samples; the cap (default 60) matches.
+	if params.MaxPremiumSampleCount == 0 ||
+		d.TotalPremiumSamples < params.MaxPremiumSampleCount {
+		d.AggregatePremiumSum += premium
+		d.TotalPremiumSamples++
+	}
+	d.LastUpdatedTimestamp = now
 	return k.marketKeeper.SetMarketDetails(ctx, d)
 }
 
-// SettleAllMarkets converts each market's aggregate_premium_sum into a clamped
-// funding rate, advances the prefix sum, and resets the accumulator. Like
-// the sample loop above, errors are surfaced via per-market events and the
-// first error is returned so callers can react.
-func (k Keeper) SettleAllMarkets(ctx context.Context, _ types.ParamsAlias) error {
+// SettleAllMarkets converts each market's aggregate_premium_sum into a
+// clamped funding rate, advances `FundingRatePrefixSum` by `mark_price *
+// rate`, and resets the per-window accumulator. Errors are surfaced via
+// per-market events; the first error is returned so callers can react.
+func (k Keeper) SettleAllMarkets(ctx context.Context, params types.ParamsAlias) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	var firstErr error
 	if err := k.marketKeeper.IterateMarkets(ctx, func(m markettypes.Market) bool {
 		if m.MarketType != perptypes.MarketTypePerps || m.Status != perptypes.MarketStatusActive {
 			return false
 		}
-		if err := k.settleMarket(ctx, m.MarketIndex); err != nil {
+		if err := k.settleMarket(ctx, m.MarketIndex, params); err != nil {
 			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
 				"funding_settle_error",
 				sdk.NewAttribute("market_index", strconv.FormatUint(uint64(m.MarketIndex), 10)),
@@ -138,24 +197,52 @@ func (k Keeper) SettleAllMarkets(ctx context.Context, _ types.ParamsAlias) error
 	return firstErr
 }
 
-func (k Keeper) settleMarket(ctx context.Context, marketIdx uint32) error {
+// settleMarket applies the Lighter funding-rate formula to one market:
+//
+//	premium             = aggregate_premium_sum / total_premium_samples
+//	smallClampedPremium = premium + clamp(interestRate - premium, ±SmallClamp)
+//	rate                = clamp(smallClampedPremium, ±BigClamp) / FundingPeriodDivisor
+//
+// The 1-hour rate is then folded into the cumulative prefix sum as
+// `mark_price * rate`. `SettlePositionFunding` later applies
+// `position * delta_prefix_sum / FundingRateTick`, which reduces to
+// `position * mark * rate / FundingRateTick` -- exactly the Lighter funding
+// payment definition `funding = position * mark * fundingRate`.
+func (k Keeper) settleMarket(ctx context.Context, marketIdx uint32, params types.ParamsAlias) error {
 	d, err := k.marketKeeper.GetMarketDetails(ctx, marketIdx)
 	if err != nil {
 		return err
 	}
-	if d.TotalPremiumSamples == 0 {
-		return nil
-	}
-	avgPremium := d.AggregatePremiumSum / int64(d.TotalPremiumSamples)
-	rate := avgPremium + int64(d.InterestRate)
-	// Double clamp: small clamp first, big clamp second.
-	rate = clampInt64(rate, -int64(d.FundingClampSmall), int64(d.FundingClampSmall))
-	rate = clampInt64(rate, -int64(d.FundingClampBig), int64(d.FundingClampBig))
-
 	if d.FundingRatePrefixSum.IsNil() {
 		d.FundingRatePrefixSum = math.ZeroInt()
 	}
-	d.FundingRatePrefixSum = d.FundingRatePrefixSum.Add(math.NewInt(rate))
+	if d.TotalPremiumSamples == 0 {
+		return nil
+	}
+	avg := d.AggregatePremiumSum / int64(d.TotalPremiumSamples)
+	ir := int64(d.InterestRate)
+	smallClampMag := int64(d.FundingClampSmall)
+	bigClampMag := int64(d.FundingClampBig)
+
+	// Lighter small clamp: the correction term is `clamp(ir - premium, ±SmallClamp)`.
+	correction := clampInt64(ir-avg, -smallClampMag, smallClampMag)
+	smallClamped := avg + correction
+	bigClamped := clampInt64(smallClamped, -bigClampMag, bigClampMag)
+
+	divisor := params.FundingPeriodDivisor
+	if divisor <= 0 {
+		divisor = 1
+	}
+	// Per-round rate: divide the 8-hour-scale clamped premium by the
+	// configured divisor (default 8) so the cumulative funding charged
+	// over `divisor` rounds matches the spec's full clamp magnitude.
+	rate := bigClamped / divisor
+
+	// Prefix-sum increment encodes the mark of *this* round so positions
+	// settled later see `pos * mark_t * rate_t` per round, even when mark
+	// changes between rounds.
+	inc := math.NewInt(int64(d.MarkPrice)).Mul(math.NewInt(rate))
+	d.FundingRatePrefixSum = d.FundingRatePrefixSum.Add(inc)
 	d.AggregatePremiumSum = 0
 	d.TotalPremiumSamples = 0
 	return k.marketKeeper.SetMarketDetails(ctx, d)
