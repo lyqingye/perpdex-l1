@@ -45,8 +45,8 @@ func TestSetPrice_RejectsZero(t *testing.T) {
 	require.ErrorIs(t, err, oracletypes.ErrInvalidPrice)
 }
 
-// TestGetFreshPrice_StaleByAge rejects prices older than Params.MaxAgeMs.
-func TestGetFreshPrice_StaleByAge(t *testing.T) {
+// TestGetPrice_StaleByAge rejects prices older than Params.MaxAgeMs.
+func TestGetPrice_StaleByAge(t *testing.T) {
 	k, ctx := newOracleKeeper(t)
 	// Price updated 10 minutes before block time.
 	blockTs := ctx.BlockTime().UnixMilli()
@@ -56,31 +56,35 @@ func TestGetFreshPrice_StaleByAge(t *testing.T) {
 		MarkPrice:            100,
 		LastUpdatedTimestamp: blockTs - 600_000,
 	}))
-	_, err := k.GetFreshPrice(ctx, 5)
+	_, err := k.GetPrice(ctx, 5)
 	require.ErrorIs(t, err, oracletypes.ErrStalePrice)
+
+	stored, err := k.GetStoredPrice(ctx, 5)
+	require.NoError(t, err)
+	require.EqualValues(t, 100, stored.MarkPrice)
 }
 
-// TestGetFreshPrice_NeverUpdated rejects a stored price whose timestamp is
+// TestGetPrice_NeverUpdated rejects a stored price whose timestamp is
 // still zero (placeholder / genesis seed).
-func TestGetFreshPrice_NeverUpdated(t *testing.T) {
+func TestGetPrice_NeverUpdated(t *testing.T) {
 	k, ctx := newOracleKeeper(t)
 	require.NoError(t, k.SetPriceUnsafe(ctx, oracletypes.OraclePrice{
 		MarketIndex: 7, IndexPrice: 1, MarkPrice: 1,
 	}))
-	_, err := k.GetFreshPrice(ctx, 7)
+	_, err := k.GetPrice(ctx, 7)
 	require.ErrorIs(t, err, oracletypes.ErrStalePrice)
 }
 
-// TestGetFreshPrice_Fresh returns the price when it is still within
+// TestGetPrice_Fresh returns the price when it is still within
 // MaxAgeMs.
-func TestGetFreshPrice_Fresh(t *testing.T) {
+func TestGetPrice_Fresh(t *testing.T) {
 	k, ctx := newOracleKeeper(t)
 	blockTs := ctx.BlockTime().UnixMilli()
 	require.NoError(t, k.SetPrice(ctx, oracletypes.OraclePrice{
 		MarketIndex: 2, IndexPrice: 42, MarkPrice: 42,
 		LastUpdatedTimestamp: blockTs,
 	}))
-	p, err := k.GetFreshPrice(ctx, 2)
+	p, err := k.GetPrice(ctx, 2)
 	require.NoError(t, err)
 	require.EqualValues(t, 42, p.MarkPrice)
 }

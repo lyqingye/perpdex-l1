@@ -81,12 +81,16 @@ func (k Keeper) SettlePositionFunding(ctx context.Context, accountIndex uint64, 
 	if err != nil {
 		return err
 	}
-	if pos.Position.IsZero() {
-		return nil
-	}
 	d, err := k.marketKeeper.GetMarketDetails(ctx, marketIndex)
 	if err != nil {
 		return err
+	}
+	if d.FundingRatePrefixSum.IsNil() {
+		d.FundingRatePrefixSum = math.ZeroInt()
+	}
+	if pos.Position.IsZero() {
+		pos.LastFundingRatePrefixSum = d.FundingRatePrefixSum
+		return k.accountKeeper.SetPosition(ctx, pos)
 	}
 	delta := d.FundingRatePrefixSum.Sub(pos.LastFundingRatePrefixSum)
 	if delta.IsZero() {

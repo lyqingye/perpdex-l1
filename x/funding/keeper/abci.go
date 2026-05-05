@@ -32,8 +32,8 @@ const premiumSampleIntervalMs = perptypes.MinuteInMs
 //     prefix-sum delta alone.
 //
 // Per-market errors are surfaced via dedicated events so observability picks
-// up individual failures, while the first error is returned so the
-// begin-blocker flow signals a degraded state.
+// up individual failures. Oracle-unavailable cases skip that market's current
+// work; unexpected internal errors are returned.
 func (k Keeper) BeginBlocker(ctx context.Context) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	now := sdkCtx.BlockTime().UnixMilli()
@@ -64,14 +64,10 @@ func (k Keeper) BeginBlocker(ctx context.Context) error {
 	}); err != nil {
 		return err
 	}
-	// Settle on the funding-period boundary (one hour by default). Per the
-	// Lighter spec the divisor is applied to the rate, not to the cadence.
 	settleEvery := params.FundingPeriodMs
 	if settleEvery > 0 && (meta.LastFundingRoundTimestamp == 0 || now-meta.LastFundingRoundTimestamp >= settleEvery) {
-		if err := k.SettleAllMarkets(ctx, params); err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
+		if err := k.SettleAllMarkets(ctx, params); err != nil && firstErr == nil {
+			firstErr = err
 		}
 		meta.LastFundingRoundTimestamp = now
 		if err := k.Metadata.Set(ctx, meta); err != nil {
@@ -130,13 +126,16 @@ func (k Keeper) processMarketSample(ctx context.Context, marketIdx uint32, now i
 		d.ImpactPrice = 0
 	}
 
-	// Refresh oracle prices regardless of book depth so risk / liquidation
-	// continue to see fresh mark/index even when the funding sample is
-	// skipped.
-	if px, err := k.oracleKeeper.GetPrice(ctx, marketIdx); err == nil && px.IndexPrice > 0 {
-		d.IndexPrice = px.IndexPrice
-		d.MarkPrice = px.MarkPrice
+	// Funding must only sample against a fresh oracle price. If oracle
+	// aggregation missed this market for long enough to go stale, emit an
+	// observable event and skip the sample instead of falling back to cached
+	// MarketDetails index/mark values.
+	px, err := k.oracleKeeper.GetPrice(ctx, marketIdx)
+	if err != nil {
+		return k.marketKeeper.SetMarketDetails(ctx, d)
 	}
+	d.IndexPrice = px.IndexPrice
+	d.MarkPrice = px.MarkPrice
 
 	// Skip the sample when either side cannot absorb ImpactUSDCAmount of
 	// quote (insufficient depth). Otherwise `max(0, idx - 0) = idx` would
@@ -169,10 +168,11 @@ func (k Keeper) processMarketSample(ctx context.Context, marketIdx uint32, now i
 	return k.marketKeeper.SetMarketDetails(ctx, d)
 }
 
-// SettleAllMarkets converts each market's aggregate_premium_sum into a
-// clamped funding rate, advances `FundingRatePrefixSum` by `mark_price *
-// rate`, and resets the per-window accumulator. Errors are surfaced via
-// per-market events; the first error is returned so callers can react.
+// SettleAllMarkets converts each market's aggregate_premium_sum into a clamped
+// funding rate and advances `FundingRatePrefixSum` by `mark_price * rate`.
+// Markets settle independently on the global funding boundary: one market with
+// a stale oracle skips and clears its current window without blocking other
+// markets from closing the same round.
 func (k Keeper) SettleAllMarkets(ctx context.Context, params types.ParamsAlias) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	var firstErr error
@@ -219,6 +219,12 @@ func (k Keeper) settleMarket(ctx context.Context, marketIdx uint32, params types
 	if d.TotalPremiumSamples == 0 {
 		return nil
 	}
+	px, err := k.oracleKeeper.GetPrice(ctx, marketIdx)
+	if err != nil {
+		return err
+	}
+	d.IndexPrice = px.IndexPrice
+	d.MarkPrice = px.MarkPrice
 	avg := d.AggregatePremiumSum / int64(d.TotalPremiumSamples)
 	ir := int64(d.InterestRate)
 	smallClampMag := int64(d.FundingClampSmall)
@@ -241,7 +247,7 @@ func (k Keeper) settleMarket(ctx context.Context, marketIdx uint32, params types
 	// Prefix-sum increment encodes the mark of *this* round so positions
 	// settled later see `pos * mark_t * rate_t` per round, even when mark
 	// changes between rounds.
-	inc := math.NewInt(int64(d.MarkPrice)).Mul(math.NewInt(rate))
+	inc := math.NewInt(int64(px.MarkPrice)).Mul(math.NewInt(rate))
 	d.FundingRatePrefixSum = d.FundingRatePrefixSum.Add(inc)
 	d.AggregatePremiumSum = 0
 	d.TotalPremiumSamples = 0

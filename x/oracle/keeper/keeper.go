@@ -92,8 +92,10 @@ func (k Keeper) StakingKeeper() types.StakingKeeper { return *k.stakingKeeperHol
 // PriceFetcher returns the wired price fetcher (never nil after NewKeeper).
 func (k Keeper) PriceFetcher() PriceFetcher { return *k.priceFetcherHolder }
 
-// GetPrice returns the current oracle price for a market or ErrPriceNotFound.
-func (k Keeper) GetPrice(ctx context.Context, marketIdx uint32) (types.OraclePrice, error) {
+// GetStoredPrice returns the last oracle price stored for a market, regardless
+// of freshness. Business logic should call GetPrice unless it explicitly needs
+// historical/stale state for query or smoothing purposes.
+func (k Keeper) GetStoredPrice(ctx context.Context, marketIdx uint32) (types.OraclePrice, error) {
 	p, err := k.Prices.Get(ctx, marketIdx)
 	if err != nil {
 		if errors.Is(err, collections.ErrNotFound) {
@@ -104,12 +106,12 @@ func (k Keeper) GetPrice(ctx context.Context, marketIdx uint32) (types.OraclePri
 	return p, nil
 }
 
-// GetFreshPrice is a staleness-aware accessor used by risk / liquidation /
-// funding. It refuses prices whose `LastUpdatedTimestamp` is older than
-// `Params.MaxAgeMs`. A zero `LastUpdatedTimestamp` is treated as stale to
-// avoid counting genesis-seeded placeholders as live.
-func (k Keeper) GetFreshPrice(ctx context.Context, marketIdx uint32) (types.OraclePrice, error) {
-	p, err := k.GetPrice(ctx, marketIdx)
+// GetPrice returns a freshness-checked oracle price for a market. It refuses
+// prices whose `LastUpdatedTimestamp` is older than `Params.MaxAgeMs`. A zero
+// `LastUpdatedTimestamp` is treated as stale to avoid counting genesis-seeded
+// placeholders as live.
+func (k Keeper) GetPrice(ctx context.Context, marketIdx uint32) (types.OraclePrice, error) {
+	p, err := k.GetStoredPrice(ctx, marketIdx)
 	if err != nil {
 		return types.OraclePrice{}, err
 	}

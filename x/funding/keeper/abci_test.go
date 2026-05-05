@@ -82,9 +82,23 @@ func (stubBook) ImpactUsdcAmount(_ context.Context) (uint64, error) {
 	return perptypes.ImpactUSDCAmount, nil
 }
 
-type stubOracle struct{ price oracletypes.OraclePrice }
+type stubOracle struct {
+	price  oracletypes.OraclePrice
+	err    error
+	prices map[uint32]oracletypes.OraclePrice
+	errs   map[uint32]error
+}
 
-func (s stubOracle) GetPrice(_ context.Context, _ uint32) (oracletypes.OraclePrice, error) {
+func (s stubOracle) GetPrice(_ context.Context, marketIdx uint32) (oracletypes.OraclePrice, error) {
+	if err, ok := s.errs[marketIdx]; ok && err != nil {
+		return oracletypes.OraclePrice{}, err
+	}
+	if p, ok := s.prices[marketIdx]; ok {
+		return p, nil
+	}
+	if s.err != nil {
+		return oracletypes.OraclePrice{}, s.err
+	}
 	return s.price, nil
 }
 
@@ -98,6 +112,32 @@ func (stubAccount) GetPosition(_ context.Context, acc uint64, mkt uint32) (accou
 	}, nil
 }
 func (stubAccount) SetPosition(_ context.Context, _ accounttypes.AccountPosition) error { return nil }
+
+type statefulAccount struct {
+	positions map[[2]uint64]accounttypes.AccountPosition
+}
+
+func newStatefulAccount() *statefulAccount {
+	return &statefulAccount{positions: map[[2]uint64]accounttypes.AccountPosition{}}
+}
+
+func (s *statefulAccount) GetPosition(_ context.Context, acc uint64, mkt uint32) (accounttypes.AccountPosition, error) {
+	key := [2]uint64{acc, uint64(mkt)}
+	if p, ok := s.positions[key]; ok {
+		return p, nil
+	}
+	return accounttypes.AccountPosition{
+		AccountIndex: acc, MarketIndex: mkt,
+		Position: math.ZeroInt(), EntryQuote: math.ZeroInt(),
+		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
+	}, nil
+}
+
+func (s *statefulAccount) SetPosition(_ context.Context, p accounttypes.AccountPosition) error {
+	key := [2]uint64{p.AccountIndex, uint64(p.MarketIndex)}
+	s.positions[key] = p
+	return nil
+}
 
 func newFundingKeeper(t *testing.T, mk *stubMarket, ok stubOracle, bk stubBook) (fundingkeeper.Keeper, sdk.Context) {
 	t.Helper()
@@ -121,6 +161,248 @@ func newFundingKeeper(t *testing.T, mk *stubMarket, ok stubOracle, bk stubBook) 
 		LastFundingRoundTimestamp: ctx.BlockTime().UnixMilli(),
 	}))
 	return k, ctx
+}
+
+func newFundingKeeperWithAccount(
+	t *testing.T,
+	mk *stubMarket,
+	ok stubOracle,
+	bk stubBook,
+	ak *statefulAccount,
+) (fundingkeeper.Keeper, sdk.Context) {
+	t.Helper()
+	keys := storetypes.NewKVStoreKeys(fundingtypes.StoreKey)
+	cdc := moduletestutil.MakeTestEncodingConfig().Codec
+	cms := integration.CreateMultiStore(keys, log.NewTestLogger(t))
+	hdr := cmtprototypes.Header{Time: time.Unix(0, 1_700_000_000_000_000_000)}
+	ctx := sdk.NewContext(cms, hdr, true, log.NewTestLogger(t))
+	k := fundingkeeper.NewKeeper(
+		cdc,
+		runtime.NewKVStoreService(keys[fundingtypes.StoreKey]),
+		"auth",
+		mk, ok, bk, ak,
+	)
+	require.NoError(t, k.Params.Set(ctx, fundingtypes.DefaultParams()))
+	require.NoError(t, k.Metadata.Set(ctx, fundingtypes.FundingMetadata{
+		LastFundingRoundTimestamp: ctx.BlockTime().UnixMilli(),
+	}))
+	return k, ctx
+}
+
+// TestSettlePositionFunding_ZeroPositionSnapshotsCurrentPrefix ensures a fresh
+// or fully closed position starts from the current funding prefix instead of
+// inheriting all historical funding accumulated before it opened.
+func TestSettlePositionFunding_ZeroPositionSnapshotsCurrentPrefix(t *testing.T) {
+	const (
+		accountIndex = uint64(7)
+		marketIndex  = uint32(1)
+	)
+
+	mk := &stubMarket{
+		markets: map[uint32]markettypes.Market{
+			marketIndex: {MarketIndex: marketIndex, MarketType: perptypes.MarketTypePerps, Status: perptypes.MarketStatusActive},
+		},
+		details: map[uint32]markettypes.MarketDetails{
+			marketIndex: {
+				MarketIndex:          marketIndex,
+				FundingRatePrefixSum: math.NewInt(100_000_000),
+			},
+		},
+	}
+	ak := newStatefulAccount()
+	k, ctx := newFundingKeeperWithAccount(
+		t,
+		mk,
+		stubOracle{price: oracletypes.OraclePrice{IndexPrice: 49_500, MarkPrice: 50_000}},
+		stubBook{bidOk: true, askOk: true},
+		ak,
+	)
+
+	require.NoError(t, k.SettlePositionFunding(ctx, accountIndex, marketIndex))
+	key := [2]uint64{accountIndex, uint64(marketIndex)}
+	snapshotted := ak.positions[key]
+	require.True(t, snapshotted.Position.IsZero())
+	require.EqualValues(t, 100_000_000, snapshotted.LastFundingRatePrefixSum.Int64())
+
+	// Simulate ApplyPerpsMatching opening a new position after the zero-size
+	// settle above, then advance the market prefix by only 20_000_000. The next
+	// funding settlement must charge that new delta, not the full historical
+	// 120_000_000 prefix.
+	snapshotted.Position = math.NewInt(1_000_000)
+	snapshotted.EntryQuote = math.ZeroInt()
+	ak.positions[key] = snapshotted
+	d := mk.details[marketIndex]
+	d.FundingRatePrefixSum = math.NewInt(120_000_000)
+	mk.details[marketIndex] = d
+
+	require.NoError(t, k.SettlePositionFunding(ctx, accountIndex, marketIndex))
+	settled := ak.positions[key]
+	require.EqualValues(t, 20_000_000, settled.EntryQuote.Int64())
+	require.EqualValues(t, 120_000_000, settled.LastFundingRatePrefixSum.Int64())
+}
+
+func TestProcessMarketSample_StaleOracleSkipsSample(t *testing.T) {
+	mk := &stubMarket{
+		markets: map[uint32]markettypes.Market{
+			1: {MarketIndex: 1, MarketType: perptypes.MarketTypePerps, Status: perptypes.MarketStatusActive},
+		},
+		details: map[uint32]markettypes.MarketDetails{
+			1: {
+				MarketIndex:          1,
+				IndexPrice:           49_500,
+				MarkPrice:            50_000,
+				FundingRatePrefixSum: math.ZeroInt(),
+			},
+		},
+	}
+	k, ctx := newFundingKeeper(
+		t,
+		mk,
+		stubOracle{err: oracletypes.ErrStalePrice.Wrap("stale fixture")},
+		stubBook{bid: 49_999, ask: 50_001, bidOk: true, askOk: true},
+	)
+
+	require.NoError(t, k.BeginBlocker(ctx))
+	got := mk.details[1]
+	require.EqualValues(t, 0, got.TotalPremiumSamples)
+	require.EqualValues(t, 0, got.AggregatePremiumSum)
+	require.EqualValues(t, 0, got.LastUpdatedTimestamp, "stale oracle must not throttle retries")
+}
+
+func TestSettleMarket_StaleOracleReturnsErrorAndAdvancesGlobalRound(t *testing.T) {
+	oldRoundTs := int64(1_699_996_399_999)
+	mk := &stubMarket{
+		markets: map[uint32]markettypes.Market{
+			1: {MarketIndex: 1, MarketType: perptypes.MarketTypePerps, Status: perptypes.MarketStatusActive},
+		},
+		details: map[uint32]markettypes.MarketDetails{
+			1: {
+				MarketIndex:          1,
+				MarkPrice:            50_000,
+				IndexPrice:           49_500,
+				FundingRatePrefixSum: math.ZeroInt(),
+				AggregatePremiumSum:  10_101 * 60,
+				TotalPremiumSamples:  60,
+				FundingClampSmall:    500,
+				FundingClampBig:      40_000,
+			},
+		},
+	}
+	k, ctx := newFundingKeeper(
+		t,
+		mk,
+		stubOracle{err: oracletypes.ErrStalePrice.Wrap("stale fixture")},
+		stubBook{bidOk: false, askOk: false},
+	)
+	require.NoError(t, k.Metadata.Set(ctx, fundingtypes.FundingMetadata{
+		LastFundingRoundTimestamp: oldRoundTs,
+	}))
+
+	err := k.BeginBlocker(ctx)
+	require.Error(t, err)
+	require.True(t, oracletypes.ErrStalePrice.Is(err))
+	got := mk.details[1]
+	require.True(t, got.FundingRatePrefixSum.IsZero())
+	require.EqualValues(t, 10_101*60, got.AggregatePremiumSum)
+	require.EqualValues(t, 60, got.TotalPremiumSamples)
+	meta, metaErr := k.Metadata.Get(ctx)
+	require.NoError(t, metaErr)
+	require.EqualValues(t, ctx.BlockTime().UnixMilli(), meta.LastFundingRoundTimestamp)
+}
+
+func TestSettleMarkets_GlobalRoundPartiallySettlesAndReturnsStaleError(t *testing.T) {
+	oldRoundTs := int64(1_699_996_399_999)
+	mk := &stubMarket{
+		markets: map[uint32]markettypes.Market{
+			1: {MarketIndex: 1, MarketType: perptypes.MarketTypePerps, Status: perptypes.MarketStatusActive},
+			2: {MarketIndex: 2, MarketType: perptypes.MarketTypePerps, Status: perptypes.MarketStatusActive},
+		},
+		details: map[uint32]markettypes.MarketDetails{
+			1: {
+				MarketIndex:          1,
+				MarkPrice:            50_000,
+				IndexPrice:           49_500,
+				FundingRatePrefixSum: math.ZeroInt(),
+				AggregatePremiumSum:  10_101 * 60,
+				TotalPremiumSamples:  60,
+				FundingClampSmall:    500,
+				FundingClampBig:      40_000,
+			},
+			2: {
+				MarketIndex:          2,
+				MarkPrice:            50_000,
+				IndexPrice:           49_500,
+				FundingRatePrefixSum: math.ZeroInt(),
+				AggregatePremiumSum:  20_000 * 60,
+				TotalPremiumSamples:  60,
+				FundingClampSmall:    500,
+				FundingClampBig:      40_000,
+			},
+		},
+	}
+	k, ctx := newFundingKeeper(
+		t,
+		mk,
+		stubOracle{
+			prices: map[uint32]oracletypes.OraclePrice{
+				1: {MarketIndex: 1, IndexPrice: 49_500, MarkPrice: 50_000},
+			},
+			errs: map[uint32]error{
+				2: oracletypes.ErrStalePrice.Wrap("stale fixture"),
+			},
+		},
+		stubBook{bidOk: false, askOk: false},
+	)
+	require.NoError(t, k.Metadata.Set(ctx, fundingtypes.FundingMetadata{
+		LastFundingRoundTimestamp: oldRoundTs,
+	}))
+
+	err := k.BeginBlocker(ctx)
+	require.Error(t, err)
+	require.True(t, oracletypes.ErrStalePrice.Is(err))
+
+	settled := mk.details[1]
+	require.EqualValues(t, 60_000_000, settled.FundingRatePrefixSum.Int64())
+	require.EqualValues(t, 0, settled.AggregatePremiumSum)
+	require.EqualValues(t, 0, settled.TotalPremiumSamples)
+
+	skipped := mk.details[2]
+	require.True(t, skipped.FundingRatePrefixSum.IsZero())
+	require.EqualValues(t, 20_000*60, skipped.AggregatePremiumSum)
+	require.EqualValues(t, 60, skipped.TotalPremiumSamples)
+
+	meta, metaErr := k.Metadata.Get(ctx)
+	require.NoError(t, metaErr)
+	require.EqualValues(t, ctx.BlockTime().UnixMilli(), meta.LastFundingRoundTimestamp)
+}
+
+func TestMarketFundingRateQuery_ReturnsGlobalFundingRoundTimestamp(t *testing.T) {
+	mk := &stubMarket{
+		markets: map[uint32]markettypes.Market{
+			1: {MarketIndex: 1, MarketType: perptypes.MarketTypePerps, Status: perptypes.MarketStatusActive},
+		},
+		details: map[uint32]markettypes.MarketDetails{
+			1: {
+				MarketIndex:          1,
+				FundingRatePrefixSum: math.NewInt(123),
+				LastUpdatedTimestamp: 456,
+			},
+		},
+	}
+	k, ctx := newFundingKeeper(
+		t,
+		mk,
+		stubOracle{price: oracletypes.OraclePrice{IndexPrice: 49_500, MarkPrice: 50_000}},
+		stubBook{},
+	)
+	require.NoError(t, k.Metadata.Set(ctx, fundingtypes.FundingMetadata{
+		LastFundingRoundTimestamp: 789,
+	}))
+
+	resp, err := fundingkeeper.NewQuerier(k).MarketFundingRate(ctx, &fundingtypes.QueryMarketFundingRateRequest{MarketIndex: 1})
+	require.NoError(t, err)
+	require.EqualValues(t, 123, resp.PrefixSum.Int64())
+	require.EqualValues(t, 789, resp.LastSettledAt)
 }
 
 // TestProcessMarketSample_OneSidedSkipsSample verifies that when only one

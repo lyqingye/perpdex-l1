@@ -19,7 +19,7 @@ func (q Querier) OraclePrice(ctx context.Context, req *types.QueryOraclePriceReq
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "empty request")
 	}
-	p, err := q.k.GetPrice(ctx, req.MarketIndex)
+	p, err := q.k.GetStoredPrice(ctx, req.MarketIndex)
 	if err != nil {
 		return nil, status.Error(codes.NotFound, err.Error())
 	}
