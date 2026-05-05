@@ -24,10 +24,6 @@ type MarketKeeper interface {
 
 type OracleKeeper interface {
 	GetPrice(ctx context.Context, marketIdx uint32) (oracletypes.OraclePrice, error)
-	// GetFreshPrice is like GetPrice but additionally refuses to return
-	// prices older than `Params.MaxAgeMs`. Risk uses this so valuations
-	// and health classification never act on a stale mark.
-	GetFreshPrice(ctx context.Context, marketIdx uint32) (oracletypes.OraclePrice, error)
 }
 
 // Helpers used by tests.

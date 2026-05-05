@@ -213,7 +213,7 @@ func (h *VoteExtensionHandler) applyMarkSmoothing(ctx context.Context, p *types.
 	if alpha == 0 || alpha >= 10_000 {
 		return
 	}
-	prev, err := h.keeper.GetPrice(ctx, p.MarketIndex)
+	prev, err := h.keeper.GetStoredPrice(ctx, p.MarketIndex)
 	if err != nil || prev.MarkPrice == 0 {
 		return
 	}

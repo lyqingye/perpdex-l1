@@ -82,9 +82,15 @@ func (stubBook) ImpactUsdcAmount(_ context.Context) (uint64, error) {
 	return perptypes.ImpactUSDCAmount, nil
 }
 
-type stubOracle struct{ price oracletypes.OraclePrice }
+type stubOracle struct {
+	price oracletypes.OraclePrice
+	err   error
+}
 
 func (s stubOracle) GetPrice(_ context.Context, _ uint32) (oracletypes.OraclePrice, error) {
+	if s.err != nil {
+		return oracletypes.OraclePrice{}, s.err
+	}
 	return s.price, nil
 }
 
@@ -225,6 +231,102 @@ func TestSettlePositionFunding_ZeroPositionSnapshotsCurrentPrefix(t *testing.T) 
 	settled := ak.positions[key]
 	require.EqualValues(t, 20_000_000, settled.EntryQuote.Int64())
 	require.EqualValues(t, 120_000_000, settled.LastFundingRatePrefixSum.Int64())
+}
+
+func TestProcessMarketSample_StaleOracleReturnsError(t *testing.T) {
+	mk := &stubMarket{
+		markets: map[uint32]markettypes.Market{
+			1: {MarketIndex: 1, MarketType: perptypes.MarketTypePerps, Status: perptypes.MarketStatusActive},
+		},
+		details: map[uint32]markettypes.MarketDetails{
+			1: {
+				MarketIndex:          1,
+				IndexPrice:           49_500,
+				MarkPrice:            50_000,
+				FundingRatePrefixSum: math.ZeroInt(),
+			},
+		},
+	}
+	k, ctx := newFundingKeeper(
+		t,
+		mk,
+		stubOracle{err: oracletypes.ErrStalePrice.Wrap("stale fixture")},
+		stubBook{bid: 49_999, ask: 50_001, bidOk: true, askOk: true},
+	)
+
+	require.NoError(t, k.BeginBlocker(ctx))
+	got := mk.details[1]
+	require.EqualValues(t, 0, got.TotalPremiumSamples)
+	require.EqualValues(t, 0, got.AggregatePremiumSum)
+	require.EqualValues(t, 0, got.LastUpdatedTimestamp, "stale oracle must not throttle retries")
+}
+
+func TestSettleMarket_StaleOracleDoesNotAdvancePrefixOrRound(t *testing.T) {
+	oldRoundTs := int64(1_699_996_399_999)
+	mk := &stubMarket{
+		markets: map[uint32]markettypes.Market{
+			1: {MarketIndex: 1, MarketType: perptypes.MarketTypePerps, Status: perptypes.MarketStatusActive},
+		},
+		details: map[uint32]markettypes.MarketDetails{
+			1: {
+				MarketIndex:          1,
+				MarkPrice:            50_000,
+				IndexPrice:           49_500,
+				FundingRatePrefixSum: math.ZeroInt(),
+				AggregatePremiumSum:  10_101 * 60,
+				TotalPremiumSamples:  60,
+				FundingClampSmall:    500,
+				FundingClampBig:      40_000,
+			},
+		},
+	}
+	k, ctx := newFundingKeeper(
+		t,
+		mk,
+		stubOracle{err: oracletypes.ErrStalePrice.Wrap("stale fixture")},
+		stubBook{bidOk: false, askOk: false},
+	)
+	require.NoError(t, k.Metadata.Set(ctx, fundingtypes.FundingMetadata{
+		LastFundingRoundTimestamp: oldRoundTs,
+	}))
+
+	require.NoError(t, k.BeginBlocker(ctx))
+	got := mk.details[1]
+	require.True(t, got.FundingRatePrefixSum.IsZero())
+	require.EqualValues(t, 10_101*60, got.AggregatePremiumSum)
+	require.EqualValues(t, 60, got.TotalPremiumSamples)
+	meta, metaErr := k.Metadata.Get(ctx)
+	require.NoError(t, metaErr)
+	require.EqualValues(t, oldRoundTs, meta.LastFundingRoundTimestamp)
+}
+
+func TestMarketFundingRateQuery_ReturnsFundingRoundTimestamp(t *testing.T) {
+	mk := &stubMarket{
+		markets: map[uint32]markettypes.Market{
+			1: {MarketIndex: 1, MarketType: perptypes.MarketTypePerps, Status: perptypes.MarketStatusActive},
+		},
+		details: map[uint32]markettypes.MarketDetails{
+			1: {
+				MarketIndex:          1,
+				FundingRatePrefixSum: math.NewInt(123),
+				LastUpdatedTimestamp: 456,
+			},
+		},
+	}
+	k, ctx := newFundingKeeper(
+		t,
+		mk,
+		stubOracle{price: oracletypes.OraclePrice{IndexPrice: 49_500, MarkPrice: 50_000}},
+		stubBook{},
+	)
+	require.NoError(t, k.Metadata.Set(ctx, fundingtypes.FundingMetadata{
+		LastFundingRoundTimestamp: 789,
+	}))
+
+	resp, err := fundingkeeper.NewQuerier(k).MarketFundingRate(ctx, &fundingtypes.QueryMarketFundingRateRequest{MarketIndex: 1})
+	require.NoError(t, err)
+	require.EqualValues(t, 123, resp.PrefixSum.Int64())
+	require.EqualValues(t, 789, resp.LastSettledAt)
 }
 
 // TestProcessMarketSample_OneSidedSkipsSample verifies that when only one

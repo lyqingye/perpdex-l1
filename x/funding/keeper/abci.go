@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"errors"
 	"strconv"
 
 	"cosmossdk.io/math"
@@ -11,6 +12,7 @@ import (
 	perptypes "github.com/perpdex/perpdex-l1/types"
 	"github.com/perpdex/perpdex-l1/x/funding/types"
 	markettypes "github.com/perpdex/perpdex-l1/x/market/types"
+	oracletypes "github.com/perpdex/perpdex-l1/x/oracle/types"
 )
 
 // premiumSampleIntervalMs is the per-market spacing between two consecutive
@@ -32,8 +34,8 @@ const premiumSampleIntervalMs = perptypes.MinuteInMs
 //     prefix-sum delta alone.
 //
 // Per-market errors are surfaced via dedicated events so observability picks
-// up individual failures, while the first error is returned so the
-// begin-blocker flow signals a degraded state.
+// up individual failures. Oracle-unavailable cases skip funding work without
+// advancing the round; unexpected internal errors are returned.
 func (k Keeper) BeginBlocker(ctx context.Context) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	now := sdkCtx.BlockTime().UnixMilli()
@@ -68,10 +70,12 @@ func (k Keeper) BeginBlocker(ctx context.Context) error {
 	// Lighter spec the divisor is applied to the rate, not to the cadence.
 	settleEvery := params.FundingPeriodMs
 	if settleEvery > 0 && (meta.LastFundingRoundTimestamp == 0 || now-meta.LastFundingRoundTimestamp >= settleEvery) {
-		if err := k.SettleAllMarkets(ctx, params); err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
+		settled, err := k.SettleAllMarkets(ctx, params)
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+		if !settled {
+			return firstErr
 		}
 		meta.LastFundingRoundTimestamp = now
 		if err := k.Metadata.Set(ctx, meta); err != nil {
@@ -130,13 +134,24 @@ func (k Keeper) processMarketSample(ctx context.Context, marketIdx uint32, now i
 		d.ImpactPrice = 0
 	}
 
-	// Refresh oracle prices regardless of book depth so risk / liquidation
-	// continue to see fresh mark/index even when the funding sample is
-	// skipped.
-	if px, err := k.oracleKeeper.GetPrice(ctx, marketIdx); err == nil && px.IndexPrice > 0 {
-		d.IndexPrice = px.IndexPrice
-		d.MarkPrice = px.MarkPrice
+	// Funding must only sample against a fresh oracle price. If oracle
+	// aggregation missed this market for long enough to go stale, emit an
+	// observable event and skip the sample instead of falling back to cached
+	// MarketDetails index/mark values.
+	px, err := k.oracleKeeper.GetPrice(ctx, marketIdx)
+	if err != nil {
+		sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
+			"funding_oracle_price_error",
+			sdk.NewAttribute("market_index", strconv.FormatUint(uint64(marketIdx), 10)),
+			sdk.NewAttribute("err", err.Error()),
+		))
+		if isOracleUnavailable(err) {
+			return k.marketKeeper.SetMarketDetails(ctx, d)
+		}
+		return err
 	}
+	d.IndexPrice = px.IndexPrice
+	d.MarkPrice = px.MarkPrice
 
 	// Skip the sample when either side cannot absorb ImpactUSDCAmount of
 	// quote (insufficient depth). Otherwise `max(0, idx - 0) = idx` would
@@ -172,9 +187,11 @@ func (k Keeper) processMarketSample(ctx context.Context, marketIdx uint32, now i
 // SettleAllMarkets converts each market's aggregate_premium_sum into a
 // clamped funding rate, advances `FundingRatePrefixSum` by `mark_price *
 // rate`, and resets the per-window accumulator. Errors are surfaced via
-// per-market events; the first error is returned so callers can react.
-func (k Keeper) SettleAllMarkets(ctx context.Context, params types.ParamsAlias) error {
+// per-market events. The returned boolean is false when at least one market did
+// not settle, which tells BeginBlocker not to advance the global round clock.
+func (k Keeper) SettleAllMarkets(ctx context.Context, params types.ParamsAlias) (bool, error) {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	allSettled := true
 	var firstErr error
 	if err := k.marketKeeper.IterateMarkets(ctx, func(m markettypes.Market) bool {
 		if m.MarketType != perptypes.MarketTypePerps || m.Status != perptypes.MarketStatusActive {
@@ -186,15 +203,16 @@ func (k Keeper) SettleAllMarkets(ctx context.Context, params types.ParamsAlias) 
 				sdk.NewAttribute("market_index", strconv.FormatUint(uint64(m.MarketIndex), 10)),
 				sdk.NewAttribute("err", err.Error()),
 			))
-			if firstErr == nil {
+			allSettled = false
+			if !isOracleUnavailable(err) && firstErr == nil {
 				firstErr = err
 			}
 		}
 		return false
 	}); err != nil {
-		return err
+		return false, err
 	}
-	return firstErr
+	return allSettled, firstErr
 }
 
 // settleMarket applies the Lighter funding-rate formula to one market:
@@ -219,6 +237,12 @@ func (k Keeper) settleMarket(ctx context.Context, marketIdx uint32, params types
 	if d.TotalPremiumSamples == 0 {
 		return nil
 	}
+	px, err := k.oracleKeeper.GetPrice(ctx, marketIdx)
+	if err != nil {
+		return err
+	}
+	d.IndexPrice = px.IndexPrice
+	d.MarkPrice = px.MarkPrice
 	avg := d.AggregatePremiumSum / int64(d.TotalPremiumSamples)
 	ir := int64(d.InterestRate)
 	smallClampMag := int64(d.FundingClampSmall)
@@ -241,7 +265,7 @@ func (k Keeper) settleMarket(ctx context.Context, marketIdx uint32, params types
 	// Prefix-sum increment encodes the mark of *this* round so positions
 	// settled later see `pos * mark_t * rate_t` per round, even when mark
 	// changes between rounds.
-	inc := math.NewInt(int64(d.MarkPrice)).Mul(math.NewInt(rate))
+	inc := math.NewInt(int64(px.MarkPrice)).Mul(math.NewInt(rate))
 	d.FundingRatePrefixSum = d.FundingRatePrefixSum.Add(inc)
 	d.AggregatePremiumSum = 0
 	d.TotalPremiumSamples = 0
@@ -256,4 +280,9 @@ func clampInt64(v, lo, hi int64) int64 {
 		return hi
 	}
 	return v
+}
+
+func isOracleUnavailable(err error) bool {
+	return errors.Is(err, oracletypes.ErrPriceNotFound) ||
+		errors.Is(err, oracletypes.ErrStalePrice)
 }

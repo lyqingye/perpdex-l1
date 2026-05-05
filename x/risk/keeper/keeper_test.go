@@ -72,9 +72,6 @@ type stubOracleKeeper struct {
 func (s stubOracleKeeper) GetPrice(_ context.Context, _ uint32) (oracletypes.OraclePrice, error) {
 	return s.price, s.err
 }
-func (s stubOracleKeeper) GetFreshPrice(_ context.Context, _ uint32) (oracletypes.OraclePrice, error) {
-	return s.price, s.err
-}
 
 func makeKeeper(t *testing.T, ak *stubAccountKeeper, mk stubMarketKeeper, ok stubOracleKeeper) (riskkeeper.Keeper, sdk.Context) {
 	t.Helper()
@@ -388,7 +385,7 @@ func TestIsValidRiskChange_PreLiquidationRejectsMMRGrowth(t *testing.T) {
 	// a long means uPnL = pos*mark - EntryQuote = 20_000 - (-19_500) =
 	// 39_500. That doesn't help.
 	// Use entry sign as +: EntryQuote = 19_500 ⇒ uPnL = 20_000 -
-	// 19_500 = 500. TAV = 1_000 + 500 = 1_500 (PRE). 
+	// 19_500 = 500. TAV = 1_000 + 500 = 1_500 (PRE).
 	ak.pos.EntryQuote = math.NewInt(19_500)
 	ok := stubOracleKeeper{price: oracletypes.OraclePrice{MarkPrice: 1000}}
 	k, ctx := makeKeeper(t, &ak, mk, ok)

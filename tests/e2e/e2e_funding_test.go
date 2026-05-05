@@ -74,18 +74,18 @@ func (s *FundingSuite) SetupTest() {
 //
 // Expected per-round math:
 //
-//	premium = 10_080 (single sample average)
-//	correction = clamp(ir - premium, -SmallClamp, +SmallClamp)
-//	           = clamp(0 - 10_080, -500, +500) = -500
-//	smallClamped = 10_080 + (-500) = 9_580
-//	bigClamped   = clamp(9_580, -40_000, +40_000) = 9_580
-//	rate         = 9_580 / 8 = 1_197 (truncated)
-//	prefix delta = mark * rate = 50_000 * 1_197 = 59_850_000
+//		premium = 10_080 (single sample average)
+//		correction = clamp(ir - premium, -SmallClamp, +SmallClamp)
+//		           = clamp(0 - 10_080, -500, +500) = -500
+//		smallClamped = 10_080 + (-500) = 9_580
+//		bigClamped   = clamp(9_580, -40_000, +40_000) = 9_580
+//		rate         = 9_580 / 8 = 1_197 (truncated)
+//		prefix delta = mark * rate = 50_000 * 1_197 = 59_850_000
 //
-//  5. Force an explicit SettlePositionFunding for user0's short. The
-//     payment is `pos * delta / TICK = -1_000_000 * 59_850_000 / 1_000_000
-//     = -59_850_000`, so EntryQuote drops by 59_850_000 (short pays funding
-//     when premium is positive).
+//	 5. Force an explicit SettlePositionFunding for user0's short. The
+//	    payment is `pos * delta / TICK = -1_000_000 * 59_850_000 / 1_000_000
+//	    = -59_850_000`, so EntryQuote drops by 59_850_000 (short pays funding
+//	    when premium is positive).
 func (s *FundingSuite) TestPremiumAccumulatesAndSettles() {
 	const depositUSDC = uint64(100_000_000_000) // 100k USDC, external precision
 	const orderQty = uint64(1_000_000)
@@ -152,6 +152,13 @@ func (s *FundingSuite) TestPremiumAccumulatesAndSettles() {
 	const indexPrice = uint32(49_500)
 	const markPrice = uint32(50_000)
 	s.SetOraclePrice(s.MarketIndex, indexPrice, markPrice)
+	// This deterministic suite bypasses the live vote-extension oracle, so
+	// allow the seeded fixture to remain fresh across the one-hour funding
+	// advance below. Production gets a fresh PreBlock oracle write each block.
+	oracleParams, err := s.App.OracleKeeper.Params.Get(s.Ctx)
+	s.Require().NoError(err)
+	oracleParams.MaxAgeMs = perptypes.FundingPeriod + time.Minute.Milliseconds()
+	s.Require().NoError(s.App.OracleKeeper.Params.Set(s.Ctx, oracleParams))
 
 	// Pre-condition checks that pin down the inputs the funding sampler
 	// will see during the next BeginBlocker.

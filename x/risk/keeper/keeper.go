@@ -128,7 +128,7 @@ func (k Keeper) ComputeRiskInfo(ctx context.Context, accountIdx uint64) (types.R
 		// made bankrupt accounts look healthy whenever the oracle
 		// hiccupped. Fail-closed keeps the invariant "risk regression
 		// cannot be hidden by an oracle outage".
-		px, err := k.oracleKeeper.GetFreshPrice(ctx, marketIdx)
+		px, err := k.oracleKeeper.GetPrice(ctx, marketIdx)
 		if err != nil {
 			return types.RiskInfo{}, types.ErrMissingPrice.Wrapf(
 				"account=%d market=%d: %s", accountIdx, marketIdx, err.Error(),
@@ -181,7 +181,7 @@ func (k Keeper) ComputeIsolatedRisk(ctx context.Context, accountIdx uint64, mark
 	if pos.MarginMode != perptypes.IsolatedMargin {
 		return types.RiskParameters{}, fmt.Errorf("position is not isolated")
 	}
-	px, err := k.oracleKeeper.GetFreshPrice(ctx, marketIdx)
+	px, err := k.oracleKeeper.GetPrice(ctx, marketIdx)
 	if err != nil {
 		return types.RiskParameters{}, types.ErrMissingPrice.Wrapf(
 			"account=%d market=%d: %s", accountIdx, marketIdx, err.Error(),
@@ -497,7 +497,7 @@ func (k Keeper) GetPositionZeroPrice(ctx context.Context, accountIdx uint64, mar
 	if pos.Position.IsZero() {
 		return 0, nil
 	}
-	px, err := k.oracleKeeper.GetFreshPrice(ctx, marketIdx)
+	px, err := k.oracleKeeper.GetPrice(ctx, marketIdx)
 	if err != nil {
 		return 0, types.ErrMissingPrice.Wrapf(
 			"account=%d market=%d: %s", accountIdx, marketIdx, err.Error(),
@@ -589,7 +589,7 @@ func (k Keeper) GetPositionMarkValue(ctx context.Context, accountIdx uint64, mar
 	if pos.Position.IsZero() {
 		return math.ZeroInt(), nil
 	}
-	px, err := k.oracleKeeper.GetFreshPrice(ctx, marketIdx)
+	px, err := k.oracleKeeper.GetPrice(ctx, marketIdx)
 	if err != nil {
 		return math.ZeroInt(), types.ErrMissingPrice.Wrapf(
 			"account=%d market=%d: %s", accountIdx, marketIdx, err.Error(),
@@ -616,7 +616,7 @@ func (k Keeper) GetPositionUnrealizedPnL(ctx context.Context, accountIdx uint64,
 	if pos.Position.IsZero() {
 		return math.ZeroInt(), nil
 	}
-	px, err := k.oracleKeeper.GetFreshPrice(ctx, marketIdx)
+	px, err := k.oracleKeeper.GetPrice(ctx, marketIdx)
 	if err != nil {
 		return math.ZeroInt(), types.ErrMissingPrice.Wrapf(
 			"account=%d market=%d: %s", accountIdx, marketIdx, err.Error(),
@@ -669,7 +669,7 @@ func (k Keeper) SimulateRiskAfterTakeover(
 		// surfaces the misconfiguration.
 		return types.RiskParameters{}, fmt.Errorf("simulate_takeover: account %d market %d is isolated", accountIdx, marketIdx)
 	}
-	px, err := k.oracleKeeper.GetFreshPrice(ctx, marketIdx)
+	px, err := k.oracleKeeper.GetPrice(ctx, marketIdx)
 	if err != nil {
 		return types.RiskParameters{}, types.ErrMissingPrice.Wrapf(
 			"account=%d market=%d: %s", accountIdx, marketIdx, err.Error(),
