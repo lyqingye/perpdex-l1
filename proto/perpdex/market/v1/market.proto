@@ -52,7 +52,6 @@ message MarketDetails {
   int64 total_order_count = 21;
   uint32 total_premium_samples = 22;
   int64 last_updated_timestamp = 23;
-  int64 last_funding_round_timestamp = 24;
 }
 
 message Params {

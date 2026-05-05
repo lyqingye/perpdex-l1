@@ -269,7 +269,7 @@ func TestProcessMarketSample_StaleOracleSkipsSample(t *testing.T) {
 	require.EqualValues(t, 0, got.LastUpdatedTimestamp, "stale oracle must not throttle retries")
 }
 
-func TestSettleMarket_StaleOracleDoesNotAdvancePrefixOrRound(t *testing.T) {
+func TestSettleMarket_StaleOracleClearsWindowAndAdvancesGlobalRound(t *testing.T) {
 	oldRoundTs := int64(1_699_996_399_999)
 	mk := &stubMarket{
 		markets: map[uint32]markettypes.Market{
@@ -301,15 +301,14 @@ func TestSettleMarket_StaleOracleDoesNotAdvancePrefixOrRound(t *testing.T) {
 	require.NoError(t, k.BeginBlocker(ctx))
 	got := mk.details[1]
 	require.True(t, got.FundingRatePrefixSum.IsZero())
-	require.EqualValues(t, 10_101*60, got.AggregatePremiumSum)
-	require.EqualValues(t, 60, got.TotalPremiumSamples)
-	require.EqualValues(t, 0, got.LastFundingRoundTimestamp)
+	require.EqualValues(t, 0, got.AggregatePremiumSum)
+	require.EqualValues(t, 0, got.TotalPremiumSamples)
 	meta, metaErr := k.Metadata.Get(ctx)
 	require.NoError(t, metaErr)
-	require.EqualValues(t, oldRoundTs, meta.LastFundingRoundTimestamp)
+	require.EqualValues(t, ctx.BlockTime().UnixMilli(), meta.LastFundingRoundTimestamp)
 }
 
-func TestSettleMarkets_PerMarketRoundTimestampAllowsPartialSettlement(t *testing.T) {
+func TestSettleMarkets_GlobalRoundAllowsPartialSettlement(t *testing.T) {
 	oldRoundTs := int64(1_699_996_399_999)
 	mk := &stubMarket{
 		markets: map[uint32]markettypes.Market{
@@ -362,32 +361,27 @@ func TestSettleMarkets_PerMarketRoundTimestampAllowsPartialSettlement(t *testing
 	require.EqualValues(t, 60_000_000, settled.FundingRatePrefixSum.Int64())
 	require.EqualValues(t, 0, settled.AggregatePremiumSum)
 	require.EqualValues(t, 0, settled.TotalPremiumSamples)
-	require.EqualValues(t, ctx.BlockTime().UnixMilli(), settled.LastFundingRoundTimestamp)
 
 	skipped := mk.details[2]
 	require.True(t, skipped.FundingRatePrefixSum.IsZero())
-	require.EqualValues(t, 20_000*60, skipped.AggregatePremiumSum)
-	require.EqualValues(t, 60, skipped.TotalPremiumSamples)
-	require.EqualValues(t, 0, skipped.LastFundingRoundTimestamp)
+	require.EqualValues(t, 0, skipped.AggregatePremiumSum)
+	require.EqualValues(t, 0, skipped.TotalPremiumSamples)
 
-	// The legacy global timestamp is not used as the source of truth once
-	// markets maintain their own funding round timestamps.
 	meta, metaErr := k.Metadata.Get(ctx)
 	require.NoError(t, metaErr)
-	require.EqualValues(t, oldRoundTs, meta.LastFundingRoundTimestamp)
+	require.EqualValues(t, ctx.BlockTime().UnixMilli(), meta.LastFundingRoundTimestamp)
 }
 
-func TestMarketFundingRateQuery_ReturnsMarketFundingRoundTimestamp(t *testing.T) {
+func TestMarketFundingRateQuery_ReturnsGlobalFundingRoundTimestamp(t *testing.T) {
 	mk := &stubMarket{
 		markets: map[uint32]markettypes.Market{
 			1: {MarketIndex: 1, MarketType: perptypes.MarketTypePerps, Status: perptypes.MarketStatusActive},
 		},
 		details: map[uint32]markettypes.MarketDetails{
 			1: {
-				MarketIndex:               1,
-				FundingRatePrefixSum:      math.NewInt(123),
-				LastUpdatedTimestamp:      456,
-				LastFundingRoundTimestamp: 789,
+				MarketIndex:          1,
+				FundingRatePrefixSum: math.NewInt(123),
+				LastUpdatedTimestamp: 456,
 			},
 		},
 	}
@@ -398,7 +392,7 @@ func TestMarketFundingRateQuery_ReturnsMarketFundingRoundTimestamp(t *testing.T)
 		stubBook{},
 	)
 	require.NoError(t, k.Metadata.Set(ctx, fundingtypes.FundingMetadata{
-		LastFundingRoundTimestamp: 111,
+		LastFundingRoundTimestamp: 789,
 	}))
 
 	resp, err := fundingkeeper.NewQuerier(k).MarketFundingRate(ctx, &fundingtypes.QueryMarketFundingRateRequest{MarketIndex: 1})

@@ -35,11 +35,7 @@ func (q Querier) MarketFundingRate(ctx context.Context, req *types.QueryMarketFu
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-	lastSettledAt := d.LastFundingRoundTimestamp
-	if lastSettledAt == 0 {
-		lastSettledAt = m.LastFundingRoundTimestamp
-	}
-	return &types.QueryMarketFundingRateResponse{PrefixSum: d.FundingRatePrefixSum, LastSettledAt: lastSettledAt}, nil
+	return &types.QueryMarketFundingRateResponse{PrefixSum: d.FundingRatePrefixSum, LastSettledAt: m.LastFundingRoundTimestamp}, nil
 }
 
 func (q Querier) PositionPendingFunding(ctx context.Context, req *types.QueryPositionPendingFundingRequest) (*types.QueryPositionPendingFundingResponse, error) {
