@@ -1,6 +1,7 @@
 package keeper
 
 import (
+	"context"
 	"fmt"
 
 	"cosmossdk.io/collections"
@@ -8,7 +9,9 @@ import (
 
 	"github.com/cosmos/cosmos-sdk/codec"
 
+	perptypes "github.com/perpdex/perpdex-l1/types"
 	"github.com/perpdex/perpdex-l1/x/matching/types"
+	orderbooktypes "github.com/perpdex/perpdex-l1/x/orderbook/types"
 )
 
 type Keeper struct {
@@ -20,6 +23,7 @@ type Keeper struct {
 	bookKeeper    types.OrderbookKeeper
 	tradeKeeper   types.TradeKeeper
 	oracleKeeper  types.OracleKeeper
+	riskKeeper    types.RiskKeeper
 
 	Schema collections.Schema
 	Params collections.Item[types.Params]
@@ -52,5 +56,82 @@ func NewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, authori
 // EndBlocker trigger resolution; the keeper is oracle-agnostic at NewKeeper
 // time to avoid import cycles with modules that depend on matching.
 func (k *Keeper) SetOracleKeeper(o types.OracleKeeper) { k.oracleKeeper = o }
+
+// SetRiskKeeper wires the risk keeper after construction. Risk is needed
+// for the pre-liquidation order placement gate; it is wired late to
+// avoid the import cycle that would otherwise arise from x/risk
+// depending on x/matching for cancel-all in liquidation paths.
+func (k *Keeper) SetRiskKeeper(r types.RiskKeeper) { k.riskKeeper = r }
+
+// CancelAllOpenOrdersForAccount cancels every resting order owned by
+// `accountIdx` across every market, bypassing sender authority checks.
+// Reserved for the liquidation engine: per Lighter spec the partial
+// liquidation flow must clear the victim's book before issuing
+// zero-price IoC closes, otherwise a victim's resting bids could
+// front-run the liquidation fill.
+func (k Keeper) CancelAllOpenOrdersForAccount(ctx context.Context, accountIdx uint64) (uint32, error) {
+	params, err := k.Params.Get(ctx)
+	if err != nil {
+		return 0, err
+	}
+	maxCancels := params.MaxCancelsPerMsg
+	if maxCancels == 0 {
+		maxCancels = 128
+	}
+	targets := make([]orderbooktypes.Order, 0, maxCancels)
+	if err := k.bookKeeper.IterateAccountOpenOrders(ctx, accountIdx, 0, func(o orderbooktypes.Order) bool {
+		if uint32(len(targets)) >= maxCancels {
+			return true
+		}
+		switch o.Status {
+		case perptypes.OrderStatusOpen,
+			perptypes.OrderStatusPartiallyFilled,
+			perptypes.OrderStatusTriggeredPending:
+			targets = append(targets, o)
+		}
+		return false
+	}); err != nil {
+		return 0, err
+	}
+	cancelled := uint32(0)
+	for _, o := range targets {
+		if err := k.cancelOrderForLiquidation(ctx, o); err != nil {
+			return cancelled, err
+		}
+		cancelled++
+	}
+	return cancelled, nil
+}
+
+// cancelOrderForLiquidation is the internal cancel routine used by the
+// liquidation cancel-all path. It mirrors msgServer.cancelOrderInternal
+// but lives on the bare Keeper so the liquidation module can invoke it
+// without going through the msg server (which would re-do unnecessary
+// authority checks).
+func (k Keeper) cancelOrderForLiquidation(ctx context.Context, o orderbooktypes.Order) error {
+	switch o.Status {
+	case perptypes.OrderStatusOpen, perptypes.OrderStatusPartiallyFilled:
+		if o.RemainingBaseAmount == 0 {
+			return nil
+		}
+		if err := k.bookKeeper.RemoveOrderbookEntry(ctx, o.MarketIndex, o.IsAsk, o.OrderIndex); err != nil {
+			return err
+		}
+	case perptypes.OrderStatusTriggeredPending:
+		if err := k.bookKeeper.RemoveTrigger(ctx, o.MarketIndex, o.TriggerPrice, o.OrderIndex); err != nil {
+			return err
+		}
+	default:
+		return nil
+	}
+	o.Status = perptypes.OrderStatusCancelled
+	if err := k.bookKeeper.SetOrder(ctx, o); err != nil {
+		return err
+	}
+	if err := k.bookKeeper.UnindexClientOrderIfMatches(ctx, o); err != nil {
+		return err
+	}
+	return k.bookKeeper.UnindexAccountOpenOrder(ctx, o)
+}
 
 func (k Keeper) Authority() string { return k.authority }

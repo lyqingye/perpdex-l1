@@ -21,4 +21,11 @@ var (
 	ErrOrderNotCancelable   = errors.Register(ModuleName, 17, "order status does not allow cancel/modify")
 	ErrUnimplemented        = errors.Register(ModuleName, 18, "feature not implemented")
 	ErrQuoteLimitExceeded   = errors.Register(ModuleName, 19, "base*price exceeds market quote limit")
+	// ErrAccountUnderLiquidation rejects user-initiated CreateOrder /
+	// ModifyOrder calls when the account is currently being
+	// liquidated (PARTIAL / FULL / BANKRUPTCY) or, in PRE, when the
+	// order would not strictly reduce exposure (i.e. is not
+	// reduce-only). Mirrors Lighter's "no exchange operation that
+	// increases position size or worsens TAV/MMR ratio" rule.
+	ErrAccountUnderLiquidation = errors.Register(ModuleName, 20, "account under liquidation; only reduce-only orders allowed")
 )

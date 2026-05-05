@@ -25,9 +25,14 @@ auto-deleveraging.
   placement, matching and position settlement.
 - Risk engine helpers for health status, available collateral, total account
   value, position zero price and unrealized PnL.
-- Liquidation flow with liquidation flags, manual liquidation/deleverage,
-  insurance-fund-first bankruptcy absorption, ranked ADL queues and bounded
-  EndBlocker auto-ADL.
+- Liquidation flow aligned with the
+  specification: 5-tier health classification (HEALTHY / PRE / PARTIAL / FULL /
+  BANKRUPTCY), pre-liquidation order placement gate (reduce-only in PRE; all
+  user orders blocked in PARTIAL+), mark-based zero-price IoC close-outs with
+  improvement-over-zero-price fees routed to the LLP (capped at 1%), LLP
+  takeover ranked by ascending uPnL with per-position IMR safety check, and
+  fall-through ADL ranked by leverage × uPnL ratio with double-sided zero-price
+  alignment.
 - Public pool and insurance fund support: create/update public pools, mint and
   burn LP shares, NAV-based share valuation, operator fee shares, LLP burn
   cooldowns, strategy bucket transfers and governance force-burn.
