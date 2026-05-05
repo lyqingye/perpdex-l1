@@ -99,6 +99,32 @@ func (stubAccount) GetPosition(_ context.Context, acc uint64, mkt uint32) (accou
 }
 func (stubAccount) SetPosition(_ context.Context, _ accounttypes.AccountPosition) error { return nil }
 
+type statefulAccount struct {
+	positions map[[2]uint64]accounttypes.AccountPosition
+}
+
+func newStatefulAccount() *statefulAccount {
+	return &statefulAccount{positions: map[[2]uint64]accounttypes.AccountPosition{}}
+}
+
+func (s *statefulAccount) GetPosition(_ context.Context, acc uint64, mkt uint32) (accounttypes.AccountPosition, error) {
+	key := [2]uint64{acc, uint64(mkt)}
+	if p, ok := s.positions[key]; ok {
+		return p, nil
+	}
+	return accounttypes.AccountPosition{
+		AccountIndex: acc, MarketIndex: mkt,
+		Position: math.ZeroInt(), EntryQuote: math.ZeroInt(),
+		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
+	}, nil
+}
+
+func (s *statefulAccount) SetPosition(_ context.Context, p accounttypes.AccountPosition) error {
+	key := [2]uint64{p.AccountIndex, uint64(p.MarketIndex)}
+	s.positions[key] = p
+	return nil
+}
+
 func newFundingKeeper(t *testing.T, mk *stubMarket, ok stubOracle, bk stubBook) (fundingkeeper.Keeper, sdk.Context) {
 	t.Helper()
 	keys := storetypes.NewKVStoreKeys(fundingtypes.StoreKey)
@@ -121,6 +147,84 @@ func newFundingKeeper(t *testing.T, mk *stubMarket, ok stubOracle, bk stubBook) 
 		LastFundingRoundTimestamp: ctx.BlockTime().UnixMilli(),
 	}))
 	return k, ctx
+}
+
+func newFundingKeeperWithAccount(
+	t *testing.T,
+	mk *stubMarket,
+	ok stubOracle,
+	bk stubBook,
+	ak *statefulAccount,
+) (fundingkeeper.Keeper, sdk.Context) {
+	t.Helper()
+	keys := storetypes.NewKVStoreKeys(fundingtypes.StoreKey)
+	cdc := moduletestutil.MakeTestEncodingConfig().Codec
+	cms := integration.CreateMultiStore(keys, log.NewTestLogger(t))
+	hdr := cmtprototypes.Header{Time: time.Unix(0, 1_700_000_000_000_000_000)}
+	ctx := sdk.NewContext(cms, hdr, true, log.NewTestLogger(t))
+	k := fundingkeeper.NewKeeper(
+		cdc,
+		runtime.NewKVStoreService(keys[fundingtypes.StoreKey]),
+		"auth",
+		mk, ok, bk, ak,
+	)
+	require.NoError(t, k.Params.Set(ctx, fundingtypes.DefaultParams()))
+	require.NoError(t, k.Metadata.Set(ctx, fundingtypes.FundingMetadata{
+		LastFundingRoundTimestamp: ctx.BlockTime().UnixMilli(),
+	}))
+	return k, ctx
+}
+
+// TestSettlePositionFunding_ZeroPositionSnapshotsCurrentPrefix ensures a fresh
+// or fully closed position starts from the current funding prefix instead of
+// inheriting all historical funding accumulated before it opened.
+func TestSettlePositionFunding_ZeroPositionSnapshotsCurrentPrefix(t *testing.T) {
+	const (
+		accountIndex = uint64(7)
+		marketIndex  = uint32(1)
+	)
+
+	mk := &stubMarket{
+		markets: map[uint32]markettypes.Market{
+			marketIndex: {MarketIndex: marketIndex, MarketType: perptypes.MarketTypePerps, Status: perptypes.MarketStatusActive},
+		},
+		details: map[uint32]markettypes.MarketDetails{
+			marketIndex: {
+				MarketIndex:          marketIndex,
+				FundingRatePrefixSum: math.NewInt(100_000_000),
+			},
+		},
+	}
+	ak := newStatefulAccount()
+	k, ctx := newFundingKeeperWithAccount(
+		t,
+		mk,
+		stubOracle{price: oracletypes.OraclePrice{IndexPrice: 49_500, MarkPrice: 50_000}},
+		stubBook{bidOk: true, askOk: true},
+		ak,
+	)
+
+	require.NoError(t, k.SettlePositionFunding(ctx, accountIndex, marketIndex))
+	key := [2]uint64{accountIndex, uint64(marketIndex)}
+	snapshotted := ak.positions[key]
+	require.True(t, snapshotted.Position.IsZero())
+	require.EqualValues(t, 100_000_000, snapshotted.LastFundingRatePrefixSum.Int64())
+
+	// Simulate ApplyPerpsMatching opening a new position after the zero-size
+	// settle above, then advance the market prefix by only 20_000_000. The next
+	// funding settlement must charge that new delta, not the full historical
+	// 120_000_000 prefix.
+	snapshotted.Position = math.NewInt(1_000_000)
+	snapshotted.EntryQuote = math.ZeroInt()
+	ak.positions[key] = snapshotted
+	d := mk.details[marketIndex]
+	d.FundingRatePrefixSum = math.NewInt(120_000_000)
+	mk.details[marketIndex] = d
+
+	require.NoError(t, k.SettlePositionFunding(ctx, accountIndex, marketIndex))
+	settled := ak.positions[key]
+	require.EqualValues(t, 20_000_000, settled.EntryQuote.Int64())
+	require.EqualValues(t, 120_000_000, settled.LastFundingRatePrefixSum.Int64())
 }
 
 // TestProcessMarketSample_OneSidedSkipsSample verifies that when only one
