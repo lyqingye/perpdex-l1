@@ -30,107 +30,6 @@ var _ = math.Inf
 // proto package needs to be updated.
 const _ = proto.GoGoProtoPackageIsVersion3 // please upgrade the proto package
 
-// MsgAggregateOracleVotes is injected by the block proposer as the first
-// transaction of every block (after VoteExtensionsEnableHeight). The
-// `authority` field MUST equal the gov module address; the ante chain
-// rejects copies of this message coming from regular user transactions
-// to prevent bypassing the vote-extension pipeline.
-type MsgAggregateOracleVotes struct {
-	Authority    string              `protobuf:"bytes,1,opt,name=authority,proto3" json:"authority,omitempty"`
-	Height       int64               `protobuf:"varint,2,opt,name=height,proto3" json:"height,omitempty"`
-	Aggregations []MarketAggregation `protobuf:"bytes,3,rep,name=aggregations,proto3" json:"aggregations"`
-}
-
-func (m *MsgAggregateOracleVotes) Reset()         { *m = MsgAggregateOracleVotes{} }
-func (m *MsgAggregateOracleVotes) String() string { return proto.CompactTextString(m) }
-func (*MsgAggregateOracleVotes) ProtoMessage()    {}
-func (*MsgAggregateOracleVotes) Descriptor() ([]byte, []int) {
-	return fileDescriptor_df79d59d4862f3b5, []int{0}
-}
-func (m *MsgAggregateOracleVotes) XXX_Unmarshal(b []byte) error {
-	return m.Unmarshal(b)
-}
-func (m *MsgAggregateOracleVotes) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	if deterministic {
-		return xxx_messageInfo_MsgAggregateOracleVotes.Marshal(b, m, deterministic)
-	} else {
-		b = b[:cap(b)]
-		n, err := m.MarshalToSizedBuffer(b)
-		if err != nil {
-			return nil, err
-		}
-		return b[:n], nil
-	}
-}
-func (m *MsgAggregateOracleVotes) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_MsgAggregateOracleVotes.Merge(m, src)
-}
-func (m *MsgAggregateOracleVotes) XXX_Size() int {
-	return m.Size()
-}
-func (m *MsgAggregateOracleVotes) XXX_DiscardUnknown() {
-	xxx_messageInfo_MsgAggregateOracleVotes.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_MsgAggregateOracleVotes proto.InternalMessageInfo
-
-func (m *MsgAggregateOracleVotes) GetAuthority() string {
-	if m != nil {
-		return m.Authority
-	}
-	return ""
-}
-
-func (m *MsgAggregateOracleVotes) GetHeight() int64 {
-	if m != nil {
-		return m.Height
-	}
-	return 0
-}
-
-func (m *MsgAggregateOracleVotes) GetAggregations() []MarketAggregation {
-	if m != nil {
-		return m.Aggregations
-	}
-	return nil
-}
-
-type MsgAggregateOracleVotesResponse struct {
-}
-
-func (m *MsgAggregateOracleVotesResponse) Reset()         { *m = MsgAggregateOracleVotesResponse{} }
-func (m *MsgAggregateOracleVotesResponse) String() string { return proto.CompactTextString(m) }
-func (*MsgAggregateOracleVotesResponse) ProtoMessage()    {}
-func (*MsgAggregateOracleVotesResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_df79d59d4862f3b5, []int{1}
-}
-func (m *MsgAggregateOracleVotesResponse) XXX_Unmarshal(b []byte) error {
-	return m.Unmarshal(b)
-}
-func (m *MsgAggregateOracleVotesResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	if deterministic {
-		return xxx_messageInfo_MsgAggregateOracleVotesResponse.Marshal(b, m, deterministic)
-	} else {
-		b = b[:cap(b)]
-		n, err := m.MarshalToSizedBuffer(b)
-		if err != nil {
-			return nil, err
-		}
-		return b[:n], nil
-	}
-}
-func (m *MsgAggregateOracleVotesResponse) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_MsgAggregateOracleVotesResponse.Merge(m, src)
-}
-func (m *MsgAggregateOracleVotesResponse) XXX_Size() int {
-	return m.Size()
-}
-func (m *MsgAggregateOracleVotesResponse) XXX_DiscardUnknown() {
-	xxx_messageInfo_MsgAggregateOracleVotesResponse.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_MsgAggregateOracleVotesResponse proto.InternalMessageInfo
-
 type MsgUpdateParams struct {
 	Authority string `protobuf:"bytes,1,opt,name=authority,proto3" json:"authority,omitempty"`
 	Params    Params `protobuf:"bytes,2,opt,name=params,proto3" json:"params"`
@@ -140,7 +39,7 @@ func (m *MsgUpdateParams) Reset()         { *m = MsgUpdateParams{} }
 func (m *MsgUpdateParams) String() string { return proto.CompactTextString(m) }
 func (*MsgUpdateParams) ProtoMessage()    {}
 func (*MsgUpdateParams) Descriptor() ([]byte, []int) {
-	return fileDescriptor_df79d59d4862f3b5, []int{2}
+	return fileDescriptor_df79d59d4862f3b5, []int{0}
 }
 func (m *MsgUpdateParams) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -190,7 +89,7 @@ func (m *MsgUpdateParamsResponse) Reset()         { *m = MsgUpdateParamsResponse
 func (m *MsgUpdateParamsResponse) String() string { return proto.CompactTextString(m) }
 func (*MsgUpdateParamsResponse) ProtoMessage()    {}
 func (*MsgUpdateParamsResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_df79d59d4862f3b5, []int{3}
+	return fileDescriptor_df79d59d4862f3b5, []int{1}
 }
 func (m *MsgUpdateParamsResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -220,8 +119,6 @@ func (m *MsgUpdateParamsResponse) XXX_DiscardUnknown() {
 var xxx_messageInfo_MsgUpdateParamsResponse proto.InternalMessageInfo
 
 func init() {
-	proto.RegisterType((*MsgAggregateOracleVotes)(nil), "perpdex.oracle.v1.MsgAggregateOracleVotes")
-	proto.RegisterType((*MsgAggregateOracleVotesResponse)(nil), "perpdex.oracle.v1.MsgAggregateOracleVotesResponse")
 	proto.RegisterType((*MsgUpdateParams)(nil), "perpdex.oracle.v1.MsgUpdateParams")
 	proto.RegisterType((*MsgUpdateParamsResponse)(nil), "perpdex.oracle.v1.MsgUpdateParamsResponse")
 }
@@ -229,34 +126,28 @@ func init() {
 func init() { proto.RegisterFile("perpdex/oracle/v1/tx.proto", fileDescriptor_df79d59d4862f3b5) }
 
 var fileDescriptor_df79d59d4862f3b5 = []byte{
-	// 426 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x9c, 0x52, 0xc1, 0xae, 0xd2, 0x40,
-	0x14, 0xed, 0x58, 0x25, 0x61, 0x20, 0x1a, 0x1b, 0x22, 0xa5, 0x8b, 0x82, 0x8d, 0x0b, 0xd2, 0x48,
-	0x1b, 0x6a, 0xa2, 0x89, 0x3b, 0x58, 0xb8, 0xab, 0x9a, 0x1a, 0x5d, 0xb8, 0xd0, 0x0c, 0x74, 0x32,
-	0x6d, 0xa4, 0x4c, 0x33, 0x33, 0x10, 0xd8, 0x19, 0xbf, 0xc0, 0xf8, 0x25, 0x2c, 0xfc, 0x08, 0xdc,
-	0x11, 0x57, 0xae, 0x8c, 0x01, 0x13, 0x7e, 0xc3, 0xd0, 0x4e, 0x05, 0x42, 0x8d, 0x2f, 0x6f, 0xd5,
-	0xde, 0x39, 0x67, 0xee, 0x39, 0xe7, 0xce, 0x85, 0x46, 0x8a, 0x59, 0x1a, 0xe2, 0x85, 0x4b, 0x19,
-	0x1a, 0x4f, 0xb0, 0x3b, 0xef, 0xbb, 0x62, 0xe1, 0xa4, 0x8c, 0x0a, 0xaa, 0xdd, 0x95, 0x98, 0x93,
-	0x63, 0xce, 0xbc, 0x6f, 0x34, 0xc7, 0x94, 0x27, 0x94, 0xbb, 0x09, 0x27, 0x07, 0x6a, 0xc2, 0x49,
-	0xce, 0x35, 0x5a, 0x39, 0xf0, 0x3e, 0xab, 0xdc, 0xbc, 0x90, 0x50, 0x83, 0x50, 0x42, 0xf3, 0xf3,
-	0xc3, 0x9f, 0x3c, 0x35, 0x2f, 0x85, 0xa5, 0x4c, 0x86, 0x5b, 0xdf, 0x00, 0x6c, 0xfa, 0x9c, 0x0c,
-	0x08, 0x61, 0x98, 0x20, 0x81, 0x5f, 0x64, 0xe0, 0x1b, 0x2a, 0x30, 0xd7, 0x1e, 0xc3, 0x2a, 0x9a,
-	0x89, 0x88, 0xb2, 0x58, 0x2c, 0x75, 0xd0, 0x01, 0xdd, 0xea, 0x50, 0xff, 0xfe, 0xb5, 0xd7, 0x90,
-	0xb2, 0x83, 0x30, 0x64, 0x98, 0xf3, 0x57, 0x82, 0xc5, 0x53, 0x12, 0x1c, 0xa9, 0xda, 0x3d, 0x58,
-	0x89, 0x70, 0x4c, 0x22, 0xa1, 0xdf, 0xe8, 0x80, 0xae, 0x1a, 0xc8, 0x4a, 0x7b, 0x0e, 0xeb, 0x48,
-	0xea, 0xc4, 0x74, 0xca, 0x75, 0xb5, 0xa3, 0x76, 0x6b, 0xde, 0x03, 0xe7, 0x22, 0xbf, 0xe3, 0x23,
-	0xf6, 0x01, 0x8b, 0xc1, 0x91, 0x3c, 0xbc, 0xb9, 0xfe, 0xd9, 0x56, 0x82, 0xb3, 0xfb, 0x4f, 0x6f,
-	0x7f, 0xda, 0xaf, 0xec, 0xa3, 0xae, 0x75, 0x1f, 0xb6, 0xff, 0x11, 0x25, 0xc0, 0x3c, 0xa5, 0x53,
-	0x8e, 0xad, 0x2f, 0x00, 0xde, 0xf1, 0x39, 0x79, 0x9d, 0x86, 0x48, 0xe0, 0x97, 0x88, 0xa1, 0xe4,
-	0xfa, 0x31, 0x9f, 0xc0, 0x4a, 0x9a, 0x75, 0xc8, 0x62, 0xd6, 0xbc, 0x56, 0x49, 0x90, 0x5c, 0x42,
-	0xba, 0x97, 0xf4, 0x0b, 0xdf, 0xad, 0xec, 0x09, 0x4e, 0x3d, 0x15, 0x7e, 0xbd, 0xdf, 0x00, 0xaa,
-	0x3e, 0x27, 0xda, 0x1c, 0x36, 0x4a, 0x9f, 0xc8, 0x2e, 0x1b, 0x5e, 0xf9, 0x0c, 0x0c, 0xef, 0xea,
-	0xdc, 0x42, 0x5f, 0x7b, 0x07, 0xeb, 0x67, 0xb3, 0xb2, 0xca, 0x7b, 0x9c, 0x72, 0x0c, 0xfb, 0xff,
-	0x9c, 0xa2, 0xbf, 0x71, 0xeb, 0xe3, 0x7e, 0x65, 0x83, 0xe1, 0xb3, 0xf5, 0xd6, 0x04, 0x9b, 0xad,
-	0x09, 0x7e, 0x6d, 0x4d, 0xf0, 0x79, 0x67, 0x2a, 0x9b, 0x9d, 0xa9, 0xfc, 0xd8, 0x99, 0xca, 0xdb,
-	0x87, 0x24, 0x16, 0xd1, 0x6c, 0xe4, 0x8c, 0x69, 0xe2, 0x16, 0xab, 0x2c, 0xbf, 0xbd, 0x49, 0xdf,
-	0xfd, 0xbb, 0xd7, 0x62, 0x99, 0x62, 0x3e, 0xaa, 0x64, 0x4b, 0xfd, 0xe8, 0x4f, 0x00, 0x00, 0x00,
-	0xff, 0xff, 0x35, 0x39, 0x69, 0x19, 0x6f, 0x03, 0x00, 0x00,
+	// 321 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xe2, 0x92, 0x2a, 0x48, 0x2d, 0x2a,
+	0x48, 0x49, 0xad, 0xd0, 0xcf, 0x2f, 0x4a, 0x4c, 0xce, 0x49, 0xd5, 0x2f, 0x33, 0xd4, 0x2f, 0xa9,
+	0xd0, 0x2b, 0x28, 0xca, 0x2f, 0xc9, 0x17, 0x12, 0x84, 0xca, 0xe9, 0x41, 0xe4, 0xf4, 0xca, 0x0c,
+	0xa5, 0xc4, 0x93, 0xf3, 0x8b, 0x73, 0xf3, 0x8b, 0xf5, 0x73, 0x8b, 0xd3, 0x41, 0x4a, 0x73, 0x8b,
+	0xd3, 0x21, 0x6a, 0xa5, 0x24, 0x21, 0x12, 0xf1, 0x60, 0x9e, 0x3e, 0x84, 0x03, 0x95, 0x12, 0x49,
+	0xcf, 0x4f, 0xcf, 0x87, 0x88, 0x83, 0x58, 0x50, 0x51, 0x39, 0x4c, 0x8b, 0xa1, 0xd6, 0x80, 0xe5,
+	0x95, 0x26, 0x31, 0x72, 0xf1, 0xfb, 0x16, 0xa7, 0x87, 0x16, 0xa4, 0x24, 0x96, 0xa4, 0x06, 0x24,
+	0x16, 0x25, 0xe6, 0x16, 0x0b, 0x99, 0x71, 0x71, 0x26, 0x96, 0x96, 0x64, 0xe4, 0x17, 0x65, 0x96,
+	0x54, 0x4a, 0x30, 0x2a, 0x30, 0x6a, 0x70, 0x3a, 0x49, 0x5c, 0xda, 0xa2, 0x2b, 0x02, 0xb5, 0xce,
+	0x31, 0x25, 0xa5, 0x28, 0xb5, 0xb8, 0x38, 0xb8, 0xa4, 0x28, 0x33, 0x2f, 0x3d, 0x08, 0xa1, 0x54,
+	0xc8, 0x9c, 0x8b, 0xad, 0x00, 0x6c, 0x82, 0x04, 0x93, 0x02, 0xa3, 0x06, 0xb7, 0x91, 0xa4, 0x1e,
+	0x86, 0xcf, 0xf4, 0x20, 0x56, 0x38, 0xb1, 0x9c, 0xb8, 0x27, 0xcf, 0x10, 0x04, 0x55, 0x6e, 0xc5,
+	0xd7, 0xf4, 0x7c, 0x83, 0x16, 0xc2, 0x20, 0x25, 0x49, 0x2e, 0x71, 0x34, 0x37, 0x05, 0xa5, 0x16,
+	0x17, 0xe4, 0xe7, 0x15, 0xa7, 0x1a, 0xe5, 0x70, 0x31, 0xfb, 0x16, 0xa7, 0x0b, 0xc5, 0x71, 0xf1,
+	0xa0, 0x38, 0x59, 0x09, 0x8b, 0x55, 0x68, 0x46, 0x48, 0x69, 0x11, 0x56, 0x03, 0xb3, 0x46, 0x8a,
+	0xb5, 0xe1, 0xf9, 0x06, 0x2d, 0x46, 0x27, 0xb7, 0x13, 0x8f, 0xe4, 0x18, 0x2f, 0x3c, 0x92, 0x63,
+	0x7c, 0xf0, 0x48, 0x8e, 0x71, 0xc2, 0x63, 0x39, 0x86, 0x0b, 0x8f, 0xe5, 0x18, 0x6e, 0x3c, 0x96,
+	0x63, 0x88, 0xd2, 0x49, 0xcf, 0x2c, 0xc9, 0x28, 0x4d, 0xd2, 0x4b, 0xce, 0xcf, 0xd5, 0x87, 0x05,
+	0x31, 0x94, 0xd6, 0xcd, 0x31, 0xd4, 0x87, 0x87, 0x77, 0x49, 0x65, 0x41, 0x6a, 0x71, 0x12, 0x1b,
+	0x38, 0xb0, 0x8d, 0x01, 0x01, 0x00, 0x00, 0xff, 0xff, 0x8f, 0xbc, 0x5e, 0x55, 0x07, 0x02, 0x00,
+	0x00,
 }
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -271,7 +162,6 @@ const _ = grpc.SupportPackageIsVersion4
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://godoc.org/google.golang.org/grpc#ClientConn.NewStream.
 type MsgClient interface {
-	AggregateOracleVotes(ctx context.Context, in *MsgAggregateOracleVotes, opts ...grpc.CallOption) (*MsgAggregateOracleVotesResponse, error)
 	UpdateParams(ctx context.Context, in *MsgUpdateParams, opts ...grpc.CallOption) (*MsgUpdateParamsResponse, error)
 }
 
@@ -281,15 +171,6 @@ type msgClient struct {
 
 func NewMsgClient(cc grpc1.ClientConn) MsgClient {
 	return &msgClient{cc}
-}
-
-func (c *msgClient) AggregateOracleVotes(ctx context.Context, in *MsgAggregateOracleVotes, opts ...grpc.CallOption) (*MsgAggregateOracleVotesResponse, error) {
-	out := new(MsgAggregateOracleVotesResponse)
-	err := c.cc.Invoke(ctx, "/perpdex.oracle.v1.Msg/AggregateOracleVotes", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
 }
 
 func (c *msgClient) UpdateParams(ctx context.Context, in *MsgUpdateParams, opts ...grpc.CallOption) (*MsgUpdateParamsResponse, error) {
@@ -303,7 +184,6 @@ func (c *msgClient) UpdateParams(ctx context.Context, in *MsgUpdateParams, opts 
 
 // MsgServer is the server API for Msg service.
 type MsgServer interface {
-	AggregateOracleVotes(context.Context, *MsgAggregateOracleVotes) (*MsgAggregateOracleVotesResponse, error)
 	UpdateParams(context.Context, *MsgUpdateParams) (*MsgUpdateParamsResponse, error)
 }
 
@@ -311,33 +191,12 @@ type MsgServer interface {
 type UnimplementedMsgServer struct {
 }
 
-func (*UnimplementedMsgServer) AggregateOracleVotes(ctx context.Context, req *MsgAggregateOracleVotes) (*MsgAggregateOracleVotesResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method AggregateOracleVotes not implemented")
-}
 func (*UnimplementedMsgServer) UpdateParams(ctx context.Context, req *MsgUpdateParams) (*MsgUpdateParamsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method UpdateParams not implemented")
 }
 
 func RegisterMsgServer(s grpc1.Server, srv MsgServer) {
 	s.RegisterService(&_Msg_serviceDesc, srv)
-}
-
-func _Msg_AggregateOracleVotes_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MsgAggregateOracleVotes)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(MsgServer).AggregateOracleVotes(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/perpdex.oracle.v1.Msg/AggregateOracleVotes",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MsgServer).AggregateOracleVotes(ctx, req.(*MsgAggregateOracleVotes))
-	}
-	return interceptor(ctx, in, info, handler)
 }
 
 func _Msg_UpdateParams_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -364,88 +223,12 @@ var _Msg_serviceDesc = grpc.ServiceDesc{
 	HandlerType: (*MsgServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "AggregateOracleVotes",
-			Handler:    _Msg_AggregateOracleVotes_Handler,
-		},
-		{
 			MethodName: "UpdateParams",
 			Handler:    _Msg_UpdateParams_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "perpdex/oracle/v1/tx.proto",
-}
-
-func (m *MsgAggregateOracleVotes) Marshal() (dAtA []byte, err error) {
-	size := m.Size()
-	dAtA = make([]byte, size)
-	n, err := m.MarshalToSizedBuffer(dAtA[:size])
-	if err != nil {
-		return nil, err
-	}
-	return dAtA[:n], nil
-}
-
-func (m *MsgAggregateOracleVotes) MarshalTo(dAtA []byte) (int, error) {
-	size := m.Size()
-	return m.MarshalToSizedBuffer(dAtA[:size])
-}
-
-func (m *MsgAggregateOracleVotes) MarshalToSizedBuffer(dAtA []byte) (int, error) {
-	i := len(dAtA)
-	_ = i
-	var l int
-	_ = l
-	if len(m.Aggregations) > 0 {
-		for iNdEx := len(m.Aggregations) - 1; iNdEx >= 0; iNdEx-- {
-			{
-				size, err := m.Aggregations[iNdEx].MarshalToSizedBuffer(dAtA[:i])
-				if err != nil {
-					return 0, err
-				}
-				i -= size
-				i = encodeVarintTx(dAtA, i, uint64(size))
-			}
-			i--
-			dAtA[i] = 0x1a
-		}
-	}
-	if m.Height != 0 {
-		i = encodeVarintTx(dAtA, i, uint64(m.Height))
-		i--
-		dAtA[i] = 0x10
-	}
-	if len(m.Authority) > 0 {
-		i -= len(m.Authority)
-		copy(dAtA[i:], m.Authority)
-		i = encodeVarintTx(dAtA, i, uint64(len(m.Authority)))
-		i--
-		dAtA[i] = 0xa
-	}
-	return len(dAtA) - i, nil
-}
-
-func (m *MsgAggregateOracleVotesResponse) Marshal() (dAtA []byte, err error) {
-	size := m.Size()
-	dAtA = make([]byte, size)
-	n, err := m.MarshalToSizedBuffer(dAtA[:size])
-	if err != nil {
-		return nil, err
-	}
-	return dAtA[:n], nil
-}
-
-func (m *MsgAggregateOracleVotesResponse) MarshalTo(dAtA []byte) (int, error) {
-	size := m.Size()
-	return m.MarshalToSizedBuffer(dAtA[:size])
-}
-
-func (m *MsgAggregateOracleVotesResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
-	i := len(dAtA)
-	_ = i
-	var l int
-	_ = l
-	return len(dAtA) - i, nil
 }
 
 func (m *MsgUpdateParams) Marshal() (dAtA []byte, err error) {
@@ -522,37 +305,6 @@ func encodeVarintTx(dAtA []byte, offset int, v uint64) int {
 	dAtA[offset] = uint8(v)
 	return base
 }
-func (m *MsgAggregateOracleVotes) Size() (n int) {
-	if m == nil {
-		return 0
-	}
-	var l int
-	_ = l
-	l = len(m.Authority)
-	if l > 0 {
-		n += 1 + l + sovTx(uint64(l))
-	}
-	if m.Height != 0 {
-		n += 1 + sovTx(uint64(m.Height))
-	}
-	if len(m.Aggregations) > 0 {
-		for _, e := range m.Aggregations {
-			l = e.Size()
-			n += 1 + l + sovTx(uint64(l))
-		}
-	}
-	return n
-}
-
-func (m *MsgAggregateOracleVotesResponse) Size() (n int) {
-	if m == nil {
-		return 0
-	}
-	var l int
-	_ = l
-	return n
-}
-
 func (m *MsgUpdateParams) Size() (n int) {
 	if m == nil {
 		return 0
@@ -582,191 +334,6 @@ func sovTx(x uint64) (n int) {
 }
 func sozTx(x uint64) (n int) {
 	return sovTx(uint64((x << 1) ^ uint64((int64(x) >> 63))))
-}
-func (m *MsgAggregateOracleVotes) Unmarshal(dAtA []byte) error {
-	l := len(dAtA)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowTx
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := dAtA[iNdEx]
-			iNdEx++
-			wire |= uint64(b&0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: MsgAggregateOracleVotes: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: MsgAggregateOracleVotes: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		case 1:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Authority", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowTx
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthTx
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthTx
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Authority = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		case 2:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Height", wireType)
-			}
-			m.Height = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowTx
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.Height |= int64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 3:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Aggregations", wireType)
-			}
-			var msglen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowTx
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				msglen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if msglen < 0 {
-				return ErrInvalidLengthTx
-			}
-			postIndex := iNdEx + msglen
-			if postIndex < 0 {
-				return ErrInvalidLengthTx
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Aggregations = append(m.Aggregations, MarketAggregation{})
-			if err := m.Aggregations[len(m.Aggregations)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
-				return err
-			}
-			iNdEx = postIndex
-		default:
-			iNdEx = preIndex
-			skippy, err := skipTx(dAtA[iNdEx:])
-			if err != nil {
-				return err
-			}
-			if (skippy < 0) || (iNdEx+skippy) < 0 {
-				return ErrInvalidLengthTx
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
-}
-func (m *MsgAggregateOracleVotesResponse) Unmarshal(dAtA []byte) error {
-	l := len(dAtA)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowTx
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := dAtA[iNdEx]
-			iNdEx++
-			wire |= uint64(b&0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: MsgAggregateOracleVotesResponse: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: MsgAggregateOracleVotesResponse: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		default:
-			iNdEx = preIndex
-			skippy, err := skipTx(dAtA[iNdEx:])
-			if err != nil {
-				return err
-			}
-			if (skippy < 0) || (iNdEx+skippy) < 0 {
-				return ErrInvalidLengthTx
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
 }
 func (m *MsgUpdateParams) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)

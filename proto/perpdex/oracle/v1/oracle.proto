@@ -61,11 +61,3 @@ message OracleVote {
   repeated MarketPrice prices = 1 [(gogoproto.nullable) = false];
   int64 submitted_at_height = 2;
 }
-
-// MarketAggregation is the per-market output of the proposer's weighted
-// median run over the previous block's vote extensions.
-message MarketAggregation {
-  uint32 market_index = 1;
-  uint32 index_price = 2;
-  uint32 mark_price = 3;
-}

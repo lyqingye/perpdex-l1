@@ -2,61 +2,76 @@ package keeper
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 
 	abci "github.com/cometbft/cometbft/abci/types"
 	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 
-	"github.com/cosmos/cosmos-sdk/client"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
+	abcicodec "github.com/perpdex/perpdex-l1/x/oracle/abci/codec"
+	abcive "github.com/perpdex/perpdex-l1/x/oracle/abci/ve"
 	"github.com/perpdex/perpdex-l1/x/oracle/types"
 )
 
+// NumInjectedTxs is the number of proposer-injected byte streams the
+// oracle ABCI handler prepends to a block proposal. Currently fixed at 1
+// (the encoded ExtendedCommitInfo) but kept as a named constant so future
+// extensions (e.g. an MEV ackowledgement bundle) can be wired in without a
+// magic-number search.
+const NumInjectedTxs = 1
+
+// OracleInfoIndex is the position of the proposer-injected
+// ExtendedCommitInfo bytes inside the block's tx slice.
+const OracleInfoIndex = 0
+
 // VoteExtensionHandler bundles the four ABCI++ handlers required by the
-// dydx/Slinky-style oracle pipeline. They are wired in app.go via
-// `bApp.SetExtendVoteHandler(...)` etc. and become no-ops when
-// `Params.VoteExtensionEnabled` is false (or before the consensus-level
-// `VoteExtensionsEnableHeight`).
+// dydx/Slinky-style oracle pipeline.
 //
-// Pipeline summary:
+// Lifecycle of one block (height H, vote extensions enabled):
 //
-//  1. ExtendVote: each validator's local node calls PriceFetcher and signs
-//     the resulting OracleVote payload as part of its prevote.
-//  2. VerifyVoteExtension: peers stateless-validate the payload (decode +
-//     non-zero prices + height match). Cryptographic signature verification
-//     of the extension itself is performed by cometbft / baseapp.
-//  3. PrepareProposal: the proposer walks the previous block's
-//     ExtendedCommitInfo (req.LocalLastCommit), decodes every commit-flag
-//     vote's extension, runs a voting-power-weighted median per market,
-//     wraps the result in MsgAggregateOracleVotes and prepends it as the
-//     first transaction of the new block.
-//  4. ProcessProposal: every other validator structurally verifies that
-//     the first tx is the proposer-injected MsgAggregateOracleVotes
-//     signed by the gov authority. Cryptographic re-derivation against
-//     the previous block's vote extensions is left as a follow-up because
-//     RequestProcessProposal does not carry ExtendedCommitInfo by default;
-//     until that is wired the pipeline relies on the cometbft 2/3-honest
-//     assumption for a single block of price freshness, identical to the
-//     trust model dydx ran with before the slinky-2 hardening.
+//   ┌───────────────────────────────────────────────────────────────────┐
+//   │ T0  ExtendVote (every validator, off-consensus goroutine)        │
+//   │       reads daemon.Cache → marshals OracleVote → veCodec.Encode   │
+//   │ T1  VerifyVoteExtension (every validator on each peer's VE)       │
+//   │       veCodec.Decode + per-VE schema check                        │
+//   │ T2  CometBFT ships LocalLastCommit (height H-1) to proposer of H  │
+//   │ T3  PrepareProposal (proposer of H)                               │
+//   │       ecCodec.Encode(req.LocalLastCommit) → Txs[0]                │
+//   │ T4  ProcessProposal (every other validator on the proposed block) │
+//   │       ecCodec.Decode(Txs[0]) → ValidateExtendedCommit (2/3+)      │
+//   │ T5  PreBlock (every validator on the proposed block, in finalize) │
+//   │       ecCodec.Decode(Txs[0]) → weighted median per market →       │
+//   │       Keeper.SetPrice(...) writes through to IAVL                 │
+//   └───────────────────────────────────────────────────────────────────┘
+//
+// The pipeline mirrors what dydx v4 does with skip-mev/connect (see
+// `abci/proposals` and `abci/preblock/oracle` upstream); the byte
+// representation we inject as Txs[0] is the cometbft-native
+// ExtendedCommitInfo, not a perpdex-specific SDK message, so PreBlock can
+// re-derive the aggregate independently of the proposer.
 type VoteExtensionHandler struct {
-	keeper    Keeper
-	txConfig  client.TxConfig
-	govAuthor string
+	keeper Keeper
+
+	veCodec abcicodec.VoteExtensionCodec
+	ecCodec abcicodec.ExtendedCommitCodec
 }
 
-// NewVoteExtensionHandler constructs a handler bundle. `govAuthor` is the
-// bech32-encoded gov module account address used as the signer of the
-// proposer-injected MsgAggregateOracleVotes.
-func NewVoteExtensionHandler(k Keeper, txConfig client.TxConfig, govAuthor string) *VoteExtensionHandler {
-	return &VoteExtensionHandler{keeper: k, txConfig: txConfig, govAuthor: govAuthor}
+// NewVoteExtensionHandler constructs a handler bundle. The supplied codecs
+// MUST be the same ones registered by the chain's PreBlock — encoding and
+// decoding are otherwise asymmetric and the chain will refuse blocks.
+func NewVoteExtensionHandler(
+	k Keeper,
+	veCodec abcicodec.VoteExtensionCodec,
+	ecCodec abcicodec.ExtendedCommitCodec,
+) *VoteExtensionHandler {
+	return &VoteExtensionHandler{keeper: k, veCodec: veCodec, ecCodec: ecCodec}
 }
 
 // veEnabled returns true when both the on-chain Params toggle and the
 // cometbft consensus param agree that vote-extensions are active for the
-// current height. We check both because the on-chain switch is a soft
-// kill-switch for this module while the consensus param is the immutable
-// source of truth on whether the network is delivering VEs at all.
+// current height.
 func (h *VoteExtensionHandler) veEnabled(ctx sdk.Context, height int64) bool {
 	params, err := h.keeper.Params.Get(ctx)
 	if err != nil || !params.VoteExtensionEnabled {
@@ -69,9 +84,14 @@ func (h *VoteExtensionHandler) veEnabled(ctx sdk.Context, height int64) bool {
 	return height > cp.Abci.VoteExtensionsEnableHeight
 }
 
-// ExtendVote returns the local oracle operator's price set as the vote
+// ExtendVote returns the local oracle daemon's price set as the vote
 // extension. With vote_extension_enabled=false (or before the enable
 // height) it returns an empty payload so consensus is never blocked.
+//
+// Errors are deliberately swallowed and replaced with empty payloads:
+// returning an error from ExtendVote would crash cometbft, so the
+// validator instead opts out of this single block (the proposer will
+// weight other validators' votes accordingly).
 func (h *VoteExtensionHandler) ExtendVote() sdk.ExtendVoteHandler {
 	return func(ctx sdk.Context, req *abci.RequestExtendVote) (*abci.ResponseExtendVote, error) {
 		if !h.veEnabled(ctx, req.Height) {
@@ -80,9 +100,6 @@ func (h *VoteExtensionHandler) ExtendVote() sdk.ExtendVoteHandler {
 		fetcher := h.keeper.PriceFetcher()
 		prices, err := fetcher.FetchPrices(ctx, req.Height)
 		if err != nil {
-			// Returning an error here would crash the validator; instead
-			// emit an empty payload so peers see "no opinion" and the
-			// proposer can still produce a block.
 			return &abci.ResponseExtendVote{}, nil
 		}
 		filtered := make([]types.MarketPrice, 0, len(prices))
@@ -96,7 +113,7 @@ func (h *VoteExtensionHandler) ExtendVote() sdk.ExtendVoteHandler {
 			Prices:            filtered,
 			SubmittedAtHeight: req.Height,
 		}
-		bz, err := vote.Marshal()
+		bz, err := h.veCodec.Encode(vote)
 		if err != nil {
 			return &abci.ResponseExtendVote{}, nil
 		}
@@ -104,60 +121,60 @@ func (h *VoteExtensionHandler) ExtendVote() sdk.ExtendVoteHandler {
 	}
 }
 
-// VerifyVoteExtension performs stateless validation of a peer's payload:
-// it must decode, advertise the same height, and contain only non-zero
-// prices.
+// VerifyVoteExtension performs stateless validation of a peer's payload.
+// Empty payloads are accepted (the validator is opting out). Non-empty
+// payloads must decode, advertise the same height, and contain only
+// non-zero, non-duplicated prices.
 func (h *VoteExtensionHandler) VerifyVoteExtension() sdk.VerifyVoteExtensionHandler {
 	return func(ctx sdk.Context, req *abci.RequestVerifyVoteExtension) (*abci.ResponseVerifyVoteExtension, error) {
 		if !h.veEnabled(ctx, req.Height) {
 			if len(req.VoteExtension) > 0 {
-				return &abci.ResponseVerifyVoteExtension{Status: abci.ResponseVerifyVoteExtension_REJECT}, nil
+				return reject(), nil
 			}
-			return &abci.ResponseVerifyVoteExtension{Status: abci.ResponseVerifyVoteExtension_ACCEPT}, nil
+			return accept(), nil
 		}
 		if len(req.VoteExtension) == 0 {
-			// Validators are allowed to sit out a single block (no opinion).
-			return &abci.ResponseVerifyVoteExtension{Status: abci.ResponseVerifyVoteExtension_ACCEPT}, nil
+			return accept(), nil
 		}
-		var v types.OracleVote
-		if err := v.Unmarshal(req.VoteExtension); err != nil {
-			return &abci.ResponseVerifyVoteExtension{Status: abci.ResponseVerifyVoteExtension_REJECT}, nil
+		v, err := h.veCodec.Decode(req.VoteExtension)
+		if err != nil {
+			return reject(), nil
 		}
 		if v.SubmittedAtHeight != req.Height {
-			return &abci.ResponseVerifyVoteExtension{Status: abci.ResponseVerifyVoteExtension_REJECT}, nil
+			return reject(), nil
 		}
 		seen := map[uint32]struct{}{}
 		for _, mp := range v.Prices {
 			if mp.IndexPrice == 0 || mp.MarkPrice == 0 {
-				return &abci.ResponseVerifyVoteExtension{Status: abci.ResponseVerifyVoteExtension_REJECT}, nil
+				return reject(), nil
 			}
 			if _, dup := seen[mp.MarketIndex]; dup {
-				return &abci.ResponseVerifyVoteExtension{Status: abci.ResponseVerifyVoteExtension_REJECT}, nil
+				return reject(), nil
 			}
 			seen[mp.MarketIndex] = struct{}{}
 		}
-		return &abci.ResponseVerifyVoteExtension{Status: abci.ResponseVerifyVoteExtension_ACCEPT}, nil
+		return accept(), nil
 	}
 }
 
-// PrepareProposal aggregates the previous block's vote extensions and
-// prepends the resulting MsgAggregateOracleVotes as the first transaction
-// of the new block.
+// PrepareProposal injects the previous block's ExtendedCommitInfo as
+// Txs[0] of the new block proposal. It does NOT aggregate — that work
+// happens in ProcessProposal (re-validation) and PreBlock (state write).
+// Aggregating here would force every validator to redo the same work in
+// PreBlock anyway; pushing the bytes around verbatim avoids the
+// duplication and matches the dydx/Connect upstream architecture.
 func (h *VoteExtensionHandler) PrepareProposal(defaultHandler sdk.PrepareProposalHandler) sdk.PrepareProposalHandler {
 	return func(ctx sdk.Context, req *abci.RequestPrepareProposal) (*abci.ResponsePrepareProposal, error) {
 		if !h.veEnabled(ctx, req.Height) {
 			return defaultHandler(ctx, req)
 		}
-		injectedTxBz, err := h.buildInjectedTx(ctx, req)
-		if err != nil || len(injectedTxBz) == 0 {
-			// Aggregation failed (no quorum, codec error, etc.). Fall
-			// through to the default handler so block production keeps
-			// running with stale prices instead of stalling consensus.
+		extInfoBz, err := h.ecCodec.Encode(req.LocalLastCommit)
+		if err != nil {
+			// Fall through with a normal proposal — at worst the
+			// chain misses an oracle update for this block.
 			return defaultHandler(ctx, req)
 		}
-		// Reserve room for the injected tx so the wrapped handler does
-		// not over-fill the block.
-		injectedSize := int64(len(injectedTxBz))
+		injectedSize := int64(len(extInfoBz))
 		if injectedSize >= req.MaxTxBytes {
 			return defaultHandler(ctx, req)
 		}
@@ -166,198 +183,57 @@ func (h *VoteExtensionHandler) PrepareProposal(defaultHandler sdk.PrepareProposa
 		if err != nil {
 			return nil, err
 		}
-		resp.Txs = injectAndResize(resp.Txs, injectedTxBz, req.MaxTxBytes+injectedSize)
+		resp.Txs = injectAndResize(resp.Txs, extInfoBz, req.MaxTxBytes+injectedSize)
 		return resp, nil
 	}
 }
 
-// ProcessProposal verifies the proposer-injected MsgAggregateOracleVotes
-// before deferring to the default handler for the rest of the block.
+// ProcessProposal verifies that Txs[0] is a well-formed
+// ExtendedCommitInfo carrying a 2/3+ supermajority of voting power. On
+// success it strips Txs[0] before forwarding to the wrapped default
+// handler so the rest of the SDK pipeline does not try to interpret the
+// raw bytes as an SDK transaction.
 func (h *VoteExtensionHandler) ProcessProposal(defaultHandler sdk.ProcessProposalHandler) sdk.ProcessProposalHandler {
 	return func(ctx sdk.Context, req *abci.RequestProcessProposal) (*abci.ResponseProcessProposal, error) {
 		if !h.veEnabled(ctx, req.Height) {
 			return defaultHandler(ctx, req)
 		}
-		if len(req.Txs) == 0 {
-			return &abci.ResponseProcessProposal{Status: abci.ResponseProcessProposal_REJECT}, nil
+		if len(req.Txs) < NumInjectedTxs {
+			return rejectProposal(), nil
 		}
-		tx, err := h.txConfig.TxDecoder()(req.Txs[0])
+		extInfoBz := req.Txs[OracleInfoIndex]
+		extInfo, err := h.ecCodec.Decode(extInfoBz)
 		if err != nil {
-			return &abci.ResponseProcessProposal{Status: abci.ResponseProcessProposal_REJECT}, nil
+			return rejectProposal(), nil
 		}
-		msgs := tx.GetMsgs()
-		if len(msgs) != 1 {
-			return &abci.ResponseProcessProposal{Status: abci.ResponseProcessProposal_REJECT}, nil
+		if extInfo.Round < 0 {
+			return rejectProposal(), nil
 		}
-		agg, ok := msgs[0].(*types.MsgAggregateOracleVotes)
-		if !ok {
-			return &abci.ResponseProcessProposal{Status: abci.ResponseProcessProposal_REJECT}, nil
+		if err := abcive.ValidateExtendedCommit(extInfo); err != nil {
+			return rejectProposal(), nil
 		}
-		if agg.Authority != h.govAuthor {
-			return &abci.ResponseProcessProposal{Status: abci.ResponseProcessProposal_REJECT}, nil
+		// Strip Txs[0] before forwarding so baseapp's TxDecoder doesn't
+		// try to interpret the raw cometabci bytes as an SDK Tx.
+		req.Txs = req.Txs[NumInjectedTxs:]
+		resp, err := defaultHandler(ctx, req)
+		if err != nil {
+			return rejectProposal(), err
 		}
-		if agg.Height != req.Height {
-			return &abci.ResponseProcessProposal{Status: abci.ResponseProcessProposal_REJECT}, nil
-		}
-		if err := agg.ValidateBasic(); err != nil {
-			return &abci.ResponseProcessProposal{Status: abci.ResponseProcessProposal_REJECT}, nil
-		}
-		return defaultHandler(ctx, req)
+		// Restore Txs[0] so any other caller of `req` sees the same
+		// shape we received from cometbft. baseapp doesn't actually
+		// re-read req after ProcessProposal returns but downstream
+		// hooks (and tests) expect ext info to be present.
+		req.Txs = append([][]byte{extInfoBz}, req.Txs...)
+		return resp, nil
 	}
-}
-
-// buildInjectedTx walks the previous-block ExtendedCommitInfo, decodes
-// every commit-flag vote extension as OracleVote, runs a voting-power
-// weighted median per market and returns the encoded
-// MsgAggregateOracleVotes transaction. Returns an empty slice (no error)
-// when no market hits the configured quorum.
-func (h *VoteExtensionHandler) buildInjectedTx(ctx sdk.Context, req *abci.RequestPrepareProposal) ([]byte, error) {
-	params, err := h.keeper.Params.Get(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	votes := []types.OracleVote{}
-	weights := []uint64{}
-	totalCommittedPower := int64(0)
-	for _, vote := range req.LocalLastCommit.Votes {
-		if vote.BlockIdFlag != cmtproto.BlockIDFlagCommit {
-			continue
-		}
-		totalCommittedPower += vote.Validator.Power
-		if len(vote.VoteExtension) == 0 {
-			continue
-		}
-		var ov types.OracleVote
-		if err := ov.Unmarshal(vote.VoteExtension); err != nil {
-			continue
-		}
-		votes = append(votes, ov)
-		weights = append(weights, uint64(vote.Validator.Power))
-	}
-	if totalCommittedPower == 0 || len(votes) == 0 {
-		return nil, nil
-	}
-
-	aggregations := h.aggregate(votes, weights, totalCommittedPower, params)
-	if len(aggregations) == 0 {
-		return nil, nil
-	}
-	msg := &types.MsgAggregateOracleVotes{
-		Authority:    h.govAuthor,
-		Height:       req.Height,
-		Aggregations: aggregations,
-	}
-	return h.encodeInjectedTx(msg)
-}
-
-// aggregate runs the voting-power weighted median per market while honouring
-// the quorum (`min_voting_power_ratio`) and outlier (`deviation_threshold_bps`)
-// guards from Params.
-func (h *VoteExtensionHandler) aggregate(votes []types.OracleVote, weights []uint64, totalCommittedPower int64, params types.Params) []types.MarketAggregation {
-	type sample struct {
-		index  uint32
-		mark   uint32
-		weight uint64
-	}
-	collected := map[uint32][]sample{}
-	for i, v := range votes {
-		w := weights[i]
-		if w == 0 {
-			continue
-		}
-		for _, mp := range v.Prices {
-			collected[mp.MarketIndex] = append(collected[mp.MarketIndex], sample{
-				index:  mp.IndexPrice,
-				mark:   mp.MarkPrice,
-				weight: w,
-			})
-		}
-	}
-	out := make([]types.MarketAggregation, 0, len(collected))
-	quorumNumerator := uint64(params.MinVotingPowerRatio)
-	for marketIdx, samples := range collected {
-		var marketPower uint64
-		idxVals := make([]uint32, 0, len(samples))
-		idxWeights := make([]uint64, 0, len(samples))
-		mkVals := make([]uint32, 0, len(samples))
-		mkWeights := make([]uint64, 0, len(samples))
-		for _, s := range samples {
-			marketPower += s.weight
-			idxVals = append(idxVals, s.index)
-			idxWeights = append(idxWeights, s.weight)
-			mkVals = append(mkVals, s.mark)
-			mkWeights = append(mkWeights, s.weight)
-		}
-		if quorumNumerator > 0 && uint64(totalCommittedPower) > 0 {
-			// quorum check: marketPower * 10000 >= total * minRatioBps
-			if marketPower*10_000 < uint64(totalCommittedPower)*quorumNumerator {
-				continue
-			}
-		}
-		idx := WeightedMedian(idxVals, idxWeights)
-		mk := WeightedMedian(mkVals, mkWeights)
-		if idx == 0 || mk == 0 {
-			continue
-		}
-		// Optional outlier rejection: drop samples beyond
-		// `deviation_threshold_bps` of the median, then re-run.
-		if params.DeviationThresholdBps > 0 {
-			idxVals2 := make([]uint32, 0, len(samples))
-			idxWeights2 := make([]uint64, 0, len(samples))
-			mkVals2 := make([]uint32, 0, len(samples))
-			mkWeights2 := make([]uint64, 0, len(samples))
-			for j, v := range idxVals {
-				if !withinBps(v, idx, params.DeviationThresholdBps) {
-					continue
-				}
-				if !withinBps(mkVals[j], mk, params.DeviationThresholdBps) {
-					continue
-				}
-				idxVals2 = append(idxVals2, v)
-				idxWeights2 = append(idxWeights2, idxWeights[j])
-				mkVals2 = append(mkVals2, mkVals[j])
-				mkWeights2 = append(mkWeights2, mkWeights[j])
-			}
-			if len(idxVals2) > 0 {
-				idx = WeightedMedian(idxVals2, idxWeights2)
-				mk = WeightedMedian(mkVals2, mkWeights2)
-			}
-			if idx == 0 || mk == 0 {
-				continue
-			}
-		}
-		out = append(out, types.MarketAggregation{
-			MarketIndex: marketIdx,
-			IndexPrice:  idx,
-			MarkPrice:   mk,
-		})
-	}
-	return out
-}
-
-// encodeInjectedTx wraps MsgAggregateOracleVotes in a Cosmos transaction
-// with empty signatures. The chain's `OracleInjectedTxDecorator` ante
-// recognises this proposer-injected pattern and routes it past the
-// signature-verification decorators.
-func (h *VoteExtensionHandler) encodeInjectedTx(msg *types.MsgAggregateOracleVotes) ([]byte, error) {
-	builder := h.txConfig.NewTxBuilder()
-	if err := builder.SetMsgs(msg); err != nil {
-		return nil, fmt.Errorf("oracle: encode injected tx: %w", err)
-	}
-	bz, err := h.txConfig.TxEncoder()(builder.GetTx())
-	if err != nil {
-		return nil, fmt.Errorf("oracle: encode injected tx: %w", err)
-	}
-	return bz, nil
 }
 
 // injectAndResize prepends `injectTx` to `appTxs` while keeping the total
-// size <= maxSizeBytes. Mirrors slinky's idempotent helper.
+// size <= maxSizeBytes. Mirrors the upstream Connect helper.
 func injectAndResize(appTxs [][]byte, injectTx []byte, maxSizeBytes int64) [][]byte {
 	var (
-		returned       [][]byte
-		consumedBytes  int64
+		returned        [][]byte
+		consumedBytes   int64
 		alreadyInjected bool
 	)
 	if len(appTxs) > 0 && bytes.Equal(appTxs[0], injectTx) {
@@ -386,17 +262,38 @@ func injectAndResize(appTxs [][]byte, injectTx []byte, maxSizeBytes int64) [][]b
 	return returned
 }
 
-// withinBps reports whether `value` is within `thresholdBps` basis points of
-// `reference`. Used to drop outlier samples before re-medianing.
-func withinBps(value, reference uint32, thresholdBps uint32) bool {
-	if reference == 0 {
-		return true
-	}
-	var diff uint64
-	if value > reference {
-		diff = uint64(value - reference)
-	} else {
-		diff = uint64(reference - value)
-	}
-	return diff*10_000 <= uint64(reference)*uint64(thresholdBps)
+func accept() *abci.ResponseVerifyVoteExtension {
+	return &abci.ResponseVerifyVoteExtension{Status: abci.ResponseVerifyVoteExtension_ACCEPT}
 }
+func reject() *abci.ResponseVerifyVoteExtension {
+	return &abci.ResponseVerifyVoteExtension{Status: abci.ResponseVerifyVoteExtension_REJECT}
+}
+func rejectProposal() *abci.ResponseProcessProposal {
+	return &abci.ResponseProcessProposal{Status: abci.ResponseProcessProposal_REJECT}
+}
+
+// CountCommittedVotes returns the (committed power, total power) pair from
+// an ExtendedCommitInfo. Exposed for telemetry hooks.
+func CountCommittedVotes(ext abci.ExtendedCommitInfo) (committedPower, totalPower int64) {
+	for _, v := range ext.Votes {
+		totalPower += v.Validator.Power
+		if v.BlockIdFlag == cmtproto.BlockIDFlagCommit {
+			committedPower += v.Validator.Power
+		}
+	}
+	return
+}
+
+// ErrInvalidExtendedCommit is the error type returned by validate-only
+// helpers that need a sentinel for ProcessProposal callers.
+var ErrInvalidExtendedCommit = errors.New("oracle: invalid extended commit")
+
+// describeRejection wraps abci.ResponseProcessProposal with a string so
+// log lines can give operators a cause without having to plumb errors
+// through cometbft's response shape.
+func describeRejection(reason string) *abci.ResponseProcessProposal {
+	_ = fmt.Sprintf("oracle: rejecting proposal: %s", reason)
+	return rejectProposal()
+}
+
+var _ = describeRejection // retained for future telemetry hooks

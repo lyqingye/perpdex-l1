@@ -9,35 +9,23 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	"github.com/cosmos/cosmos-sdk/x/auth/ante"
-
-	oracleante "github.com/perpdex/perpdex-l1/x/oracle/ante"
 )
 
 // HandlerOptions extends the SDK's ante handler options with the IBC keeper
-// (for the redundant-relay decorator) and the oracle gov authority address
-// (for the proposer-injected MsgAggregateOracleVotes short-circuit).
+// (for the redundant-relay decorator).
+//
+// The oracle module no longer needs an injection-tx ante decorator because
+// price updates land on chain via the proposer-injected ExtendedCommitInfo
+// at `Txs[0]` which is stripped by ProcessProposal before the SDK Tx
+// pipeline runs. There is therefore no SDK Tx for oracle aggregation that
+// would need its signature bypassed.
 type HandlerOptions struct {
 	ante.HandlerOptions
 
-	IBCKeeper           *ibckeeper.Keeper
-	OracleGovAuthority  string
+	IBCKeeper *ibckeeper.Keeper
 }
 
 // NewAnteHandler returns the chain's full AnteHandler chain.
-//
-// Two parallel sub-chains are built:
-//
-//   - `oracleHandler` runs only the OracleInjectedTxDecorator and is used
-//     for transactions whose sole Msg is MsgAggregateOracleVotes (the
-//     shape produced by oracle.VoteExtensionHandler.PrepareProposal).
-//     This bypasses signature verification because the gov authority
-//     module account has no private key and the tx is trusted to have
-//     been proposer-injected by virtue of reaching DeliverTx with no
-//     signers.
-//   - `defaultHandler` is the SDK default chain plus the IBC redundant-
-//     relay short-circuit; it handles every other transaction.
-//
-// The dispatch happens in the returned closure based on tx shape.
 func NewAnteHandler(opts HandlerOptions) (sdk.AnteHandler, error) {
 	if opts.AccountKeeper == nil {
 		return nil, errorsmod.Wrap(sdkerrors.ErrLogic, "account keeper is required for AnteHandler")
@@ -51,16 +39,13 @@ func NewAnteHandler(opts HandlerOptions) (sdk.AnteHandler, error) {
 	if opts.IBCKeeper == nil {
 		return nil, errorsmod.Wrap(sdkerrors.ErrLogic, "IBC keeper is required for AnteHandler")
 	}
-	if opts.OracleGovAuthority == "" {
-		return nil, errorsmod.Wrap(sdkerrors.ErrLogic, "oracle gov authority is required for AnteHandler")
-	}
 
 	sigGasConsumer := opts.SigGasConsumer
 	if sigGasConsumer == nil {
 		sigGasConsumer = ante.DefaultSigVerificationGasConsumer
 	}
 
-	defaultDecorators := []sdk.AnteDecorator{
+	decorators := []sdk.AnteDecorator{
 		ante.NewSetUpContextDecorator(),
 		ante.NewExtensionOptionsDecorator(opts.ExtensionOptionChecker),
 		ante.NewValidateBasicDecorator(),
@@ -75,18 +60,5 @@ func NewAnteHandler(opts HandlerOptions) (sdk.AnteHandler, error) {
 		ante.NewIncrementSequenceDecorator(opts.AccountKeeper),
 		ibcante.NewRedundantRelayDecorator(opts.IBCKeeper),
 	}
-	defaultHandler := sdk.ChainAnteDecorators(defaultDecorators...)
-
-	oracleDecorators := []sdk.AnteDecorator{
-		ante.NewSetUpContextDecorator(),
-		oracleante.NewOracleInjectedTxDecorator(opts.OracleGovAuthority),
-	}
-	oracleHandler := sdk.ChainAnteDecorators(oracleDecorators...)
-
-	return func(ctx sdk.Context, tx sdk.Tx, simulate bool) (sdk.Context, error) {
-		if oracleante.IsOracleInjectedTx(tx) {
-			return oracleHandler(ctx, tx, simulate)
-		}
-		return defaultHandler(ctx, tx, simulate)
-	}, nil
+	return sdk.ChainAnteDecorators(decorators...), nil
 }
