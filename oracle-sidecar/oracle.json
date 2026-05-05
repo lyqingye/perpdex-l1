@@ -1,0 +1,32 @@
+{
+  "grpc_addr": ":8080",
+  "metrics_addr": ":8002",
+  "max_age": "5s",
+  "min_sources": 1,
+  "pairs": ["BTC/USD", "ETH/USD", "SOL/USD"],
+  "providers": {
+    "binance": {
+      "enabled": true,
+      "interval": "1500ms",
+      "timeout": "1s",
+      "decimals": 8
+    },
+    "okx": {
+      "enabled": true,
+      "interval": "1500ms",
+      "timeout": "1s",
+      "decimals": 8
+    },
+    "coingecko": {
+      "enabled": true,
+      "interval": "5s",
+      "timeout": "3s",
+      "decimals": 8,
+      "slugs": {
+        "BTC": "bitcoin",
+        "ETH": "ethereum",
+        "SOL": "solana"
+      }
+    }
+  }
+}
