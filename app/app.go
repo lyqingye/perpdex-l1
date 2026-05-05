@@ -57,6 +57,7 @@ import (
 	perpante "github.com/perpdex/perpdex-l1/ante"
 	"github.com/perpdex/perpdex-l1/app/keepers"
 	"github.com/perpdex/perpdex-l1/app/upgrades"
+	oraclekeeper "github.com/perpdex/perpdex-l1/x/oracle/keeper"
 )
 
 var (
@@ -219,6 +220,7 @@ func NewPerpDEXApp(
 	app.MountTransientStores(app.GetTransientStoreKey())
 	app.MountMemoryStores(app.GetMemoryStoreKey())
 
+	govModuleAddr := authtypes.NewModuleAddress(govtypes.ModuleName).String()
 	anteHandler, err := perpante.NewAnteHandler(perpante.HandlerOptions{
 		HandlerOptions: ante.HandlerOptions{
 			AccountKeeper:   app.AccountKeeper,
@@ -227,7 +229,8 @@ func NewPerpDEXApp(
 			SignModeHandler: txConfig.SignModeHandler(),
 			SigGasConsumer:  ante.DefaultSigVerificationGasConsumer,
 		},
-		IBCKeeper: app.IBCKeeper,
+		IBCKeeper:          app.IBCKeeper,
+		OracleGovAuthority: govModuleAddr,
 	})
 	if err != nil {
 		panic(fmt.Errorf("failed to create AnteHandler: %w", err))
@@ -238,6 +241,19 @@ func NewPerpDEXApp(
 	app.SetPreBlocker(app.PreBlocker)
 	app.SetBeginBlocker(app.BeginBlocker)
 	app.SetEndBlocker(app.EndBlocker)
+
+	// Wire the dydx/Slinky-style ABCI++ vote-extension oracle pipeline.
+	// The handlers no-op while consensus has not yet enabled vote
+	// extensions (see ConsensusParams.Abci.VoteExtensionsEnableHeight);
+	// once active they aggregate the previous block's price votes and
+	// inject MsgAggregateOracleVotes as the first transaction of every
+	// new block.
+	voteExtHandler := oraclekeeper.NewVoteExtensionHandler(app.OracleKeeper, app.txConfig, govModuleAddr)
+	bApp.SetExtendVoteHandler(voteExtHandler.ExtendVote())
+	bApp.SetVerifyVoteExtensionHandler(voteExtHandler.VerifyVoteExtension())
+	defaultProposalHandler := baseapp.NewDefaultProposalHandler(nil, bApp)
+	bApp.SetPrepareProposal(voteExtHandler.PrepareProposal(defaultProposalHandler.PrepareProposalHandler()))
+	bApp.SetProcessProposal(voteExtHandler.ProcessProposal(defaultProposalHandler.ProcessProposalHandler()))
 
 	app.setupUpgradeHandlers()
 	app.setupUpgradeStoreLoaders()
@@ -277,6 +293,13 @@ func (app *PerpDEXApp) EndBlocker(ctx sdk.Context) (sdk.EndBlock, error) {
 	return app.mm.EndBlock(ctx)
 }
 
+// DefaultVoteExtensionsEnableHeight is the height at which the chain
+// flips on ABCI++ vote extensions when the genesis file does not pin a
+// custom value. Setting it to 2 mirrors the dydx default (the very first
+// block after genesis emits VEs because cometbft can only enable VEs
+// starting from height >= H+1 after the consensus param is set in InitChain).
+const DefaultVoteExtensionsEnableHeight = int64(2)
+
 // InitChainer is the entrypoint invoked by Tendermint at genesis time.
 func (app *PerpDEXApp) InitChainer(ctx sdk.Context, req *abci.RequestInitChain) (*abci.ResponseInitChain, error) {
 	var genesisState GenesisState
@@ -290,6 +313,13 @@ func (app *PerpDEXApp) InitChainer(ctx sdk.Context, req *abci.RequestInitChain) 
 	resp, err := app.mm.InitGenesis(ctx, app.appCodec, genesisState)
 	if err != nil {
 		panic(err)
+	}
+	// Force-enable ABCI++ vote extensions on genesis if the operator did
+	// not pin a value. Without this the oracle VE pipeline would never
+	// activate, leaving the chain without on-chain price updates.
+	if resp.ConsensusParams != nil && resp.ConsensusParams.Abci != nil &&
+		resp.ConsensusParams.Abci.VoteExtensionsEnableHeight == 0 {
+		resp.ConsensusParams.Abci.VoteExtensionsEnableHeight = DefaultVoteExtensionsEnableHeight
 	}
 	return resp, nil
 }

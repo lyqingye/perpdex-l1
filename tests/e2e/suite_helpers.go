@@ -1,8 +1,6 @@
 package e2e
 
 import (
-	sdk "github.com/cosmos/cosmos-sdk/types"
-
 	"cosmossdk.io/math"
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
@@ -104,38 +102,21 @@ func (s *PerpdexTestSuite) CancelOrder(user TestUser, marketIndex uint32, orderI
 
 // ---------- oracle shims ----------
 
-// AddOracleProvider whitelists `provider` so it can call MsgInjectOracle.
-func (s *PerpdexTestSuite) AddOracleProvider(provider sdk.AccAddress, description string) {
-	_, err := msg.AddOracleProvider(s.App, s.Ctx, s.GovAddress, provider, description)
-	s.Require().NoError(err)
-}
-
-// SetAggregationMode flips the oracle between WHITELIST and PoS_MEDIAN.
-func (s *PerpdexTestSuite) SetAggregationMode(mode uint32) {
-	_, err := msg.SetAggregationMode(s.App, s.Ctx, s.GovAddress, mode)
-	s.Require().NoError(err)
-}
-
-// InjectPrice posts a single (market_index, mark, index) point. Most tests
-// drive a single market at a time; multi-market scenarios should call the
-// underlying msg.InjectPrice directly.
-func (s *PerpdexTestSuite) InjectPrice(provider sdk.AccAddress, marketIndex uint32, indexPrice, markPrice uint32) {
-	_, err := msg.InjectPrice(s.App, s.Ctx, provider, []oracletypes.MarketPrice{{
-		MarketIndex: marketIndex,
-		IndexPrice:  indexPrice,
-		MarkPrice:   markPrice,
-	}})
-	s.Require().NoError(err)
-}
-
-// AggregateVotes drives the PoS_MEDIAN code path by posting an
-// already-aggregated MsgAggregateOracleVotes (signed by the gov authority).
-func (s *PerpdexTestSuite) AggregateVotes(
-	height int64,
-	aggregations []oracletypes.MarketAggregation,
-	voters []oracletypes.VoterRecord,
-) {
-	_, err := msg.AggregateVotes(s.App, s.Ctx, s.GovAddress, height, aggregations, voters)
+// SetOraclePrice writes a (mark, index) price tuple straight into the
+// oracle keeper, bypassing the vote-extension pipeline. Used by every
+// e2e test that needs a deterministic price fixture: in production the
+// equivalent path is the proposer-injected MsgAggregateOracleVotes
+// emitted by oracle.VoteExtensionHandler.PrepareProposal.
+func (s *PerpdexTestSuite) SetOraclePrice(marketIndex uint32, indexPrice, markPrice uint32) {
+	now := s.Ctx.BlockTime().UnixMilli()
+	height := s.Ctx.BlockHeight()
+	err := s.App.OracleKeeper.SetPrice(s.Ctx, oracletypes.OraclePrice{
+		MarketIndex:          marketIndex,
+		IndexPrice:           indexPrice,
+		MarkPrice:            markPrice,
+		LastUpdatedTimestamp: now,
+		LastUpdatedHeight:    height,
+	})
 	s.Require().NoError(err)
 }
 

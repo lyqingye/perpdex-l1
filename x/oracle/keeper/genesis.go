@@ -11,28 +11,10 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 		return err
 	}
 	for _, p := range gs.Prices {
-		// Genesis may seed placeholder rows with zero prices that will
-		// be populated later by the oracle module; bypass the non-zero
-		// validation for that single code path.
+		// Genesis may seed placeholder rows with zero prices that will be
+		// populated later by the vote-extension pipeline; bypass the
+		// non-zero validation for that single code path.
 		if err := k.SetPriceUnsafe(ctx, p); err != nil {
-			return err
-		}
-	}
-	for _, p := range gs.Providers {
-		if err := k.Providers.Set(ctx, p.Address, p); err != nil {
-			return err
-		}
-	}
-	for _, b := range gs.Bindings {
-		if err := k.Bindings.Set(ctx, b.ValidatorAddress, b); err != nil {
-			return err
-		}
-		if err := k.OperatorIdx.Set(ctx, b.OracleOperatorAddress, b.ValidatorAddress); err != nil {
-			return err
-		}
-	}
-	for _, s := range gs.Stats {
-		if err := k.Stats.Set(ctx, s.ValidatorAddress, s); err != nil {
 			return err
 		}
 	}
@@ -44,13 +26,18 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 	if err != nil {
 		return nil, err
 	}
-	providers, err := k.AllProviders(ctx)
+	prices := []types.OraclePrice{}
+	iter, err := k.Prices.Iterate(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
-	bindings, err := k.AllBindings(ctx)
-	if err != nil {
-		return nil, err
+	defer iter.Close()
+	for ; iter.Valid(); iter.Next() {
+		v, err := iter.Value()
+		if err != nil {
+			return nil, err
+		}
+		prices = append(prices, v)
 	}
-	return &types.GenesisState{Params: p, Providers: providers, Bindings: bindings}, nil
+	return &types.GenesisState{Params: p, Prices: prices}, nil
 }

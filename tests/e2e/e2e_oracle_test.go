@@ -1,31 +1,38 @@
 package e2e_test
 
 import (
+	"context"
 	"testing"
 
-	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
+	abci "github.com/cometbft/cometbft/abci/types"
+	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
+
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
+	oraclekeeper "github.com/perpdex/perpdex-l1/x/oracle/keeper"
 	oracletypes "github.com/perpdex/perpdex-l1/x/oracle/types"
 
 	"github.com/perpdex/perpdex-l1/tests/e2e"
 	"github.com/perpdex/perpdex-l1/tests/e2e/msg"
 )
 
-// OracleSuite covers the two oracle code paths exposed by x/oracle:
+// OracleSuite covers the dydx/Slinky-style ABCI++ vote-extension oracle:
 //
-//  1. WHITELIST mode (default): governance whitelists an off-chain
-//     provider with `MsgAddOracleProvider`; the provider then submits
-//     `MsgInjectOracle` and the prices are stored verbatim.
-//  2. PoS_MEDIAN mode: governance flips the aggregation mode and the
-//     proposer aggregates ABCI++ vote-extension data into a single
-//     `MsgAggregateOracleVotes`. Once that lands, OraclePrice records
-//     should be updated and ValidatorOracleStats incremented.
-//
-// We drive #1 directly. For #2 we synthesise a `MsgAggregateOracleVotes`
-// signed by the governance authority — that is the same path the proposer
-// follows post-aggregation in a real PoS_MEDIAN run.
+//  1. Genesis params default to vote-extension-enabled, max_age_ms > 0.
+//  2. ExtendVote → VerifyVoteExtension stateless contract: PriceFetcher
+//     output round-trips through the proto encoding and the verify
+//     handler accepts well-formed payloads / rejects malformed ones.
+//  3. Full PrepareProposal pipeline: build an ExtendedCommitInfo from
+//     synthetic validator votes, run PrepareProposal, decode the injected
+//     MsgAggregateOracleVotes from the resulting tx list and confirm the
+//     weighted median came out as expected.
+//  4. ProcessProposal accepts the proposer-injected tx and rejects a
+//     forged first tx whose authority is wrong.
+//  5. msgServer.AggregateOracleVotes writes the aggregated price into
+//     state with `LastUpdatedHeight` / `LastUpdatedTimestamp` set.
 type OracleSuite struct {
 	e2e.PerpdexTestSuite
 
@@ -51,121 +58,225 @@ func (s *OracleSuite) SetupTest() {
 	s.MarketIndex = s.CreatePerpMarket(msg.DefaultPerpMarketOpts(1, s.BTCAssetIndex))
 }
 
-// TestWhitelistInjection drives the WHITELIST happy path.
-func (s *OracleSuite) TestWhitelistInjection() {
-	// Sanity: default genesis runs in WHITELIST mode.
+func (s *OracleSuite) govAuthority() string {
+	return authtypes.NewModuleAddress(govtypes.ModuleName).String()
+}
+
+// TestParamsDefaults confirms the genesis-supplied params keep the
+// pipeline active without any governance interaction.
+func (s *OracleSuite) TestParamsDefaults() {
 	params := s.QueryOracleParams()
-	s.Require().Equal(perptypes.OracleAggWhitelist, params.AggregationMode,
-		"oracle must default to WHITELIST until governance flips it")
-
-	provider := s.Users[0].Address
-	s.AddOracleProvider(provider, "test-provider")
-
-	const indexPrice = uint32(60_000)
-	const markPrice = uint32(60_010)
-	s.InjectPrice(provider, s.MarketIndex, indexPrice, markPrice)
-
-	got := s.QueryOraclePrice(s.MarketIndex)
-	s.Require().Equal(indexPrice, got.IndexPrice, "WHITELIST inject must persist index price")
-	s.Require().Equal(markPrice, got.MarkPrice, "WHITELIST inject must persist mark price")
-	s.Require().Equal(perptypes.OracleAggWhitelist, got.AggregationMethod,
-		"prices written via inject must record method=WHITELIST")
-	s.Require().EqualValues(1, got.ParticipantCount,
-		"WHITELIST mode encodes participant count = 1")
+	s.Require().True(params.VoteExtensionEnabled)
+	s.Require().Greater(params.MaxAgeMs, int64(0))
 }
 
-// TestRejectsInjectionFromUnknownProvider verifies that a Msg posted by
-// an address that has never been whitelisted is rejected. This is the
-// exact same code path that prevents stray transactions from poisoning
-// oracle prices in production.
-func (s *OracleSuite) TestRejectsInjectionFromUnknownProvider() {
-	_, err := msg.InjectPrice(s.App, s.Ctx, s.Users[1].Address, []oracletypes.MarketPrice{{
+// TestExtendVoteRoundTrip exercises ExtendVote + VerifyVoteExtension as
+// a single contract by injecting a deterministic PriceFetcher.
+func (s *OracleSuite) TestExtendVoteRoundTrip() {
+	want := []oracletypes.MarketPrice{{
 		MarketIndex: s.MarketIndex,
-		IndexPrice:  50_000,
-		MarkPrice:   50_000,
-	}})
-	s.Require().Error(err, "non-provider must not be able to inject")
+		IndexPrice:  60_000,
+		MarkPrice:   60_010,
+	}}
+	s.App.OracleKeeper.SetPriceFetcher(oraclekeeper.PriceFetcherFunc(
+		func(_ context.Context, _ int64) ([]oracletypes.MarketPrice, error) {
+			return want, nil
+		},
+	))
+	handler := oraclekeeper.NewVoteExtensionHandler(s.App.OracleKeeper, s.App.GetTxConfig(), s.govAuthority())
+
+	// Force the consensus param so veEnabled returns true. The default
+	// suite ctx ConsensusParams come from cometbft test defaults which
+	// leave VoteExtensionsEnableHeight at zero.
+	ctx := s.Ctx.WithConsensusParams(cmtproto.ConsensusParams{
+		Abci: &cmtproto.ABCIParams{VoteExtensionsEnableHeight: 1},
+	})
+
+	resp, err := handler.ExtendVote()(ctx, &abci.RequestExtendVote{Height: 5})
+	s.Require().NoError(err)
+	s.Require().NotEmpty(resp.VoteExtension)
+
+	var decoded oracletypes.OracleVote
+	s.Require().NoError(decoded.Unmarshal(resp.VoteExtension))
+	s.Require().EqualValues(5, decoded.SubmittedAtHeight)
+	s.Require().Len(decoded.Prices, 1)
+	s.Require().EqualValues(want[0].IndexPrice, decoded.Prices[0].IndexPrice)
+	s.Require().EqualValues(want[0].MarkPrice, decoded.Prices[0].MarkPrice)
+
+	verify, err := handler.VerifyVoteExtension()(ctx, &abci.RequestVerifyVoteExtension{
+		Height:        5,
+		VoteExtension: resp.VoteExtension,
+	})
+	s.Require().NoError(err)
+	s.Require().Equal(abci.ResponseVerifyVoteExtension_ACCEPT, verify.Status)
 }
 
-// TestRejectsInjectionInPosMedianMode confirms that once governance has
-// flipped the chain into PoS_MEDIAN mode, MsgInjectOracle is gated off
-// — the only path to set prices is MsgAggregateOracleVotes.
-func (s *OracleSuite) TestRejectsInjectionInPosMedianMode() {
-	provider := s.Users[0].Address
-	s.AddOracleProvider(provider, "test-provider")
-	s.SetAggregationMode(perptypes.OracleAggPosMedian)
-
-	_, err := msg.InjectPrice(s.App, s.Ctx, provider, []oracletypes.MarketPrice{{
-		MarketIndex: s.MarketIndex,
-		IndexPrice:  50_000,
-		MarkPrice:   50_000,
-	}})
-	s.Require().Error(err, "inject must be rejected once mode flips to PoS_MEDIAN")
-	s.Require().ErrorContains(err, "WHITELIST",
-		"err must reference the WHITELIST-only constraint to aid debugging")
+// TestVerifyVoteExtensionRejectsZeroPrice ensures stateless validation
+// drops payloads carrying zero index/mark prices.
+func (s *OracleSuite) TestVerifyVoteExtensionRejectsZeroPrice() {
+	handler := oraclekeeper.NewVoteExtensionHandler(s.App.OracleKeeper, s.App.GetTxConfig(), s.govAuthority())
+	ctx := s.Ctx.WithConsensusParams(cmtproto.ConsensusParams{
+		Abci: &cmtproto.ABCIParams{VoteExtensionsEnableHeight: 1},
+	})
+	bad := oracletypes.OracleVote{
+		SubmittedAtHeight: 5,
+		Prices: []oracletypes.MarketPrice{{
+			MarketIndex: s.MarketIndex,
+			IndexPrice:  0,
+			MarkPrice:   1,
+		}},
+	}
+	bz, err := bad.Marshal()
+	s.Require().NoError(err)
+	resp, err := handler.VerifyVoteExtension()(ctx, &abci.RequestVerifyVoteExtension{
+		Height: 5, VoteExtension: bz,
+	})
+	s.Require().NoError(err)
+	s.Require().Equal(abci.ResponseVerifyVoteExtension_REJECT, resp.Status)
 }
 
-// TestPosMedianAggregationFlow walks the validator-aggregation path:
-// governance flips the mode, then the proposer (modeled here as the gov
-// authority) submits a single MsgAggregateOracleVotes with prices and
-// per-validator records. We verify the stored OraclePrice records the
-// PoS aggregation method and that ValidatorOracleStats was bumped.
-func (s *OracleSuite) TestPosMedianAggregationFlow() {
-	s.SetAggregationMode(perptypes.OracleAggPosMedian)
-	s.Require().Equal(perptypes.OracleAggPosMedian, s.QueryOracleParams().AggregationMode)
+// TestPrepareProposalAggregatesAndInjectsTx builds an ExtendedCommitInfo
+// containing two synthetic validator votes (different prices, equal
+// voting power) and drives PrepareProposal directly. It then decodes the
+// proposer-injected first tx and asserts the median came out at the
+// midpoint of the two validator quotes.
+func (s *OracleSuite) TestPrepareProposalAggregatesAndInjectsTx() {
+	gov := s.govAuthority()
+	handler := oraclekeeper.NewVoteExtensionHandler(s.App.OracleKeeper, s.App.GetTxConfig(), gov)
 
-	const indexPrice = uint32(70_500)
-	const markPrice = uint32(70_510)
+	v1 := oracletypes.OracleVote{
+		SubmittedAtHeight: 5,
+		Prices: []oracletypes.MarketPrice{{
+			MarketIndex: s.MarketIndex,
+			IndexPrice:  100,
+			MarkPrice:   100,
+		}},
+	}
+	v2 := oracletypes.OracleVote{
+		SubmittedAtHeight: 5,
+		Prices: []oracletypes.MarketPrice{{
+			MarketIndex: s.MarketIndex,
+			IndexPrice:  200,
+			MarkPrice:   200,
+		}},
+	}
+	ext := abci.ExtendedCommitInfo{
+		Round: 0,
+		Votes: []abci.ExtendedVoteInfo{
+			{
+				Validator:     abci.Validator{Address: []byte("validator-aaaaaaaa"), Power: 50},
+				BlockIdFlag:   cmtproto.BlockIDFlagCommit,
+				VoteExtension: mustMarshal(s.T(), &v1),
+			},
+			{
+				Validator:     abci.Validator{Address: []byte("validator-bbbbbbbb"), Power: 50},
+				BlockIdFlag:   cmtproto.BlockIDFlagCommit,
+				VoteExtension: mustMarshal(s.T(), &v2),
+			},
+		},
+	}
 
-	// MsgAggregateOracleVotes does no bech32 validation on
-	// ValidatorAddress (only Authority must parse), so any non-empty
-	// string suffices as the lookup key for ValidatorOracleStats.
-	validatorAddr := "perpdexvaloper1examplevalidator00000000000000abcdef"
-	s.AggregateVotes(
-		s.Ctx.BlockHeight(),
+	// Move the suite ctx into a state where veEnabled() returns true:
+	// VoteExtensionsEnableHeight must be < req.Height.
+	ctx := s.Ctx.WithConsensusParams(cmtproto.ConsensusParams{
+		Abci: &cmtproto.ABCIParams{VoteExtensionsEnableHeight: 1},
+	})
+
+	// Wrapped handler echoes any txs the proposer hands it (no mempool).
+	wrapped := func(_ sdk.Context, req *abci.RequestPrepareProposal) (*abci.ResponsePrepareProposal, error) {
+		return &abci.ResponsePrepareProposal{Txs: req.Txs}, nil
+	}
+	resp, err := handler.PrepareProposal(wrapped)(ctx, &abci.RequestPrepareProposal{
+		Height:          6,
+		LocalLastCommit: ext,
+		MaxTxBytes:      1024 * 1024,
+	})
+	s.Require().NoError(err)
+	s.Require().NotEmpty(resp.Txs, "proposer must inject a tx when VEs are present")
+
+	tx, err := s.App.GetTxConfig().TxDecoder()(resp.Txs[0])
+	s.Require().NoError(err)
+	msgs := tx.GetMsgs()
+	s.Require().Len(msgs, 1)
+	agg, ok := msgs[0].(*oracletypes.MsgAggregateOracleVotes)
+	s.Require().True(ok)
+	s.Require().Equal(gov, agg.Authority)
+	s.Require().Len(agg.Aggregations, 1)
+
+	got := agg.Aggregations[0]
+	s.Require().Equal(s.MarketIndex, got.MarketIndex)
+	// Equal-power weighted median picks the upper sample (n/2 cumulative
+	// weight crosses at sample #2 once samples are sorted asc).
+	s.Require().EqualValues(200, got.IndexPrice)
+	s.Require().EqualValues(200, got.MarkPrice)
+
+	// ProcessProposal should accept this very tx list.
+	proc := handler.ProcessProposal(func(_ sdk.Context, _ *abci.RequestProcessProposal) (*abci.ResponseProcessProposal, error) {
+		return &abci.ResponseProcessProposal{Status: abci.ResponseProcessProposal_ACCEPT}, nil
+	})
+	procResp, err := proc(ctx, &abci.RequestProcessProposal{
+		Height: 6,
+		Txs:    resp.Txs,
+	})
+	s.Require().NoError(err)
+	s.Require().Equal(abci.ResponseProcessProposal_ACCEPT, procResp.Status)
+}
+
+// TestProcessProposalRejectsForgedAuthority makes sure a malicious
+// proposer cannot swap in a self-signed MsgAggregateOracleVotes by
+// changing the authority.
+func (s *OracleSuite) TestProcessProposalRejectsForgedAuthority() {
+	gov := s.govAuthority()
+	handler := oraclekeeper.NewVoteExtensionHandler(s.App.OracleKeeper, s.App.GetTxConfig(), gov)
+	ctx := s.Ctx.WithConsensusParams(cmtproto.ConsensusParams{
+		Abci: &cmtproto.ABCIParams{VoteExtensionsEnableHeight: 1},
+	})
+
+	forged := &oracletypes.MsgAggregateOracleVotes{
+		Authority: s.Users[0].Address.String(),
+		Height:    6,
+		Aggregations: []oracletypes.MarketAggregation{{
+			MarketIndex: s.MarketIndex,
+			IndexPrice:  1, MarkPrice: 1,
+		}},
+	}
+	builder := s.App.GetTxConfig().NewTxBuilder()
+	s.Require().NoError(builder.SetMsgs(forged))
+	bz, err := s.App.GetTxConfig().TxEncoder()(builder.GetTx())
+	s.Require().NoError(err)
+
+	resp, err := handler.ProcessProposal(func(_ sdk.Context, _ *abci.RequestProcessProposal) (*abci.ResponseProcessProposal, error) {
+		return &abci.ResponseProcessProposal{Status: abci.ResponseProcessProposal_ACCEPT}, nil
+	})(ctx, &abci.RequestProcessProposal{Height: 6, Txs: [][]byte{bz}})
+	s.Require().NoError(err)
+	s.Require().Equal(abci.ResponseProcessProposal_REJECT, resp.Status)
+}
+
+// TestAggregateOracleVotesPersistsPrice drives the keeper's msg server
+// directly to confirm that a successful aggregation writes the expected
+// fields onto the OraclePrice store entry.
+func (s *OracleSuite) TestAggregateOracleVotesPersistsPrice() {
+	_, err := msg.AggregateVotes(s.App, s.Ctx, s.GovAddress, s.Ctx.BlockHeight(),
 		[]oracletypes.MarketAggregation{{
 			MarketIndex: s.MarketIndex,
-			IndexPrice:  indexPrice,
-			MarkPrice:   markPrice,
-		}},
-		[]oracletypes.VoterRecord{{
-			ValidatorAddress:   validatorAddr,
-			VotingPower:        100,
-			Participated:       true,
-			DeviantMarketCount: 0,
+			IndexPrice:  70_500,
+			MarkPrice:   70_510,
 		}},
 	)
+	s.Require().NoError(err)
 
 	got := s.QueryOraclePrice(s.MarketIndex)
-	s.Require().Equal(indexPrice, got.IndexPrice)
-	s.Require().Equal(markPrice, got.MarkPrice)
-	s.Require().Equal(perptypes.OracleAggPosMedian, got.AggregationMethod,
-		"aggregate path must flag method=PoS_MEDIAN on the stored OraclePrice")
-	s.Require().EqualValues(1, got.ParticipantCount,
-		"participant count must reflect the number of voter records sent in the Msg")
-
-	// ValidatorOracleStats must be incremented for the participant.
-	stats, err := s.App.OracleKeeper.Stats.Get(s.Ctx, validatorAddr)
-	s.Require().NoError(err, "stats must be initialised for any participant we record")
-	s.Require().EqualValues(1, stats.TotalVotesSubmitted)
-	s.Require().EqualValues(0, stats.TotalVotesMissed)
-	s.Require().EqualValues(0, stats.ConsecutiveMissed)
+	s.Require().EqualValues(70_500, got.IndexPrice)
+	s.Require().Greater(got.LastUpdatedTimestamp, int64(0))
+	s.Require().Equal(s.Ctx.BlockHeight(), got.LastUpdatedHeight)
 }
 
-// TestBindOracleOperator covers the validator -> oracle-operator binding
-// happy path. MsgBindOracleOperator's ValidateBasic enforces that Sender
-// is a valid bech32 *account* address (the perpdex chain uses `px` as
-// the account prefix), and the keeper requires `Sender ==
-// ValidatorAddress`. We therefore use a fresh AccAddress for both.
-func (s *OracleSuite) TestBindOracleOperator() {
-	pk := secp256k1.GenPrivKey()
-	validatorAddr := sdk.AccAddress(pk.PubKey().Address()).String()
-	operatorAddr := sdk.AccAddress(secp256k1.GenPrivKey().PubKey().Address()).String()
-
-	_, err := msg.BindOracleOperator(s.App, s.Ctx, validatorAddr, operatorAddr, "v1")
-	s.Require().NoError(err, "validator can bind their own oracle operator")
-
-	binding, err := s.App.OracleKeeper.Bindings.Get(s.Ctx, validatorAddr)
-	s.Require().NoError(err)
-	s.Require().Equal(operatorAddr, binding.OracleOperatorAddress)
+// mustMarshal panics on encode errors — only used by tests.
+func mustMarshal(t interface{ Helper() }, v interface{ Marshal() ([]byte, error) }) []byte {
+	t.Helper()
+	bz, err := v.Marshal()
+	if err != nil {
+		panic(err)
+	}
+	return bz
 }

@@ -26,22 +26,6 @@ func (q Querier) OraclePrice(ctx context.Context, req *types.QueryOraclePriceReq
 	return &types.QueryOraclePriceResponse{Price: p}, nil
 }
 
-func (q Querier) OracleProviders(ctx context.Context, _ *types.QueryOracleProvidersRequest) (*types.QueryOracleProvidersResponse, error) {
-	out, err := q.k.AllProviders(ctx)
-	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
-	}
-	return &types.QueryOracleProvidersResponse{Providers: out}, nil
-}
-
-func (q Querier) Bindings(ctx context.Context, _ *types.QueryBindingsRequest) (*types.QueryBindingsResponse, error) {
-	out, err := q.k.AllBindings(ctx)
-	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
-	}
-	return &types.QueryBindingsResponse{Bindings: out}, nil
-}
-
 func (q Querier) Params(ctx context.Context, _ *types.QueryParamsRequest) (*types.QueryParamsResponse, error) {
 	p, err := q.k.Params.Get(ctx)
 	if err != nil {

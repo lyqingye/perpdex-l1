@@ -9,7 +9,4 @@ option go_package = "github.com/perpdex/perpdex-l1/x/oracle/types";
 message GenesisState {
   Params params = 1 [(gogoproto.nullable) = false];
   repeated OraclePrice prices = 2 [(gogoproto.nullable) = false];
-  repeated OracleProvider providers = 3 [(gogoproto.nullable) = false];
-  repeated ValidatorOracleBinding bindings = 4 [(gogoproto.nullable) = false];
-  repeated ValidatorOracleStats stats = 5 [(gogoproto.nullable) = false];
 }

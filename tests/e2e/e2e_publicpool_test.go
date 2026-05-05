@@ -42,11 +42,10 @@ func (s *PublicPoolSuite) SetupTest() {
 		MarginMode:          perptypes.MarginModeDisabled,
 	})
 	s.MarketIndex = s.CreatePerpMarket(msg.DefaultPerpMarketOpts(1, s.BTCAssetIndex))
-	s.AddOracleProvider(s.Users[3].Address, "publicpool-test-provider")
 	// Risk keeper now requires a non-zero mark price on any non-zero
 	// position; seed a default so crossing orders in the IF-first
 	// scenario don't fail before we explicitly push the price down.
-	s.InjectPrice(s.Users[3].Address, s.MarketIndex, 50_000, 50_000)
+	s.SetOraclePrice(s.MarketIndex, 50_000, 50_000)
 }
 
 // ---------- helpers ----------
@@ -288,8 +287,8 @@ func (s *PublicPoolSuite) TestEndBlockerIFFirst() {
 		Price: entry, BaseAmount: qty, ClientOrderIndex: 2,
 	})
 	// Push to BANKRUPTCY.
-	s.InjectPrice(s.Users[3].Address, s.MarketIndex, entry, entry)
-	s.InjectPrice(s.Users[3].Address, s.MarketIndex, 30_000, 30_000)
+	s.SetOraclePrice(s.MarketIndex, entry, entry)
+	s.SetOraclePrice(s.MarketIndex, 30_000, 30_000)
 	s.Require().Equal(perptypes.HealthBankruptcy,
 		s.QueryHealthStatus(s.Users[0].AccountIndex))
 

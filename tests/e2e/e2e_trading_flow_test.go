@@ -51,8 +51,7 @@ func (s *TradingFlowSuite) SetupTest() {
 	// non-zero positions. Prior to the audit fixes the risk module
 	// silently skipped missing prices; it now fails closed, so
 	// tests that open perp positions must provide a mark price.
-	s.AddOracleProvider(s.Users[3].Address, "trading-flow-test-provider")
-	s.InjectPrice(s.Users[3].Address, s.MarketIndex, 50_000, 50_000)
+	s.SetOraclePrice(s.MarketIndex, 50_000, 50_000)
 }
 
 // TestCrossingFillRoundTrip drives the full trading round-trip:
