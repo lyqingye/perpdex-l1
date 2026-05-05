@@ -2,9 +2,9 @@ package keeper
 
 import (
 	"context"
-	"errors"
 	"strconv"
 
+	sdkerrors "cosmossdk.io/errors"
 	"cosmossdk.io/math"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -134,6 +134,14 @@ func (k Keeper) processMarketSample(ctx context.Context, marketIdx uint32, now i
 	// MarketDetails index/mark values.
 	px, err := k.oracleKeeper.GetPrice(ctx, marketIdx)
 	if err != nil {
+		sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
+			"funding_oracle_price_error",
+			sdk.NewAttribute("market_index", strconv.FormatUint(uint64(marketIdx), 10)),
+			sdk.NewAttribute("err", err.Error()),
+		))
+		if !sdkerrors.IsOf(err, oracletypes.ErrPriceNotFound, oracletypes.ErrStalePrice) {
+			return err
+		}
 		return k.marketKeeper.SetMarketDetails(ctx, d)
 	}
 	d.IndexPrice = px.IndexPrice
@@ -188,7 +196,7 @@ func (k Keeper) SettleAllMarkets(ctx context.Context, params types.ParamsAlias) 
 				sdk.NewAttribute("market_index", strconv.FormatUint(uint64(m.MarketIndex), 10)),
 				sdk.NewAttribute("err", err.Error()),
 			))
-			if firstErr == nil {
+			if !sdkerrors.IsOf(err, oracletypes.ErrPriceNotFound, oracletypes.ErrStalePrice) && firstErr == nil {
 				firstErr = err
 			}
 		}
@@ -223,6 +231,11 @@ func (k Keeper) settleMarket(ctx context.Context, marketIdx uint32, params types
 	}
 	px, err := k.oracleKeeper.GetPrice(ctx, marketIdx)
 	if err != nil {
+		if sdkerrors.IsOf(err, oracletypes.ErrPriceNotFound, oracletypes.ErrStalePrice) {
+			d.AggregatePremiumSum = 0
+			d.TotalPremiumSamples = 0
+			return k.marketKeeper.SetMarketDetails(ctx, d)
+		}
 		return err
 	}
 	d.IndexPrice = px.IndexPrice
