@@ -383,6 +383,7 @@ func NewAppKeeper(
 		appKeepers.MarketKeeper,
 		appKeepers.RiskKeeper,
 		appKeepers.TradeKeeper,
+		&appKeepers.MatchingKeeper,
 	)
 
 	// Late wiring (break import cycles): account needs funding/risk/market
@@ -392,6 +393,7 @@ func NewAppKeeper(
 	appKeepers.PerpAccountKeeper.SetMarketKeeper(appKeepers.MarketKeeper)
 	appKeepers.MarketKeeper.SetLiquidationKeeper(appKeepers.LiquidationKeeper)
 	appKeepers.MatchingKeeper.SetOracleKeeper(appKeepers.OracleKeeper)
+	appKeepers.MatchingKeeper.SetRiskKeeper(appKeepers.RiskKeeper)
 
 	return appKeepers
 }

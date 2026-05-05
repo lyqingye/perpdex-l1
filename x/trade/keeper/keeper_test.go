@@ -219,6 +219,91 @@ func TestApplyPerpsMatching_RejectsMakerRisk(t *testing.T) {
 	require.Equal(t, 2, rk.snapshots) // maker + taker both snapshotted
 }
 
+// TestApplyPerpsMatching_LiquidationFeeRoutesToLLP exercises the new
+// improvement-over-zero-price liquidation fee path. When the fill price
+// is BETTER than the zero price by `improvement_per_unit`, the
+// computed fee is debited from the maker (victim) and credited to
+// LiquidationFeeRecipient (LLP / Insurance Fund). Standard
+// taker/maker fees do not apply on the same fill (caller sets them to
+// 0), so the treasury stays untouched.
+func TestApplyPerpsMatching_LiquidationFeeRoutesToLLP(t *testing.T) {
+	ctx, ak, _, _, k := newSdkCtx(t)
+	const (
+		victimIdx = uint64(100)
+		takerIdx  = uint64(200)
+		llpIdx    = perptypes.InsuranceFundOperatorAccountIdx
+	)
+	require.NoError(t, ak.SetAccount(ctx, accounttypes.Account{
+		AccountIndex: victimIdx, Collateral: math.NewInt(10_000_000),
+	}))
+	require.NoError(t, ak.SetAccount(ctx, accounttypes.Account{
+		AccountIndex: takerIdx, Collateral: math.NewInt(10_000_000),
+	}))
+	require.NoError(t, ak.SetAccount(ctx, accounttypes.Account{
+		AccountIndex: llpIdx, Collateral: math.NewInt(0),
+	}))
+	// Victim is long; the fill closes via taker-ask (sells base).
+	// improvement = (Price - ZeroPrice) * BaseAmount = (110-100)*1000 = 10_000.
+	// liq_fee_bps = 10_000 / FeeTick = 1% on improvement = 100.
+	// 1% notional cap = 110*1000/100 = 1100. raw_fee=100 < 1100 ⇒ fee=100.
+	require.NoError(t, k.ApplyPerpsMatching(ctx, tradekeeper.Fill{
+		MakerAccountIndex:       victimIdx,
+		TakerAccountIndex:       takerIdx,
+		MarketIndex:             1,
+		Price:                   110,
+		BaseAmount:              1000,
+		IsTakerAsk:              true, // taker sells, victim closes long
+		ZeroPrice:               100,
+		LiquidationFeeBps:       10_000, // 1% in fee tick units
+		LiquidationFeeRecipient: llpIdx,
+		NoFee:                   false,
+		SkipMakerRiskCheck:      true,
+	}))
+	llp, err := ak.GetAccount(ctx, llpIdx)
+	require.NoError(t, err)
+	require.Equal(t, "100", llp.Collateral.String(),
+		"LLP must receive 1%% of improvement, NOT the treasury")
+	treasury, err := ak.GetAccount(ctx, perptypes.TreasuryAccountIndex)
+	require.NoError(t, err)
+	require.True(t, treasury.Collateral.IsZero(),
+		"Treasury must remain untouched on a fee-less liquidation fill")
+}
+
+// TestApplyPerpsMatching_LiquidationFeeNoneAtZeroPrice asserts the
+// edge case the partial-liquidation engine relies on: when the fill
+// price equals the zero price (the keeper-driven IoC close-out path),
+// the improvement is zero and no fee is charged.
+func TestApplyPerpsMatching_LiquidationFeeNoneAtZeroPrice(t *testing.T) {
+	ctx, ak, _, _, k := newSdkCtx(t)
+	const llpIdx = perptypes.InsuranceFundOperatorAccountIdx
+	require.NoError(t, ak.SetAccount(ctx, accounttypes.Account{
+		AccountIndex: 100, Collateral: math.NewInt(1_000_000),
+	}))
+	require.NoError(t, ak.SetAccount(ctx, accounttypes.Account{
+		AccountIndex: 200, Collateral: math.NewInt(1_000_000),
+	}))
+	require.NoError(t, ak.SetAccount(ctx, accounttypes.Account{
+		AccountIndex: llpIdx, Collateral: math.NewInt(0),
+	}))
+	require.NoError(t, k.ApplyPerpsMatching(ctx, tradekeeper.Fill{
+		MakerAccountIndex:       100,
+		TakerAccountIndex:       200,
+		MarketIndex:             1,
+		Price:                   100,
+		BaseAmount:              1000,
+		IsTakerAsk:              true,
+		ZeroPrice:               100, // fill == zero price
+		LiquidationFeeBps:       10_000,
+		LiquidationFeeRecipient: llpIdx,
+		NoFee:                   false,
+		SkipMakerRiskCheck:      true,
+	}))
+	llp, err := ak.GetAccount(ctx, llpIdx)
+	require.NoError(t, err)
+	require.True(t, llp.Collateral.IsZero(),
+		"no improvement ⇒ no fee; LLP must not receive collateral")
+}
+
 // TestApplySpotMatching_RejectsNegativeBalance ensures a buy-side spot trade
 // against a zero-balance maker errors instead of writing a negative balance
 // (audit High trade-8).
