@@ -71,6 +71,38 @@ type Fill struct {
 	// exit, etc.) where the insurance fund or ADL counterparty must
 	// absorb residual size even when doing so worsens its own health.
 	NoRiskCheck bool
+	// SkipMakerRiskCheck only skips the post-trade risk check on the
+	// MAKER side. Used by the partial-liquidation path: the maker is
+	// the victim — the fill strictly closes part of an unhealthy
+	// position so it is guaranteed to improve health, but the
+	// IsValidRiskChange routine would still reject because post is
+	// not HEALTHY. The taker (liquidator) keeps its standard check.
+	SkipMakerRiskCheck bool
+	// ZeroPrice + LiquidationFeeBps + LiquidationFeeRecipient
+	// describe the Lighter "improvement-over-zero-price" liquidation
+	// fee. When LiquidationFeeBps > 0:
+	//   improvement = sign * (Price - ZeroPrice) * BaseAmount   (taker
+	//                                                            sign;
+	//                                                            positive
+	//                                                            when the
+	//                                                            fill is
+	//                                                            better
+	//                                                            than the
+	//                                                            zero price
+	//                                                            for the
+	//                                                            victim/maker)
+	//   raw_fee     = improvement * LiquidationFeeBps / FeeTick
+	//   fee         = min(raw_fee, BaseAmount * Price / 100)        (1% cap)
+	//
+	// `fee` is debited from the victim (maker) collateral and credited
+	// to LiquidationFeeRecipient (the LLP / Insurance Fund). Standard
+	// MakerFee/TakerFee are NOT applied on the same fill (caller sets
+	// them to 0). Fee remains zero whenever Price == ZeroPrice — the
+	// expected case for keeper-driven IoC closes that fill exactly at
+	// the zero price.
+	ZeroPrice               uint32
+	LiquidationFeeBps       uint32
+	LiquidationFeeRecipient uint64
 }
 
 // ApplyPerpsMatching applies a perp fill to both maker and taker positions.
@@ -120,15 +152,40 @@ func (k Keeper) ApplyPerpsMatching(ctx context.Context, f Fill) error {
 		notional := math.NewIntFromUint64(f.BaseAmount).Mul(math.NewIntFromUint64(uint64(f.Price)))
 		takerFee := notional.Mul(math.NewIntFromUint64(uint64(f.TakerFee))).Quo(math.NewInt(int64(perptypes.FeeTick)))
 		makerFee := notional.Mul(math.NewIntFromUint64(uint64(f.MakerFee))).Quo(math.NewInt(int64(perptypes.FeeTick)))
-		if err := k.accountKeeper.AddCollateral(ctx, f.TakerAccountIndex, takerFee.Neg()); err != nil {
-			return err
+		if !takerFee.IsZero() {
+			if err := k.accountKeeper.AddCollateral(ctx, f.TakerAccountIndex, takerFee.Neg()); err != nil {
+				return err
+			}
 		}
-		if err := k.accountKeeper.AddCollateral(ctx, f.MakerAccountIndex, makerFee.Neg()); err != nil {
-			return err
+		if !makerFee.IsZero() {
+			if err := k.accountKeeper.AddCollateral(ctx, f.MakerAccountIndex, makerFee.Neg()); err != nil {
+				return err
+			}
 		}
-		// Fees go to the treasury account (account_index=0).
-		if err := k.accountKeeper.AddCollateral(ctx, perptypes.TreasuryAccountIndex, takerFee.Add(makerFee)); err != nil {
-			return err
+		// Standard maker/taker fees route to the treasury (account 0).
+		treasuryFee := takerFee.Add(makerFee)
+		if !treasuryFee.IsZero() {
+			if err := k.accountKeeper.AddCollateral(ctx, perptypes.TreasuryAccountIndex, treasuryFee); err != nil {
+				return err
+			}
+		}
+		// Liquidation improvement-over-zero-price fee. Per Lighter
+		// spec it routes to the LLP / insurance fund (the recipient
+		// the liquidation keeper passes in), capped at 1% of notional.
+		if f.LiquidationFeeBps > 0 {
+			liqFee := liquidationImprovementFee(f, notional)
+			if liqFee.IsPositive() {
+				if err := k.accountKeeper.AddCollateral(ctx, f.MakerAccountIndex, liqFee.Neg()); err != nil {
+					return err
+				}
+				recipient := f.LiquidationFeeRecipient
+				if recipient == 0 {
+					recipient = perptypes.InsuranceFundOperatorAccountIdx
+				}
+				if err := k.accountKeeper.AddCollateral(ctx, recipient, liqFee); err != nil {
+					return err
+				}
+			}
 		}
 	}
 
@@ -148,7 +205,18 @@ func (k Keeper) ApplyPerpsMatching(ctx context.Context, f Fill) error {
 	// resting on the book otherwise have an open attack vector where a
 	// low-collateral maker lets the book close against them into a fresh
 	// unhealthy position. Lighter parity: l2_trade enforces both sides.
+	//
+	// Exception: when the fill is the partial-liquidation closing leg
+	// (SkipMakerRiskCheck), the maker IS the victim — the trade
+	// mechanically improves their TAV/MMR ratio (the fill price is at
+	// or better than the zero price, by construction). The
+	// IsValidRiskChange routine still rejects an unhealthy post-state,
+	// so we skip it on the maker side and let the liquidation engine
+	// be the authority on the close-out.
 	for _, idx := range []uint64{f.TakerAccountIndex, f.MakerAccountIndex} {
+		if f.SkipMakerRiskCheck && idx == f.MakerAccountIndex {
+			continue
+		}
 		ok, err := k.riskKeeper.IsValidRiskChange(ctx, idx)
 		if err != nil {
 			return err
@@ -158,6 +226,47 @@ func (k Keeper) ApplyPerpsMatching(ctx context.Context, f Fill) error {
 		}
 	}
 	return nil
+}
+
+// liquidationImprovementFee computes the Lighter liquidation fee:
+//
+//	improvement_per_unit = sign(takerSide) * (price - zeroPrice)
+//	improvement          = improvement_per_unit * BaseAmount
+//	raw_fee              = improvement * LiquidationFeeBps / FeeTick
+//	fee                  = clamp(raw_fee, 0, notional / 100)
+//
+// `takerSide` flips the improvement sign so that a fill BETTER than the
+// victim's zero price yields a positive fee regardless of whether the
+// taker is selling (closing the victim's long) or buying (closing the
+// victim's short). When Price == ZeroPrice the improvement is zero and
+// no fee is charged — matching the keeper-driven IoC close-out path
+// where the engine fills exactly at the zero price.
+func liquidationImprovementFee(f Fill, notional math.Int) math.Int {
+	if f.LiquidationFeeBps == 0 || f.BaseAmount == 0 {
+		return math.ZeroInt()
+	}
+	priceInt := math.NewIntFromUint64(uint64(f.Price))
+	zpInt := math.NewIntFromUint64(uint64(f.ZeroPrice))
+	var improvementPerUnit math.Int
+	if f.IsTakerAsk {
+		// Taker sells (maker/victim is being long-liquidated): a
+		// HIGHER fill price than zero price is "better" for victim.
+		improvementPerUnit = priceInt.Sub(zpInt)
+	} else {
+		// Taker buys (maker/victim is being short-liquidated): a
+		// LOWER fill price than zero price is "better" for victim.
+		improvementPerUnit = zpInt.Sub(priceInt)
+	}
+	if !improvementPerUnit.IsPositive() {
+		return math.ZeroInt()
+	}
+	improvement := improvementPerUnit.Mul(math.NewIntFromUint64(f.BaseAmount))
+	rawFee := improvement.Mul(math.NewIntFromUint64(uint64(f.LiquidationFeeBps))).Quo(math.NewInt(int64(perptypes.FeeTick)))
+	cap1pct := notional.Quo(math.NewInt(100))
+	if rawFee.GT(cap1pct) {
+		rawFee = cap1pct
+	}
+	return rawFee
 }
 
 // applyPositionChange handles the four position-change scenarios from

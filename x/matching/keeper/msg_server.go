@@ -61,6 +61,19 @@ func (m msgServer) CreateOrder(ctx context.Context, msg *types.MsgCreateOrder) (
 	if market.Status != perptypes.MarketStatusActive {
 		return nil, types.ErrInvalidOrder.Wrap("market not active")
 	}
+	// Pre-liquidation order placement gate. Lighter rule:
+	//   - HEALTHY: any order allowed.
+	//   - PRE_LIQUIDATION: only reduce-only orders that strictly shrink
+	//     the account's position in this market are allowed. We
+	//     additionally require the cross account (or, for an isolated
+	//     trade, that specific isolated position) to be in PRE — not
+	//     a deeper liquidation tier.
+	//   - PARTIAL / FULL / BANKRUPTCY: reject every user-initiated
+	//     order. The liquidation engine is the only writer in these
+	//     tiers; any user trade would race liquidation fills.
+	if err := m.checkPreLiquidationGate(ctx, msg.AccountIndex, msg.MarketIndex, msg.ReduceOnly); err != nil {
+		return nil, err
+	}
 	// Market-configured minima and per-order quote cap.
 	if market.MinBaseAmount > 0 && msg.BaseAmount < market.MinBaseAmount {
 		return nil, types.ErrInvalidOrder.Wrapf("base_amount %d below market min %d", msg.BaseAmount, market.MinBaseAmount)
@@ -212,6 +225,49 @@ func (m msgServer) CreateOrder(ctx context.Context, msg *types.MsgCreateOrder) (
 	}, nil
 }
 
+// checkPreLiquidationGate enforces the pre-liquidation order placement
+// rule from the Lighter spec. The check happens BEFORE we touch the
+// orderbook so a frozen / unhealthy account cannot use CreateOrder /
+// ModifyOrder to interleave with the liquidation engine.
+//
+// The gate consults the cross account health AND, when the touched
+// market hosts an isolated position for this account, the per-market
+// isolated health. Either being unhealthy is enough to reject.
+func (m msgServer) checkPreLiquidationGate(ctx context.Context, accIdx uint64, marketIdx uint32, reduceOnly bool) error {
+	if m.riskKeeper == nil {
+		// Risk keeper not wired (tests / staged genesis): skip the
+		// gate rather than panic.
+		return nil
+	}
+	cross, err := m.riskKeeper.GetHealthStatus(ctx, accIdx)
+	if err != nil {
+		return err
+	}
+	iso, err := m.riskKeeper.GetIsolatedHealthStatus(ctx, accIdx, marketIdx)
+	if err != nil {
+		return err
+	}
+	worst := cross
+	if iso > worst {
+		worst = iso
+	}
+	switch worst {
+	case perptypes.HealthHealthy:
+		return nil
+	case perptypes.HealthPreLiquidation:
+		if !reduceOnly {
+			return types.ErrAccountUnderLiquidation.Wrapf(
+				"account=%d in pre-liquidation; only reduce-only orders allowed", accIdx,
+			)
+		}
+		return nil
+	default:
+		return types.ErrAccountUnderLiquidation.Wrapf(
+			"account=%d health=%d; user orders blocked", accIdx, worst,
+		)
+	}
+}
+
 // reduceOnlyCompatible reports whether a reduce-only order on `isAsk` side
 // with `baseAmount` size can legitimately only reduce the account's current
 // position: the account must be net-positive/negative on the opposite side.
@@ -345,6 +401,13 @@ func (m msgServer) ModifyOrder(ctx context.Context, msg *types.MsgModifyOrder) (
 		}
 	default:
 		return nil, types.ErrOrderNotCancelable.Wrapf("order_index=%d status=%d", o.OrderIndex, o.Status)
+	}
+	// Apply the same pre-liquidation gate as CreateOrder before we
+	// touch the book. ModifyOrder is cancel-then-create; without this
+	// check a PARTIAL account could blow away its open orders during
+	// liquidation by repeatedly issuing a no-op modify.
+	if err := m.checkPreLiquidationGate(ctx, o.OwnerAccountIndex, o.MarketIndex, o.ReduceOnly); err != nil {
+		return nil, err
 	}
 	if err := m.cancelOrderInternal(ctx, o); err != nil {
 		return nil, err

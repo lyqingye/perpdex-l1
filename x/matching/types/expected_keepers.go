@@ -68,3 +68,13 @@ type TradeKeeper interface {
 type OracleKeeper interface {
 	GetPrice(ctx context.Context, marketIdx uint32) (oracletypes.OraclePrice, error)
 }
+
+// RiskKeeper exposes the post-state health classification used by the
+// pre-liquidation order placement gate. Lighter parity: accounts in
+// PRE may only submit orders that strictly reduce exposure (reduce-
+// only); accounts in PARTIAL/FULL/BANKRUPTCY may not submit any
+// user-initiated order until liquidation completes.
+type RiskKeeper interface {
+	GetHealthStatus(ctx context.Context, accountIdx uint64) (uint32, error)
+	GetIsolatedHealthStatus(ctx context.Context, accountIdx uint64, marketIdx uint32) (uint32, error)
+}
