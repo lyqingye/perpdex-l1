@@ -188,9 +188,7 @@ func (k Keeper) SettleAllMarkets(ctx context.Context, params types.ParamsAlias) 
 				sdk.NewAttribute("market_index", strconv.FormatUint(uint64(m.MarketIndex), 10)),
 				sdk.NewAttribute("err", err.Error()),
 			))
-			if !errors.Is(err, oracletypes.ErrPriceNotFound) &&
-				!errors.Is(err, oracletypes.ErrStalePrice) &&
-				firstErr == nil {
+			if firstErr == nil {
 				firstErr = err
 			}
 		}
@@ -225,11 +223,6 @@ func (k Keeper) settleMarket(ctx context.Context, marketIdx uint32, params types
 	}
 	px, err := k.oracleKeeper.GetPrice(ctx, marketIdx)
 	if err != nil {
-		if errors.Is(err, oracletypes.ErrPriceNotFound) || errors.Is(err, oracletypes.ErrStalePrice) {
-			d.AggregatePremiumSum = 0
-			d.TotalPremiumSamples = 0
-			return k.marketKeeper.SetMarketDetails(ctx, d)
-		}
 		return err
 	}
 	d.IndexPrice = px.IndexPrice
