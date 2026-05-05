@@ -47,11 +47,13 @@ func (k Keeper) AllocateOrderIndex(ctx context.Context) (uint64, error) {
 	return idx, nil
 }
 
-// InsertOrderbookEntry adds an order to the orderbook (sorted side store) and
+// insertOrderbookEntry adds an order to the orderbook (sorted side store) and
 // updates the price-level aggregate. The per-entry quote notional is capped
 // by `perptypes.MaxOrderQuoteAmount` (~2.8e14) and the price-level aggregate
 // is guarded against uint64 overflow in `adjustPriceLevel`.
-func (k Keeper) InsertOrderbookEntry(ctx context.Context, market uint32, isAsk bool, o types.OrderBookEntry) error {
+//
+// Internal helper. External callers go through OpenOrder.
+func (k Keeper) insertOrderbookEntry(ctx context.Context, market uint32, isAsk bool, o types.OrderBookEntry) error {
 	quote, err := checkedQuote(o.RemainingBaseAmount, uint64(o.Price))
 	if err != nil {
 		return err
@@ -67,8 +69,10 @@ func (k Keeper) InsertOrderbookEntry(ctx context.Context, market uint32, isAsk b
 	return k.adjustPriceLevel(ctx, market, isAsk, o.Price, int64(o.RemainingBaseAmount), int64(quote), 1)
 }
 
-// RemoveOrderbookEntry deletes the entry and decrements the price-level.
-func (k Keeper) RemoveOrderbookEntry(ctx context.Context, market uint32, isAsk bool, orderIndex uint64) error {
+// removeOrderbookEntry deletes the entry and decrements the price-level.
+//
+// Internal helper. External callers go through CancelOrder / EvictMakerOrder.
+func (k Keeper) removeOrderbookEntry(ctx context.Context, market uint32, isAsk bool, orderIndex uint64) error {
 	composed, err := k.OrderToSortKey.Get(ctx, collections.Join(market, orderIndex))
 	if err != nil {
 		if errors.Is(err, collections.ErrNotFound) {
@@ -103,9 +107,11 @@ func (k Keeper) RemoveOrderbookEntry(ctx context.Context, market uint32, isAsk b
 	)
 }
 
-// PartialFill subtracts filledBase from the remaining_base_amount of the entry
+// partialFill subtracts filledBase from the remaining_base_amount of the entry
 // and updates the price level. If remaining drops to 0 the entry is removed.
-func (k Keeper) PartialFill(ctx context.Context, market uint32, isAsk bool, orderIndex uint64, filledBase uint64) error {
+//
+// Internal helper. External callers go through FillMakerOrder.
+func (k Keeper) partialFill(ctx context.Context, market uint32, isAsk bool, orderIndex uint64, filledBase uint64) error {
 	composed, err := k.OrderToSortKey.Get(ctx, collections.Join(market, orderIndex))
 	if err != nil {
 		return err
@@ -360,26 +366,33 @@ func (k Keeper) BestBidAsk(ctx context.Context, market uint32) (uint32, uint32, 
 	return bidP, askP, nil
 }
 
-// IndexClientOrder records the (market, account, client_order_index) -> order_index mapping.
-func (k Keeper) IndexClientOrder(ctx context.Context, o types.Order) error {
+// indexClientOrder records the (market, account, client_order_index) -> order_index mapping.
+//
+// Internal helper. External callers go through OpenOrder / OpenTriggerOrder.
+func (k Keeper) indexClientOrder(ctx context.Context, o types.Order) error {
 	if o.ClientOrderIndex == 0 {
 		return nil
 	}
 	return k.UserOrderIndex.Set(ctx, collections.Join3(o.MarketIndex, o.OwnerAccountIndex, o.ClientOrderIndex), o.OrderIndex)
 }
 
-// UnindexClientOrder removes the (market, account, client_order_index) -> order mapping.
-func (k Keeper) UnindexClientOrder(ctx context.Context, o types.Order) error {
+// unindexClientOrder removes the (market, account, client_order_index) -> order mapping.
+//
+// Internal helper. External callers go through FillMakerOrder when a maker
+// fully fills.
+func (k Keeper) unindexClientOrder(ctx context.Context, o types.Order) error {
 	if o.ClientOrderIndex == 0 {
 		return nil
 	}
 	return k.UserOrderIndex.Remove(ctx, collections.Join3(o.MarketIndex, o.OwnerAccountIndex, o.ClientOrderIndex))
 }
 
-// UnindexClientOrderIfMatches is a conditional unindex used by Cancel /
+// unindexClientOrderIfMatches is a conditional unindex used by Cancel /
 // Modify so an old order's cleanup cannot accidentally delete the mapping
 // for a newer order that re-used the same client_order_index.
-func (k Keeper) UnindexClientOrderIfMatches(ctx context.Context, o types.Order) error {
+//
+// Internal helper. External callers go through CancelOrder / EvictMakerOrder.
+func (k Keeper) unindexClientOrderIfMatches(ctx context.Context, o types.Order) error {
 	if o.ClientOrderIndex == 0 {
 		return nil
 	}
@@ -426,16 +439,21 @@ func (k Keeper) HasOpenClientOrder(ctx context.Context, market uint32, account u
 	return false, 0, nil
 }
 
-// IndexAccountOpenOrder marks `o` as a non-terminal order owned by
+// indexAccountOpenOrder marks `o` as a non-terminal order owned by
 // `o.OwnerAccountIndex`. Independent of client_order_index so cancel-all
 // can find every resting order.
-func (k Keeper) IndexAccountOpenOrder(ctx context.Context, o types.Order) error {
+//
+// Internal helper. External callers go through OpenOrder / OpenTriggerOrder.
+func (k Keeper) indexAccountOpenOrder(ctx context.Context, o types.Order) error {
 	return k.AccountOpenOrders.Set(ctx, collections.Join(o.OwnerAccountIndex, o.OrderIndex))
 }
 
-// UnindexAccountOpenOrder removes the (account, order_index) tuple. Safe
+// unindexAccountOpenOrder removes the (account, order_index) tuple. Safe
 // to call on a tuple that was never indexed.
-func (k Keeper) UnindexAccountOpenOrder(ctx context.Context, o types.Order) error {
+//
+// Internal helper. External callers go through CancelOrder / FillMakerOrder /
+// EvictMakerOrder.
+func (k Keeper) unindexAccountOpenOrder(ctx context.Context, o types.Order) error {
 	return k.AccountOpenOrders.Remove(ctx, collections.Join(o.OwnerAccountIndex, o.OrderIndex))
 }
 
@@ -477,48 +495,17 @@ func (k Keeper) IterateAccountOpenOrders(
 	return nil
 }
 
-// IterateUserOrders visits every (market, account, clientID) mapping owned
-// by `account` and yields the corresponding `Order`. Callers can return
-// true from `cb` to stop early.
-func (k Keeper) IterateUserOrders(ctx context.Context, account uint64, cb func(types.Order) bool) error {
-	iter, err := k.UserOrderIndex.Iterate(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer iter.Close()
-	for ; iter.Valid(); iter.Next() {
-		key, err := iter.Key()
-		if err != nil {
-			return err
-		}
-		if key.K2() != account {
-			continue
-		}
-		idx, err := iter.Value()
-		if err != nil {
-			return err
-		}
-		o, err := k.GetOrder(ctx, idx)
-		if err != nil {
-			if errors.Is(err, types.ErrOrderNotFound) {
-				continue
-			}
-			return err
-		}
-		if cb(o) {
-			return nil
-		}
-	}
-	return nil
-}
-
-// AddTrigger registers an order with a trigger price.
-func (k Keeper) AddTrigger(ctx context.Context, market uint32, triggerPrice uint32, orderIndex uint64) error {
+// addTrigger registers an order with a trigger price.
+//
+// Internal helper. External callers go through OpenTriggerOrder.
+func (k Keeper) addTrigger(ctx context.Context, market uint32, triggerPrice uint32, orderIndex uint64) error {
 	return k.TriggerIndex.Set(ctx, collections.Join3(market, triggerPrice, orderIndex))
 }
 
-// RemoveTrigger drops the trigger entry for an order.
-func (k Keeper) RemoveTrigger(ctx context.Context, market uint32, triggerPrice uint32, orderIndex uint64) error {
+// removeTrigger drops the trigger entry for an order.
+//
+// Internal helper. External callers go through ActivateTrigger / CancelOrder.
+func (k Keeper) removeTrigger(ctx context.Context, market uint32, triggerPrice uint32, orderIndex uint64) error {
 	return k.TriggerIndex.Remove(ctx, collections.Join3(market, triggerPrice, orderIndex))
 }
 

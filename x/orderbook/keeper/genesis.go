@@ -14,7 +14,7 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 		return err
 	}
 	for _, o := range gs.Orders {
-		if err := k.SetOrder(ctx, o); err != nil {
+		if err := k.setOrder(ctx, o); err != nil {
 			return err
 		}
 	}

@@ -151,20 +151,13 @@ func (m msgServer) CreateOrder(ctx context.Context, msg *types.MsgCreateOrder) (
 		Status:              perptypes.OrderStatusOpen,
 	}
 	// Trigger orders (stop/take) are parked in the trigger index until a
-	// price crossover activates them in EndBlocker.
+	// price crossover activates them in EndBlocker. OpenTriggerOrder
+	// owns the trigger registration plus client and account-open
+	// indexes so cancel-all can still reach a pending trigger.
 	if isTriggerOrder(msg.OrderType) {
 		order.Status = perptypes.OrderStatusTriggeredPending
 		order.TriggerStatus = perptypes.TriggerStatusMarkPrice
-		if err := m.bookKeeper.AddTrigger(ctx, msg.MarketIndex, msg.TriggerPrice, idx); err != nil {
-			return nil, err
-		}
-		if err := m.bookKeeper.SetOrder(ctx, order); err != nil {
-			return nil, err
-		}
-		if err := m.bookKeeper.IndexClientOrder(ctx, order); err != nil {
-			return nil, err
-		}
-		if err := m.bookKeeper.IndexAccountOpenOrder(ctx, order); err != nil {
+		if err := m.bookKeeper.OpenTriggerOrder(ctx, order); err != nil {
 			return nil, err
 		}
 		return &types.MsgCreateOrderResponse{OrderIndex: idx, Status: order.Status}, nil
@@ -180,42 +173,17 @@ func (m msgServer) CreateOrder(ctx context.Context, msg *types.MsgCreateOrder) (
 	}
 	order.Status = status
 
-	// IOC: cancel remaining.
-	if msg.TimeInForce == perptypes.IOC {
-		if order.RemainingBaseAmount > 0 {
-			order.Status = perptypes.OrderStatusCancelled
-		}
-	} else if order.RemainingBaseAmount > 0 {
-		entry := orderbooktypes.OrderBookEntry{
-			OrderIndex:          order.OrderIndex,
-			OwnerAccountIndex:   order.OwnerAccountIndex,
-			Price:               order.Price,
-			Nonce:               order.Nonce,
-			RemainingBaseAmount: order.RemainingBaseAmount,
-			Expiry:              order.Expiry,
-			IsPostOnly:          msg.TimeInForce == perptypes.PostOnly,
-			ReduceOnly:          order.ReduceOnly,
-			OrderType:           order.OrderType,
-		}
-		if err := m.bookKeeper.InsertOrderbookEntry(ctx, order.MarketIndex, order.IsAsk, entry); err != nil {
-			return nil, err
-		}
+	// IOC residue is rejected — terminal cancellation; everything else
+	// either rests on the book (Open / PartiallyFilled with remaining
+	// base) or is fully filled. OpenOrder branches internally on
+	// order.Status: terminal orders are persisted without entry/index;
+	// non-terminal orders are inserted with the right indexes in one
+	// atomic step.
+	if msg.TimeInForce == perptypes.IOC && order.RemainingBaseAmount > 0 {
+		order.Status = perptypes.OrderStatusCancelled
 	}
-
-	if err := m.bookKeeper.SetOrder(ctx, order); err != nil {
+	if err := m.bookKeeper.OpenOrder(ctx, order, msg.TimeInForce == perptypes.PostOnly); err != nil {
 		return nil, err
-	}
-	// Only index persistent (open/partial) orders. Fully filled / cancelled
-	// IOC orders don't need client-id lookup; indexing them would also
-	// leave stale mappings around after they leave the book.
-	switch order.Status {
-	case perptypes.OrderStatusOpen, perptypes.OrderStatusPartiallyFilled:
-		if err := m.bookKeeper.IndexClientOrder(ctx, order); err != nil {
-			return nil, err
-		}
-		if err := m.bookKeeper.IndexAccountOpenOrder(ctx, order); err != nil {
-			return nil, err
-		}
 	}
 
 	return &types.MsgCreateOrderResponse{
@@ -303,34 +271,11 @@ func (m msgServer) CancelOrder(ctx context.Context, msg *types.MsgCancelOrder) (
 }
 
 // cancelOrderInternal is the shared cancel path used by CancelOrder,
-// CancelAllOrders and ModifyOrder. It enforces the order-status state
-// machine so history entries (filled / already-cancelled) cannot be
-// overwritten, and routes trigger-pending orders through the trigger
-// index cleanup.
+// CancelAllOrders and ModifyOrder. The state-machine, entry/trigger
+// removal, and index cleanup are all owned by orderbook.CancelOrder.
 func (m msgServer) cancelOrderInternal(ctx context.Context, o orderbooktypes.Order) error {
-	switch o.Status {
-	case perptypes.OrderStatusOpen, perptypes.OrderStatusPartiallyFilled:
-		if o.RemainingBaseAmount == 0 {
-			return types.ErrOrderNotCancelable.Wrapf("order_index=%d already fully filled", o.OrderIndex)
-		}
-		if err := m.bookKeeper.RemoveOrderbookEntry(ctx, o.MarketIndex, o.IsAsk, o.OrderIndex); err != nil {
-			return err
-		}
-	case perptypes.OrderStatusTriggeredPending:
-		if err := m.bookKeeper.RemoveTrigger(ctx, o.MarketIndex, o.TriggerPrice, o.OrderIndex); err != nil {
-			return err
-		}
-	default:
-		return types.ErrOrderNotCancelable.Wrapf("order_index=%d status=%d", o.OrderIndex, o.Status)
-	}
-	o.Status = perptypes.OrderStatusCancelled
-	if err := m.bookKeeper.SetOrder(ctx, o); err != nil {
-		return err
-	}
-	if err := m.bookKeeper.UnindexClientOrderIfMatches(ctx, o); err != nil {
-		return err
-	}
-	return m.bookKeeper.UnindexAccountOpenOrder(ctx, o)
+	_, err := m.bookKeeper.CancelOrder(ctx, o.OrderIndex)
+	return err
 }
 
 func (m msgServer) CancelAllOrders(ctx context.Context, msg *types.MsgCancelAllOrders) (*types.MsgCancelAllOrdersResponse, error) {

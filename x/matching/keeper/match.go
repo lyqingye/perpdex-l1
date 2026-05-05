@@ -66,7 +66,13 @@ func (k Keeper) matchOrder(ctx context.Context, taker *orderbooktypes.Order, max
 			break
 		}
 		if best.Expiry > 0 && now >= best.Expiry {
-			if err := k.bookKeeper.RemoveOrderbookEntry(ctx, taker.MarketIndex, !taker.IsAsk, best.OrderIndex); err != nil {
+			// EvictMakerOrder removes the entry, marks the maker
+			// Order as Cancelled, and clears its client / account-
+			// open indexes so the now-gone resting order does not
+			// linger as a stale "open" record. Previously only the
+			// entry was removed and the orderbook GTT EndBlocker had
+			// to retroactively clean up.
+			if _, err := k.bookKeeper.EvictMakerOrder(ctx, best.OrderIndex, perptypes.OrderStatusCancelled); err != nil {
 				return totalFilled, perptypes.OrderStatusCancelled, err
 			}
 			continue
@@ -86,7 +92,10 @@ func (k Keeper) matchOrder(ctx context.Context, taker *orderbooktypes.Order, max
 				break
 			}
 		}
-		// Maker reduce-only direction check.
+		// Maker reduce-only direction check. A reduce-only maker that
+		// no longer holds an opposite position is invalid and must be
+		// evicted; previously the entry was dropped but the Order
+		// record + indexes leaked, leaving a phantom "open" order.
 		if isPerp && best.ReduceOnly {
 			pos, err := k.accountKeeper.GetPosition(ctx, best.OwnerAccountIndex, taker.MarketIndex)
 			if err != nil {
@@ -95,7 +104,7 @@ func (k Keeper) matchOrder(ctx context.Context, taker *orderbooktypes.Order, max
 			if pos.Position.IsZero() ||
 				(taker.IsAsk && !pos.Position.IsNegative()) ||
 				(!taker.IsAsk && !pos.Position.IsPositive()) {
-				if err := k.bookKeeper.RemoveOrderbookEntry(ctx, taker.MarketIndex, !taker.IsAsk, best.OrderIndex); err != nil {
+				if _, err := k.bookKeeper.EvictMakerOrder(ctx, best.OrderIndex, perptypes.OrderStatusCancelled); err != nil {
 					return totalFilled, perptypes.OrderStatusCancelled, err
 				}
 				continue
@@ -132,7 +141,7 @@ func (k Keeper) matchOrder(ctx context.Context, taker *orderbooktypes.Order, max
 			}
 			makerLimit := pos.Position.Abs().Uint64()
 			if makerLimit == 0 {
-				if err := k.bookKeeper.RemoveOrderbookEntry(ctx, taker.MarketIndex, !taker.IsAsk, best.OrderIndex); err != nil {
+				if _, err := k.bookKeeper.EvictMakerOrder(ctx, best.OrderIndex, perptypes.OrderStatusCancelled); err != nil {
 					return totalFilled, perptypes.OrderStatusCancelled, err
 				}
 				continue
@@ -164,23 +173,12 @@ func (k Keeper) matchOrder(ctx context.Context, taker *orderbooktypes.Order, max
 				return totalFilled, perptypes.OrderStatusCancelled, err
 			}
 		}
-		// Update maker entry.
-		if err := k.bookKeeper.PartialFill(ctx, taker.MarketIndex, !taker.IsAsk, best.OrderIndex, tradeBase); err != nil {
+		// FillMakerOrder atomically updates the orderbook entry and
+		// the maker Order record (PartiallyFilled / Filled), and
+		// clears the client + account-open indexes when the maker
+		// fully fills.
+		if _, err := k.bookKeeper.FillMakerOrder(ctx, best.OrderIndex, tradeBase); err != nil {
 			return totalFilled, perptypes.OrderStatusCancelled, err
-		}
-		// Update maker stored Order record.
-		makerOrder, err := k.bookKeeper.GetOrder(ctx, best.OrderIndex)
-		if err == nil {
-			if makerOrder.RemainingBaseAmount > tradeBase {
-				makerOrder.RemainingBaseAmount -= tradeBase
-				makerOrder.Status = perptypes.OrderStatusPartiallyFilled
-			} else {
-				makerOrder.RemainingBaseAmount = 0
-				makerOrder.Status = perptypes.OrderStatusFilled
-				_ = k.bookKeeper.UnindexClientOrder(ctx, makerOrder)
-				_ = k.bookKeeper.UnindexAccountOpenOrder(ctx, makerOrder)
-			}
-			_ = k.bookKeeper.SetOrder(ctx, makerOrder)
 		}
 
 		taker.RemainingBaseAmount -= tradeBase

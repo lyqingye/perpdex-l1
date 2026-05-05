@@ -111,8 +111,11 @@ func (k Keeper) GetOrder(ctx context.Context, idx uint64) (types.Order, error) {
 	return o, nil
 }
 
-// SetOrder stores the order keyed by order_index.
-func (k Keeper) SetOrder(ctx context.Context, o types.Order) error {
+// setOrder stores the order keyed by order_index.
+//
+// Internal helper. External callers go through OpenOrder / OpenTriggerOrder /
+// CancelOrder / FillMakerOrder / EvictMakerOrder / ActivateTrigger.
+func (k Keeper) setOrder(ctx context.Context, o types.Order) error {
 	return k.Orders.Set(ctx, o.OrderIndex, o)
 }
 

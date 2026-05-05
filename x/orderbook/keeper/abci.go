@@ -8,8 +8,14 @@ import (
 	perptypes "github.com/perpdex/perpdex-l1/types"
 )
 
-// EndBlocker scans for expired GTT orders and removes them. Trigger handling
-// (which spawns matching) is owned by x/matching.
+// EndBlocker scans for expired GTT orders and cancels them via the unified
+// CancelOrder lifecycle. Trigger handling (which spawns matching) is owned
+// by x/matching.
+//
+// Orders that have already reached a terminal status (Filled / Cancelled)
+// are skipped: the matching loop may have evicted a GTT-expired maker as
+// part of an in-block fill via EvictMakerOrder, in which case re-cancelling
+// here would error with ErrOrderNotCancelable.
 func (k Keeper) EndBlocker(ctx context.Context) error {
 	now := sdk.UnwrapSDKContext(ctx).BlockTime().UnixMilli()
 	iter, err := k.Orders.Iterate(ctx, nil)
@@ -23,24 +29,20 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 			iter.Close()
 			return err
 		}
-		if v.TimeInForce == perptypes.GTT && v.Expiry > 0 && now >= v.Expiry {
+		if v.TimeInForce != perptypes.GTT || v.Expiry == 0 || now < v.Expiry {
+			continue
+		}
+		switch v.Status {
+		case perptypes.OrderStatusOpen,
+			perptypes.OrderStatusPartiallyFilled,
+			perptypes.OrderStatusTriggeredPending:
 			expired = append(expired, v.OrderIndex)
 		}
 	}
 	iter.Close()
 
 	for _, idx := range expired {
-		o, err := k.GetOrder(ctx, idx)
-		if err != nil {
-			continue
-		}
-		if err := k.RemoveOrderbookEntry(ctx, o.MarketIndex, o.IsAsk, o.OrderIndex); err != nil {
-			return err
-		}
-		_ = k.UnindexClientOrder(ctx, o)
-		_ = k.UnindexAccountOpenOrder(ctx, o)
-		o.Status = perptypes.OrderStatusCancelled
-		if err := k.SetOrder(ctx, o); err != nil {
+		if _, err := k.CancelOrder(ctx, idx); err != nil {
 			return err
 		}
 	}
