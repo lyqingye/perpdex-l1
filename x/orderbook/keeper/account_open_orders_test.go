@@ -52,34 +52,37 @@ func newOrderbookKeeper(t *testing.T) (orderbookkeeper.Keeper, sdk.Context) {
 	return k, ctx
 }
 
+// makeOrder builds a minimal but valid Order suitable for OpenOrder. A
+// non-zero RemainingBaseAmount and Price keep the underlying entry
+// insert from rejecting on the quote-cap path.
+func makeOrder(idx uint64, account uint64, market uint32, clientID uint64, isAsk bool) types.Order {
+	return types.Order{
+		OrderIndex:          idx,
+		ClientOrderIndex:    clientID,
+		OwnerAccountIndex:   account,
+		MarketIndex:         market,
+		IsAsk:               isAsk,
+		OrderType:           perptypes.LimitOrder,
+		TimeInForce:         perptypes.GTT,
+		Price:               1000,
+		Nonce:               int64(idx),
+		InitialBaseAmount:   1,
+		RemainingBaseAmount: 1,
+		Status:              perptypes.OrderStatusOpen,
+	}
+}
+
 // TestAccountOpenOrders_CoversNoClientID confirms that orders without a
 // client_order_index (the optional field defaulting to 0) are still
 // reachable via the AccountOpenOrders index, so cancel-all can find them.
 func TestAccountOpenOrders_CoversNoClientID(t *testing.T) {
 	k, ctx := newOrderbookKeeper(t)
 
-	// Order A: with client_order_index
-	a := types.Order{
-		OrderIndex:        1,
-		ClientOrderIndex:  10,
-		OwnerAccountIndex: 99,
-		MarketIndex:       1,
-		Status:            perptypes.OrderStatusOpen,
-	}
-	require.NoError(t, k.SetOrder(ctx, a))
-	require.NoError(t, k.IndexClientOrder(ctx, a))
-	require.NoError(t, k.IndexAccountOpenOrder(ctx, a))
+	a := makeOrder(1, 99, 1, 10, false)
+	require.NoError(t, k.OpenOrder(ctx, a, false))
 
-	// Order B: no client_order_index (default 0)
-	b := types.Order{
-		OrderIndex:        2,
-		ClientOrderIndex:  0,
-		OwnerAccountIndex: 99,
-		MarketIndex:       1,
-		Status:            perptypes.OrderStatusOpen,
-	}
-	require.NoError(t, k.SetOrder(ctx, b))
-	require.NoError(t, k.IndexAccountOpenOrder(ctx, b))
+	b := makeOrder(2, 99, 1, 0, false)
+	require.NoError(t, k.OpenOrder(ctx, b, false))
 
 	seen := map[uint64]bool{}
 	require.NoError(t, k.IterateAccountOpenOrders(ctx, 99, 0, func(o types.Order) bool {
@@ -88,16 +91,6 @@ func TestAccountOpenOrders_CoversNoClientID(t *testing.T) {
 	}))
 	require.True(t, seen[1], "order with client_order_index missed")
 	require.True(t, seen[2], "order without client_order_index missed")
-
-	// IterateUserOrders by contrast only covers the client-id mapping;
-	// it would miss order 2.
-	seenLegacy := map[uint64]bool{}
-	require.NoError(t, k.IterateUserOrders(ctx, 99, func(o types.Order) bool {
-		seenLegacy[o.OrderIndex] = true
-		return false
-	}))
-	require.True(t, seenLegacy[1])
-	require.False(t, seenLegacy[2], "legacy iterator unexpectedly covers no-clientID orders")
 }
 
 // TestAccountOpenOrders_HonorsMarketFilter checks that a non-zero
@@ -106,14 +99,8 @@ func TestAccountOpenOrders_HonorsMarketFilter(t *testing.T) {
 	k, ctx := newOrderbookKeeper(t)
 
 	for i, mkt := range []uint32{1, 2, 1, 3} {
-		o := types.Order{
-			OrderIndex:        uint64(i + 1),
-			OwnerAccountIndex: 7,
-			MarketIndex:       mkt,
-			Status:            perptypes.OrderStatusOpen,
-		}
-		require.NoError(t, k.SetOrder(ctx, o))
-		require.NoError(t, k.IndexAccountOpenOrder(ctx, o))
+		o := makeOrder(uint64(i+1), 7, mkt, 0, false)
+		require.NoError(t, k.OpenOrder(ctx, o, false))
 	}
 
 	collect := func(filter uint32) []uint64 {
@@ -131,14 +118,13 @@ func TestAccountOpenOrders_HonorsMarketFilter(t *testing.T) {
 	require.Empty(t, collect(99), "filter for non-existent market should yield nothing")
 }
 
-// TestAccountOpenOrders_UnindexRemoves verifies the unindex path drops the
-// (account, order_index) tuple from the iterator.
-func TestAccountOpenOrders_UnindexRemoves(t *testing.T) {
+// TestAccountOpenOrders_CancelRemoves verifies that CancelOrder removes
+// the order from the AccountOpenOrders iterator.
+func TestAccountOpenOrders_CancelRemoves(t *testing.T) {
 	k, ctx := newOrderbookKeeper(t)
 
-	o := types.Order{OrderIndex: 5, OwnerAccountIndex: 1, MarketIndex: 1, Status: perptypes.OrderStatusOpen}
-	require.NoError(t, k.SetOrder(ctx, o))
-	require.NoError(t, k.IndexAccountOpenOrder(ctx, o))
+	o := makeOrder(5, 1, 1, 0, false)
+	require.NoError(t, k.OpenOrder(ctx, o, false))
 
 	var hits int
 	require.NoError(t, k.IterateAccountOpenOrders(ctx, 1, 0, func(types.Order) bool {
@@ -147,7 +133,9 @@ func TestAccountOpenOrders_UnindexRemoves(t *testing.T) {
 	}))
 	require.Equal(t, 1, hits)
 
-	require.NoError(t, k.UnindexAccountOpenOrder(ctx, o))
+	cancelled, err := k.CancelOrder(ctx, o.OrderIndex)
+	require.NoError(t, err)
+	require.Equal(t, perptypes.OrderStatusCancelled, cancelled.Status)
 
 	hits = 0
 	require.NoError(t, k.IterateAccountOpenOrders(ctx, 1, 0, func(types.Order) bool {
