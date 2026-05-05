@@ -134,15 +134,7 @@ func (k Keeper) processMarketSample(ctx context.Context, marketIdx uint32, now i
 	// MarketDetails index/mark values.
 	px, err := k.oracleKeeper.GetPrice(ctx, marketIdx)
 	if err != nil {
-		sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
-			"funding_oracle_price_error",
-			sdk.NewAttribute("market_index", strconv.FormatUint(uint64(marketIdx), 10)),
-			sdk.NewAttribute("err", err.Error()),
-		))
-		if errors.Is(err, oracletypes.ErrPriceNotFound) || errors.Is(err, oracletypes.ErrStalePrice) {
-			return k.marketKeeper.SetMarketDetails(ctx, d)
-		}
-		return err
+		return k.marketKeeper.SetMarketDetails(ctx, d)
 	}
 	d.IndexPrice = px.IndexPrice
 	d.MarkPrice = px.MarkPrice
