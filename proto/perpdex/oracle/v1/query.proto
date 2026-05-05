@@ -11,12 +11,6 @@ service Query {
   rpc OraclePrice(QueryOraclePriceRequest) returns (QueryOraclePriceResponse) {
     option (google.api.http).get = "/perpdex/oracle/v1/price/{market_index}";
   }
-  rpc OracleProviders(QueryOracleProvidersRequest) returns (QueryOracleProvidersResponse) {
-    option (google.api.http).get = "/perpdex/oracle/v1/providers";
-  }
-  rpc Bindings(QueryBindingsRequest) returns (QueryBindingsResponse) {
-    option (google.api.http).get = "/perpdex/oracle/v1/bindings";
-  }
   rpc Params(QueryParamsRequest) returns (QueryParamsResponse) {
     option (google.api.http).get = "/perpdex/oracle/v1/params";
   }
@@ -24,12 +18,6 @@ service Query {
 
 message QueryOraclePriceRequest { uint32 market_index = 1; }
 message QueryOraclePriceResponse { OraclePrice price = 1 [(gogoproto.nullable) = false]; }
-
-message QueryOracleProvidersRequest {}
-message QueryOracleProvidersResponse { repeated OracleProvider providers = 1 [(gogoproto.nullable) = false]; }
-
-message QueryBindingsRequest {}
-message QueryBindingsResponse { repeated ValidatorOracleBinding bindings = 1 [(gogoproto.nullable) = false]; }
 
 message QueryParamsRequest {}
 message QueryParamsResponse { Params params = 1 [(gogoproto.nullable) = false]; }

@@ -331,9 +331,10 @@ func NewAppKeeper(
 		appCodec,
 		runtime.NewKVStoreService(appKeepers.keys[oracletypes.StoreKey]),
 		govModuleAddr,
-		appKeepers.StakingKeeper,
-		nil, // slashing-keeper hooks: skipped in MVP
 	)
+	// StakingKeeper / PriceFetcher are wired post-construction. The
+	// VoteExtensionHandler reads StakingKeeper for voting power lookup.
+	appKeepers.OracleKeeper.SetStakingKeeper(appKeepers.StakingKeeper)
 	appKeepers.OrderbookKeeper = orderbookkeeper.NewKeeper(
 		appCodec,
 		runtime.NewKVStoreService(appKeepers.keys[orderbooktypes.StoreKey]),

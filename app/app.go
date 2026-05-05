@@ -1,14 +1,17 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/spf13/cast"
 
 	abci "github.com/cometbft/cometbft/abci/types"
 	tmjson "github.com/cometbft/cometbft/libs/json"
@@ -57,6 +60,9 @@ import (
 	perpante "github.com/perpdex/perpdex-l1/ante"
 	"github.com/perpdex/perpdex-l1/app/keepers"
 	"github.com/perpdex/perpdex-l1/app/upgrades"
+	oracleabcicodec "github.com/perpdex/perpdex-l1/x/oracle/abci/codec"
+	"github.com/perpdex/perpdex-l1/x/oracle/daemon"
+	oraclekeeper "github.com/perpdex/perpdex-l1/x/oracle/keeper"
 )
 
 var (
@@ -90,6 +96,8 @@ type PerpDEXApp struct {
 
 	sm           *module.SimulationManager
 	configurator module.Configurator
+
+	oracleDaemon *daemon.Daemon
 }
 
 func init() {
@@ -235,9 +243,62 @@ func NewPerpDEXApp(
 
 	app.SetAnteHandler(anteHandler)
 	app.SetInitChainer(app.InitChainer)
-	app.SetPreBlocker(app.PreBlocker)
+
+	// Wire the dydx/Slinky-style ABCI++ vote-extension oracle pipeline.
+	// The handlers no-op while consensus has not yet enabled vote
+	// extensions (see ConsensusParams.Abci.VoteExtensionsEnableHeight);
+	// once active each validator's local node fetches prices from the
+	// sidecar daemon, broadcasts them as a vote-extension, and the
+	// proposer prepends the prior block's ExtendedCommitInfo bytes to
+	// Txs[0]. The PreBlocker decodes those bytes, runs a stake-weighted
+	// median per market, and writes the result to state.
+	veCodec := oracleabcicodec.NewRawVoteExtensionCodec()
+	rawECCodec := oracleabcicodec.NewRawExtendedCommitCodec()
+	ecCodec, err := oracleabcicodec.NewZstdExtendedCommitCodec(rawECCodec)
+	if err != nil {
+		panic(fmt.Errorf("oracle codec: %w", err))
+	}
+
+	voteExtHandler := oraclekeeper.NewVoteExtensionHandler(app.OracleKeeper, veCodec, ecCodec)
+	bApp.SetExtendVoteHandler(voteExtHandler.ExtendVote())
+	bApp.SetVerifyVoteExtensionHandler(voteExtHandler.VerifyVoteExtension())
+	defaultProposalHandler := baseapp.NewDefaultProposalHandler(nil, bApp)
+	bApp.SetPrepareProposal(voteExtHandler.PrepareProposal(defaultProposalHandler.PrepareProposalHandler()))
+	bApp.SetProcessProposal(voteExtHandler.ProcessProposal(defaultProposalHandler.ProcessProposalHandler()))
+
+	// PreBlock dispatches in two stages: first the module manager (which
+	// applies upgrade and authn pre-block hooks), then the oracle
+	// PreBlocker which decodes Txs[0] and writes per-market prices.
+	oraclePreBlocker := voteExtHandler.PreBlocker()
+	app.SetPreBlocker(func(ctx sdk.Context, req *abci.RequestFinalizeBlock) (*sdk.ResponsePreBlock, error) {
+		resp, err := app.mm.PreBlock(ctx)
+		if err != nil {
+			return resp, err
+		}
+		if _, oerr := oraclePreBlocker(ctx, req); oerr != nil {
+			ctx.Logger().Error("oracle preblock", "err", oerr)
+		}
+		return resp, nil
+	})
 	app.SetBeginBlocker(app.BeginBlocker)
 	app.SetEndBlocker(app.EndBlocker)
+
+	// Start the local oracle daemon. It dials the sidecar (default
+	// localhost:8080), polls every 500ms, resolves currency pairs to
+	// market_index via the markets+assets keepers, and feeds the cache
+	// that ExtendVote reads. Disabled on non-validator full nodes by
+	// setting [oracle] enabled=false in app.toml.
+	oracleDaemon := daemon.New(
+		logger,
+		oracleDaemonConfigFromAppOpts(appOpts),
+		daemon.MarketKeeperAdapter{K: app.MarketKeeper},
+		daemon.AssetKeeperAdapter{K: app.AssetKeeper},
+	)
+	if err := oracleDaemon.Start(rootCtx()); err != nil {
+		panic(fmt.Errorf("oracle daemon: %w", err))
+	}
+	app.OracleKeeper.SetPriceFetcher(oracleDaemon.AsPriceFetcher())
+	app.oracleDaemon = oracleDaemon
 
 	app.setupUpgradeHandlers()
 	app.setupUpgradeStoreLoaders()
@@ -264,18 +325,30 @@ func NewPerpDEXApp(
 // Name returns the application name.
 func (app *PerpDEXApp) Name() string { return app.BaseApp.Name() }
 
-// PreBlocker is invoked before every block; it runs the upgrade module first.
-func (app *PerpDEXApp) PreBlocker(ctx sdk.Context, _ *abci.RequestFinalizeBlock) (*sdk.ResponsePreBlock, error) {
-	return app.mm.PreBlock(ctx)
-}
-
 func (app *PerpDEXApp) BeginBlocker(ctx sdk.Context) (sdk.BeginBlock, error) {
 	return app.mm.BeginBlock(ctx)
+}
+
+// Close releases resources owned by the app: stops the oracle daemon and
+// closes the embedded baseapp. Mirrors what cosmos-sdk's `Close` hook
+// expects when chains carry long-lived sidecars.
+func (app *PerpDEXApp) Close() error {
+	if app.oracleDaemon != nil {
+		app.oracleDaemon.Stop()
+	}
+	return app.BaseApp.Close()
 }
 
 func (app *PerpDEXApp) EndBlocker(ctx sdk.Context) (sdk.EndBlock, error) {
 	return app.mm.EndBlock(ctx)
 }
+
+// DefaultVoteExtensionsEnableHeight is the height at which the chain
+// flips on ABCI++ vote extensions when the genesis file does not pin a
+// custom value. Setting it to 2 mirrors the dydx default (the very first
+// block after genesis emits VEs because cometbft can only enable VEs
+// starting from height >= H+1 after the consensus param is set in InitChain).
+const DefaultVoteExtensionsEnableHeight = int64(2)
 
 // InitChainer is the entrypoint invoked by Tendermint at genesis time.
 func (app *PerpDEXApp) InitChainer(ctx sdk.Context, req *abci.RequestInitChain) (*abci.ResponseInitChain, error) {
@@ -290,6 +363,13 @@ func (app *PerpDEXApp) InitChainer(ctx sdk.Context, req *abci.RequestInitChain) 
 	resp, err := app.mm.InitGenesis(ctx, app.appCodec, genesisState)
 	if err != nil {
 		panic(err)
+	}
+	// Force-enable ABCI++ vote extensions on genesis if the operator did
+	// not pin a value. Without this the oracle VE pipeline would never
+	// activate, leaving the chain without on-chain price updates.
+	if resp.ConsensusParams != nil && resp.ConsensusParams.Abci != nil &&
+		resp.ConsensusParams.Abci.VoteExtensionsEnableHeight == 0 {
+		resp.ConsensusParams.Abci.VoteExtensionsEnableHeight = DefaultVoteExtensionsEnableHeight
 	}
 	return resp, nil
 }
@@ -433,3 +513,49 @@ func (app *PerpDEXApp) GetTestGovKeeper() *govkeeper.Keeper { return app.GovKeep
 type EmptyAppOptions struct{}
 
 func (EmptyAppOptions) Get(_ string) interface{} { return nil }
+
+// rootCtx returns a fresh background context for the oracle daemon goroutine.
+// The caller (PerpDEXApp.Close) drives shutdown by cancelling the daemon
+// directly, so we don't need to plumb a chain-wide context here.
+func rootCtx() context.Context { return context.Background() }
+
+// oracleDaemonConfigFromAppOpts pulls the [oracle] section out of app.toml.
+// All keys are optional and default to the dev-stack values defined in
+// daemon.DefaultConfig().
+//
+// Recognised keys (all under prefix `oracle.`):
+//
+//   - oracle.sidecar_address  string   default "localhost:8080"
+//   - oracle.fetch_interval   string   default "500ms"  (any time.Duration)
+//   - oracle.fetch_timeout    string   default "200ms"
+//   - oracle.sidecar_decimals uint8    default 8
+//   - oracle.max_age          string   default "5s"
+//   - oracle.enabled          bool     default true
+func oracleDaemonConfigFromAppOpts(appOpts servertypes.AppOptions) daemon.Config {
+	cfg := daemon.DefaultConfig()
+	if v := cast.ToString(appOpts.Get("oracle.sidecar_address")); v != "" {
+		cfg.SidecarAddress = v
+	}
+	if v := cast.ToString(appOpts.Get("oracle.fetch_interval")); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			cfg.FetchInterval = d
+		}
+	}
+	if v := cast.ToString(appOpts.Get("oracle.fetch_timeout")); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			cfg.FetchTimeout = d
+		}
+	}
+	if v := cast.ToUint8(appOpts.Get("oracle.sidecar_decimals")); v != 0 {
+		cfg.SidecarDecimals = v
+	}
+	if v := cast.ToString(appOpts.Get("oracle.max_age")); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			cfg.MaxAge = d
+		}
+	}
+	if v := appOpts.Get("oracle.enabled"); v != nil {
+		cfg.Enabled = cast.ToBool(v)
+	}
+	return cfg
+}

@@ -40,6 +40,39 @@ tidy:
 .PHONY: clean
 clean:
 	rm -rf $(BUILDDIR)
+	rm -rf $(CURDIR)/oracle-sidecar/build
+
+###############################################################################
+###                              Oracle sidecar                             ###
+###############################################################################
+
+# Build / install / run the oracle-sidecar binary that ships in
+# `oracle-sidecar/`. It is a separate Go module (own go.mod) included in
+# the workspace via `go.work` so `go test ./...` from the repo root sees
+# both modules in CI without manual coordination.
+
+.PHONY: build-sidecar install-sidecar run-sidecar
+build-sidecar:
+	$(MAKE) -C $(CURDIR)/oracle-sidecar build
+
+install-sidecar:
+	cd $(CURDIR)/oracle-sidecar && go install ./cmd/oracle-sidecar
+
+run-sidecar:
+	$(MAKE) -C $(CURDIR)/oracle-sidecar run
+
+# `dev-stack` boots the chain and the sidecar back-to-back so a developer
+# can verify the end-to-end pipeline locally. The chain runs in the
+# foreground; the sidecar runs in the background and is killed on exit.
+.PHONY: dev-stack
+dev-stack: build build-sidecar
+	@echo "[dev-stack] starting oracle-sidecar in the background"
+	@$(CURDIR)/oracle-sidecar/build/oracle-sidecar --config $(CURDIR)/oracle-sidecar/oracle.json -v & \
+	  SIDECAR_PID=$$!; \
+	  trap "kill $$SIDECAR_PID 2>/dev/null" EXIT; \
+	  echo "[dev-stack] sidecar pid $$SIDECAR_PID"; \
+	  echo "[dev-stack] now boot perpd in another shell with [oracle].enabled=true"; \
+	  wait $$SIDECAR_PID
 
 ###############################################################################
 ###                                  Lint                                   ###
@@ -55,9 +88,14 @@ lint-go:
 ###                                  Tests                                  ###
 ###############################################################################
 
-.PHONY: test
+.PHONY: test test-sidecar
 test:
 	go test ./...
+
+# The sidecar lives in its own Go module so `go test ./...` from the repo
+# root only reaches it when a workspace is active. Use this target on CI.
+test-sidecar:
+	cd $(CURDIR)/oracle-sidecar && go test ./...
 
 .PHONY: test-unit
 test-unit:

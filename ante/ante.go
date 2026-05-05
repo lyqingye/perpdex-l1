@@ -12,16 +12,20 @@ import (
 )
 
 // HandlerOptions extends the SDK's ante handler options with the IBC keeper
-// so that we can append the IBC redundant-relay decorator.
+// (for the redundant-relay decorator).
+//
+// The oracle module no longer needs an injection-tx ante decorator because
+// price updates land on chain via the proposer-injected ExtendedCommitInfo
+// at `Txs[0]` which is stripped by ProcessProposal before the SDK Tx
+// pipeline runs. There is therefore no SDK Tx for oracle aggregation that
+// would need its signature bypassed.
 type HandlerOptions struct {
 	ante.HandlerOptions
 
 	IBCKeeper *ibckeeper.Keeper
 }
 
-// NewAnteHandler returns the chain's full AnteHandler chain. It is the SDK
-// default chain plus the IBC redundant-relay short-circuit at the tail so
-// that relayers do not pay fees twice for the same packet.
+// NewAnteHandler returns the chain's full AnteHandler chain.
 func NewAnteHandler(opts HandlerOptions) (sdk.AnteHandler, error) {
 	if opts.AccountKeeper == nil {
 		return nil, errorsmod.Wrap(sdkerrors.ErrLogic, "account keeper is required for AnteHandler")
@@ -41,7 +45,7 @@ func NewAnteHandler(opts HandlerOptions) (sdk.AnteHandler, error) {
 		sigGasConsumer = ante.DefaultSigVerificationGasConsumer
 	}
 
-	anteDecorators := []sdk.AnteDecorator{
+	decorators := []sdk.AnteDecorator{
 		ante.NewSetUpContextDecorator(),
 		ante.NewExtensionOptionsDecorator(opts.ExtensionOptionChecker),
 		ante.NewValidateBasicDecorator(),
@@ -56,6 +60,5 @@ func NewAnteHandler(opts HandlerOptions) (sdk.AnteHandler, error) {
 		ante.NewIncrementSequenceDecorator(opts.AccountKeeper),
 		ibcante.NewRedundantRelayDecorator(opts.IBCKeeper),
 	}
-
-	return sdk.ChainAnteDecorators(anteDecorators...), nil
+	return sdk.ChainAnteDecorators(decorators...), nil
 }

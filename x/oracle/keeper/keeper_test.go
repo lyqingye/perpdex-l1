@@ -30,8 +30,6 @@ func newOracleKeeper(t *testing.T) (oraclekeeper.Keeper, sdk.Context) {
 		cdc,
 		runtime.NewKVStoreService(keys[oracletypes.StoreKey]),
 		"auth",
-		nil,
-		nil,
 	)
 	require.NoError(t, k.Params.Set(ctx, oracletypes.DefaultParams()))
 	return k, ctx

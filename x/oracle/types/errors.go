@@ -3,17 +3,18 @@ package types
 import "cosmossdk.io/errors"
 
 var (
-	ErrInvalidAuthority   = errors.Register(ModuleName, 2, "invalid authority")
-	ErrPriceNotFound      = errors.Register(ModuleName, 3, "oracle price not found")
-	ErrProviderNotFound   = errors.Register(ModuleName, 4, "oracle provider not found")
-	ErrProviderDisabled   = errors.Register(ModuleName, 5, "oracle provider disabled")
-	ErrBindingNotFound    = errors.Register(ModuleName, 6, "validator oracle binding not found")
-	ErrBindingExists      = errors.Register(ModuleName, 7, "validator oracle binding already exists")
-	ErrInvalidMode        = errors.Register(ModuleName, 8, "invalid aggregation mode")
-	ErrInvalidParams      = errors.Register(ModuleName, 9, "invalid params")
-	ErrUnauthorized       = errors.Register(ModuleName, 10, "unauthorized signer")
-	ErrInvalidPrice       = errors.Register(ModuleName, 11, "invalid price")
-	ErrInvalidVote        = errors.Register(ModuleName, 12, "invalid oracle vote")
-	ErrStalePrice         = errors.Register(ModuleName, 13, "oracle price is stale")
-	ErrVoteExtDisabled    = errors.Register(ModuleName, 14, "vote-extension aggregation not implemented")
+	ErrInvalidAuthority = errors.Register(ModuleName, 2, "invalid authority")
+	ErrPriceNotFound    = errors.Register(ModuleName, 3, "oracle price not found")
+	ErrInvalidParams    = errors.Register(ModuleName, 9, "invalid params")
+	ErrInvalidPrice     = errors.Register(ModuleName, 11, "invalid price")
+	ErrInvalidVote      = errors.Register(ModuleName, 12, "invalid oracle vote")
+	ErrStalePrice       = errors.Register(ModuleName, 13, "oracle price is stale")
+	ErrVoteExtDisabled  = errors.Register(ModuleName, 14, "vote-extension oracle pipeline is disabled")
+	// ErrInsufficientVotingPower is raised by ProcessProposal when the
+	// supplied ExtendedCommitInfo lacks the 2/3+ voting-power supermajority
+	// dydx/Connect require for a valid commit.
+	ErrInsufficientVotingPower = errors.Register(ModuleName, 17, "insufficient voting power for vote extensions")
+	// ErrMissingCommitInfo is raised by ProcessProposal when Txs[0] is not
+	// the proposer-injected ExtendedCommitInfo bytes.
+	ErrMissingCommitInfo = errors.Register(ModuleName, 18, "missing or invalid commit info in proposal Txs[0]")
 )

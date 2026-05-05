@@ -189,10 +189,12 @@ const (
 	AbortScheduledCancelAll  = uint32(2)
 )
 
-// Oracle aggregation modes.
+// Oracle aggregation method tag stored on every OraclePrice record. The
+// chain currently runs a single dydx/Slinky-style PoS weighted-median
+// aggregation; the constant is kept around so downstream consumers can
+// branch on it if alternative aggregations are added later.
 const (
 	OracleAggPosMedian = uint32(0)
-	OracleAggWhitelist = uint32(1)
 )
 
 const (

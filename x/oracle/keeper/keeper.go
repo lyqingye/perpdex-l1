@@ -14,40 +14,47 @@ import (
 	"github.com/perpdex/perpdex-l1/x/oracle/types"
 )
 
+// Keeper owns the oracle store and the late-bound dependencies required by
+// the dydx/Slinky-style ABCI++ vote-extension pipeline.
+//
+// `stakingKeeper` is consulted by PrepareProposal / ProcessProposal to map
+// each cometbft consensus address to a validator and look up its voting
+// power. `priceFetcher` is consulted by ExtendVote on a validator's local
+// node to source the latest mark/index prices (typically a sidecar).
+//
+// Both are stored via pointer-to-interface so that `Keeper` can still be
+// passed around by value (the cosmos-sdk convention) while late-binding
+// updates remain visible to every copy.
 type Keeper struct {
 	cdc          codec.BinaryCodec
 	storeService store.KVStoreService
 	authority    string
 
-	stakingKeeper  types.StakingKeeper
-	slashingKeeper types.SlashingKeeper
+	stakingKeeperHolder *types.StakingKeeper
+	priceFetcherHolder  *PriceFetcher
 
-	Schema     collections.Schema
-	Params     collections.Item[types.Params]
-	Prices     collections.Map[uint32, types.OraclePrice]
-	Providers  collections.Map[string, types.OracleProvider]
-	Bindings   collections.Map[string, types.ValidatorOracleBinding]
-	OperatorIdx collections.Map[string, string]
-	Stats      collections.Map[string, types.ValidatorOracleStats]
-	Epoch      collections.Item[int64]
+	Schema collections.Schema
+	Params collections.Item[types.Params]
+	Prices collections.Map[uint32, types.OraclePrice]
 }
 
-func NewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, authority string, sk types.StakingKeeper, slk types.SlashingKeeper) Keeper {
+// NewKeeper builds a fresh keeper. The staking keeper / price fetcher
+// must be injected post-construction via SetStakingKeeper / SetPriceFetcher
+// because the staking keeper is itself constructed later in app wiring
+// and the price fetcher is supplied by app options.
+func NewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, authority string) Keeper {
 	sb := collections.NewSchemaBuilder(storeService)
+	var noop PriceFetcher = noopPriceFetcher{}
+	var staking types.StakingKeeper
 	k := Keeper{
-		cdc:            cdc,
-		storeService:   storeService,
-		authority:      authority,
-		stakingKeeper:  sk,
-		slashingKeeper: slk,
+		cdc:                 cdc,
+		storeService:        storeService,
+		authority:           authority,
+		priceFetcherHolder:  &noop,
+		stakingKeeperHolder: &staking,
 
-		Params:      collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
-		Prices:      collections.NewMap(sb, types.PriceKey, "prices", collections.Uint32Key, codec.CollValue[types.OraclePrice](cdc)),
-		Providers:   collections.NewMap(sb, types.ProviderKey, "providers", collections.StringKey, codec.CollValue[types.OracleProvider](cdc)),
-		Bindings:    collections.NewMap(sb, types.BindingKey, "bindings", collections.StringKey, codec.CollValue[types.ValidatorOracleBinding](cdc)),
-		OperatorIdx: collections.NewMap(sb, types.OperatorIdxKey, "operator_index", collections.StringKey, collections.StringValue),
-		Stats:       collections.NewMap(sb, types.StatsKey, "stats", collections.StringKey, codec.CollValue[types.ValidatorOracleStats](cdc)),
-		Epoch:       collections.NewItem(sb, types.EpochKey, "epoch", collections.Int64Value),
+		Params: collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
+		Prices: collections.NewMap(sb, types.PriceKey, "prices", collections.Uint32Key, codec.CollValue[types.OraclePrice](cdc)),
 	}
 	schema, err := sb.Build()
 	if err != nil {
@@ -57,7 +64,33 @@ func NewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, authori
 	return k
 }
 
+// Authority returns the gov module address that gates `MsgUpdateParams`
+// and is used as the signer of the proposer-injected
+// `MsgAggregateOracleVotes` transaction.
 func (k Keeper) Authority() string { return k.authority }
+
+// SetStakingKeeper wires the staking keeper after app construction.
+// Must be called before the first block that exercises the VE pipeline.
+func (k Keeper) SetStakingKeeper(sk types.StakingKeeper) { *k.stakingKeeperHolder = sk }
+
+// SetPriceFetcher injects the local-node PriceFetcher. The default is a
+// no-op that returns an empty price set, which keeps unit tests and
+// validators without a sidecar from breaking consensus (their VE will
+// simply contribute nothing to the median).
+func (k Keeper) SetPriceFetcher(f PriceFetcher) {
+	if f == nil {
+		*k.priceFetcherHolder = noopPriceFetcher{}
+		return
+	}
+	*k.priceFetcherHolder = f
+}
+
+// StakingKeeper returns the wired staking keeper. Used by the VE handler
+// and tests; nil-safe consumers must check.
+func (k Keeper) StakingKeeper() types.StakingKeeper { return *k.stakingKeeperHolder }
+
+// PriceFetcher returns the wired price fetcher (never nil after NewKeeper).
+func (k Keeper) PriceFetcher() PriceFetcher { return *k.priceFetcherHolder }
 
 // GetPrice returns the current oracle price for a market or ErrPriceNotFound.
 func (k Keeper) GetPrice(ctx context.Context, marketIdx uint32) (types.OraclePrice, error) {
@@ -116,44 +149,8 @@ func (k Keeper) SetPrice(ctx context.Context, p types.OraclePrice) error {
 }
 
 // SetPriceUnsafe bypasses the non-zero check and is intended for genesis
-// loading only. Runtime paths (oracle inject / aggregate) must use SetPrice
-// so zero prices can never survive a block.
+// loading and test fixtures only. Runtime paths (vote-extension aggregate)
+// must use SetPrice so zero prices can never survive a block.
 func (k Keeper) SetPriceUnsafe(ctx context.Context, p types.OraclePrice) error {
 	return k.Prices.Set(ctx, p.MarketIndex, p)
-}
-
-// AllProviders returns the list of registered oracle providers.
-func (k Keeper) AllProviders(ctx context.Context) ([]types.OracleProvider, error) {
-	out := []types.OracleProvider{}
-	iter, err := k.Providers.Iterate(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer iter.Close()
-	for ; iter.Valid(); iter.Next() {
-		v, err := iter.Value()
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, v)
-	}
-	return out, nil
-}
-
-// AllBindings returns every validator->oracle operator binding.
-func (k Keeper) AllBindings(ctx context.Context) ([]types.ValidatorOracleBinding, error) {
-	out := []types.ValidatorOracleBinding{}
-	iter, err := k.Bindings.Iterate(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer iter.Close()
-	for ; iter.Valid(); iter.Next() {
-		v, err := iter.Value()
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, v)
-	}
-	return out, nil
 }

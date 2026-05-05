@@ -992,12 +992,13 @@ func (m *MsgUpdateParamsResponse) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_MsgUpdateParamsResponse proto.InternalMessageInfo
 
-// MsgCreatePublicPool initialises a new sub-account as a Public Pool /
-// Insurance Fund. Sender must be the master's owner. The master's
-// collateral funds the initial total_shares at INITIAL_POOL_SHARE_VALUE
-// each. account_type must be PUBLIC_POOL or INSURANCE_FUND. When the
-// master is the canonical InsuranceFundOperatorAccountIdx, the new pool
-// is forced to INSURANCE_FUND + UNIFIED trading_mode (lighter parity).
+// MsgCreatePublicPool initialises a new sub-account as a Public Pool.
+// Sender must be the master's owner. The master's collateral funds the
+// initial total_shares at INITIAL_POOL_SHARE_VALUE each. `account_type`
+// must be PUBLIC_POOL: the canonical Insurance Fund pool lives at
+// `InsuranceFundOperatorAccountIdx` and is seeded by genesis — its state
+// is mutated via `MsgUpdatePublicPool` / `MsgStrategyTransfer` under
+// governance authority, not through this Msg.
 type MsgCreatePublicPool struct {
 	Sender               string `protobuf:"bytes,1,opt,name=sender,proto3" json:"sender,omitempty"`
 	MasterAccountIndex   uint64 `protobuf:"varint,2,opt,name=master_account_index,json=masterAccountIndex,proto3" json:"master_account_index,omitempty"`

@@ -1,80 +1,63 @@
 syntax = "proto3";
 package perpdex.oracle.v1;
 
+import "gogoproto/gogo.proto";
+
 option go_package = "github.com/perpdex/perpdex-l1/x/oracle/types";
 
+// OraclePrice is the canonical per-market index/mark price stored on chain.
 message OraclePrice {
   uint32 market_index = 1;
   uint32 index_price = 2;
   uint32 mark_price = 3;
   int64 last_updated_timestamp = 4;
   int64 last_updated_height = 5;
-  uint32 aggregation_method = 6;
-  uint32 participant_count = 7;
-  uint64 total_voting_power = 8;
+  uint32 participant_count = 6;
+  uint64 total_voting_power = 7;
 }
 
-message OracleProvider {
-  string address = 1;
-  bool enabled = 2;
-  int64 added_at = 3;
-  string description = 4;
-}
-
-message ValidatorOracleBinding {
-  string validator_address = 1;
-  string oracle_operator_address = 2;
-  int64 bound_at_block = 3;
-  int64 bound_at_time = 4;
-  string metadata = 5;
-}
-
-message ValidatorOracleStats {
-  string validator_address = 1;
-  uint64 total_votes_submitted = 2;
-  uint64 total_votes_missed = 3;
-  uint64 total_votes_deviant = 4;
-  int64 last_active_height = 5;
-  uint32 consecutive_missed = 6;
-}
-
+// Params controls oracle aggregation behaviour.
+//
+// `vote_extension_enabled` mirrors the consensus-level
+// `ConsensusParams.Abci.VoteExtensionsEnableHeight` flag: when true the
+// VoteExtension oracle pipeline (ExtendVote / PrepareProposal /
+// ProcessProposal) is exercised; when false the chain runs without an
+// oracle data plane (test-only, prices must be seeded manually).
 message Params {
-  uint32 aggregation_mode = 1;     // 0=PoS_MEDIAN, 1=WHITELIST
-  int64 max_age_ms = 2;
-  uint32 mark_price_ema_alpha = 3; // basis points (10000 = no smoothing)
-  uint32 min_voting_power_ratio = 4;
-  uint32 deviation_threshold_bps = 5;
-  string slash_fraction_deviation = 6;
-  string slash_fraction_downtime = 7;
-  uint32 min_active_ratio_bps = 8;
-  uint32 active_window_blocks = 9;
-  uint32 max_consecutive_missed = 10;
-  bool vote_extension_enabled = 11;
+  // Maximum age of an OraclePrice (in milliseconds) before risk / funding /
+  // liquidation refuse to use it.
+  int64 max_age_ms = 1;
+  // EMA smoothing coefficient applied on top of aggregated mark prices,
+  // expressed in basis points (10000 = no smoothing).
+  uint32 mark_price_ema_alpha = 2;
+  // Minimum total voting power (in basis points of bonded power) that must
+  // participate in a market's vote-extension aggregation before the
+  // proposer accepts the aggregated price for that market.
+  uint32 min_voting_power_ratio = 3;
+  // Bps deviation between an individual validator vote and the median that
+  // VerifyVoteExtension / PrepareProposal use as a sanity bound. Votes
+  // outside this band are dropped from the aggregation set.
+  uint32 deviation_threshold_bps = 4;
+  // Whether the ABCI++ vote-extension oracle pipeline is active. Should be
+  // kept consistent with ConsensusParams.Abci.VoteExtensionsEnableHeight.
+  bool vote_extension_enabled = 5;
 }
 
+// MarketPrice is a (market_index, index, mark) triple emitted both by
+// validators (inside vote extensions) and by the proposer (inside
+// MsgAggregateOracleVotes).
 message MarketPrice {
   uint32 market_index = 1;
   uint32 index_price = 2;
   uint32 mark_price = 3;
 }
 
-// OracleVote is the payload that a validator's oracle operator signs and
-// attaches to its prevote via ABCI++ ExtendVote.
+// OracleVote is the payload that a validator's local node serialises into
+// its ABCI++ vote extension. The validator's consensus key signs the
+// containing prevote; we therefore do not include the validator address
+// in the payload and rely on cometbft's commit info (LocalLastCommit /
+// ProposedLastCommit) to attribute votes to validators.
 message OracleVote {
-  string validator_address = 1;
-  repeated MarketPrice prices = 2;
-  int64 submitted_at_height = 3;
-}
-
-message MarketAggregation {
-  uint32 market_index = 1;
-  uint32 index_price = 2;
-  uint32 mark_price = 3;
-}
-
-message VoterRecord {
-  string validator_address = 1;
-  uint64 voting_power = 2;
-  bool participated = 3;
-  uint32 deviant_market_count = 4;
+  repeated MarketPrice prices = 1 [(gogoproto.nullable) = false];
+  int64 submitted_at_height = 2;
 }
