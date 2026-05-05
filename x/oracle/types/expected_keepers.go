@@ -18,3 +18,17 @@ type StakingKeeper interface {
 	BondDenom(ctx context.Context) (string, error)
 	PowerReduction(ctx context.Context) math.Int
 }
+
+// MarketShim is the minimal market description the oracle daemon needs to
+// build its currency-pair → market-index resolver. The full Market lives in
+// x/market/types but pulling that whole package in from the daemon would be
+// circular at app wiring time, so we expose a copy here.
+type MarketShim struct {
+	MarketIndex  uint32
+	BaseAssetID  uint32
+	QuoteAssetID uint32
+	// Decimals is the number of decimal digits the chain uses to encode the
+	// integer price for this market (e.g. Decimals=2 means price 12345 means
+	// 123.45). Zero means "use the daemon default".
+	Decimals uint8
+}

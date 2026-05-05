@@ -7,9 +7,14 @@ import (
 )
 
 // PriceFetcher is the contract between the oracle module and the local
-// node's pricing source (typically a side-car similar to skip-mev / dydx
-// Slinky). It is invoked from `ExtendVote` on every prevote to obtain the
-// fresh price set the local validator wants to advertise to its peers.
+// node's pricing source. It is invoked from `ExtendVote` on every prevote
+// to obtain the fresh price set the local validator wants to advertise to
+// its peers.
+//
+// The production implementation lives in `x/oracle/daemon` and reads from
+// an in-memory cache populated by a goroutine that polls the local
+// oracle-sidecar over gRPC. ABCI handlers therefore never block on a
+// sidecar round-trip.
 //
 // Implementations MUST be safe for concurrent use because cometbft may
 // invoke ExtendVote off the main consensus goroutine.
@@ -23,10 +28,10 @@ type PriceFetcher interface {
 	FetchPrices(ctx context.Context, height int64) ([]types.MarketPrice, error)
 }
 
-// noopPriceFetcher is the default implementation injected by NewKeeper.
-// Validators that have not wired a real fetcher (e.g. test chains, full
-// nodes that don't run the side-car) effectively contribute no price
-// data; the proposer will still aggregate the rest of the validator set.
+// noopPriceFetcher is the default implementation injected by NewKeeper for
+// nodes that have not wired a real fetcher (e.g. test chains, full nodes
+// that don't run the sidecar). They contribute no price data; the proposer
+// will still aggregate the rest of the validator set.
 type noopPriceFetcher struct{}
 
 func (noopPriceFetcher) FetchPrices(_ context.Context, _ int64) ([]types.MarketPrice, error) {
