@@ -26,7 +26,6 @@ auto-deleveraging.
 - Risk engine helpers for health status, available collateral, total account
   value, position zero price and unrealized PnL.
 - Liquidation flow aligned with the
-  [Lighter Liquidations & LLP](https://docs.lighter.xyz/trading/liquidations-and-llp-insurance-fund)
   specification: 5-tier health classification (HEALTHY / PRE / PARTIAL / FULL /
   BANKRUPTCY), pre-liquidation order placement gate (reduce-only in PRE; all
   user orders blocked in PARTIAL+), mark-based zero-price IoC close-outs with
