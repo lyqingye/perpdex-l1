@@ -171,22 +171,13 @@ func newMatchEnv(t *testing.T) *matchEnv {
 	return &matchEnv{ctx: ctx, ak: ak, tk: tk, bk: bk, k: k}
 }
 
-// rest places a maker order on the book and records it under both legacy
-// and new indexes the way msgServer.CreateOrder would.
-func (e *matchEnv) rest(t *testing.T, o orderbooktypes.Order, isAsk bool) {
+// rest places a maker order on the book through the public OpenOrder
+// lifecycle, mirroring how msgServer.CreateOrder does it. The `isAsk`
+// argument is preserved for callsite readability — OpenOrder reads the
+// side from o.IsAsk.
+func (e *matchEnv) rest(t *testing.T, o orderbooktypes.Order, _ bool) {
 	t.Helper()
-	require.NoError(t, e.bk.SetOrder(e.ctx, o))
-	require.NoError(t, e.bk.IndexAccountOpenOrder(e.ctx, o))
-	require.NoError(t, e.bk.InsertOrderbookEntry(e.ctx, o.MarketIndex, isAsk, orderbooktypes.OrderBookEntry{
-		OrderIndex:          o.OrderIndex,
-		OwnerAccountIndex:   o.OwnerAccountIndex,
-		Price:               o.Price,
-		Nonce:               o.Nonce,
-		RemainingBaseAmount: o.RemainingBaseAmount,
-		Expiry:              o.Expiry,
-		ReduceOnly:          o.ReduceOnly,
-		OrderType:           o.OrderType,
-	}))
+	require.NoError(t, e.bk.OpenOrder(e.ctx, o, false))
 }
 
 // TestMatchOrder_MarketOrderBidAtZeroPrice ensures a buy MarketOrder with
@@ -301,6 +292,82 @@ func TestCancelAllOrders_CoversOrdersWithoutClientID(t *testing.T) {
 	got, err := e.bk.GetOrder(e.ctx, 7)
 	require.NoError(t, err)
 	require.Equal(t, perptypes.OrderStatusCancelled, got.Status)
+}
+
+// TestMatchOrder_EvictReduceOnlyClearsOrderRecord is the regression test
+// for the historical leak where matchOrder would only call
+// RemoveOrderbookEntry when a reduce-only maker was found to be invalid
+// (no opposite-direction position), leaving the maker Order record
+// stuck at Status=Open and its client / account-open indexes alive.
+//
+// After the orderbook lifecycle refactor, this path goes through
+// EvictMakerOrder which atomically: removes the entry, marks the Order
+// Cancelled, and clears the client + account-open indexes — so a stale
+// "open" order can no longer linger after eviction.
+func TestMatchOrder_EvictReduceOnlyClearsOrderRecord(t *testing.T) {
+	e := newMatchEnv(t)
+
+	// maker account 10 holds no position, so the reduce-only ask is
+	// invalid the moment the taker bids against it.
+	maker := orderbooktypes.Order{
+		OrderIndex:          1,
+		ClientOrderIndex:    7,
+		OwnerAccountIndex:   10,
+		MarketIndex:         1,
+		IsAsk:               true,
+		OrderType:           perptypes.LimitOrder,
+		TimeInForce:         perptypes.GTT,
+		Price:               1000,
+		Nonce:               1,
+		InitialBaseAmount:   5,
+		RemainingBaseAmount: 5,
+		ReduceOnly:          true,
+		Status:              perptypes.OrderStatusOpen,
+	}
+	e.rest(t, maker, true)
+
+	// Sanity: the AccountOpenOrders index sees the maker as resting.
+	var pre int
+	require.NoError(t, e.bk.IterateAccountOpenOrders(e.ctx, 10, 0, func(orderbooktypes.Order) bool {
+		pre++
+		return false
+	}))
+	require.Equal(t, 1, pre)
+
+	taker := &orderbooktypes.Order{
+		OrderIndex:          2,
+		OwnerAccountIndex:   20,
+		MarketIndex:         1,
+		IsAsk:               false,
+		OrderType:           perptypes.LimitOrder,
+		TimeInForce:         perptypes.GTT,
+		Price:               1000,
+		Nonce:               2,
+		InitialBaseAmount:   5,
+		RemainingBaseAmount: 5,
+		Status:              perptypes.OrderStatusOpen,
+	}
+
+	filled, _, err := e.k.matchOrder(e.ctx, taker, 16)
+	require.NoError(t, err)
+	require.Zero(t, filled, "reduce-only maker without position must not produce a fill")
+	require.Empty(t, e.tk.fills)
+
+	// Maker Order record is now Cancelled (was previously stuck Open).
+	got, err := e.bk.GetOrder(e.ctx, 1)
+	require.NoError(t, err)
+	require.Equal(t, perptypes.OrderStatusCancelled, got.Status)
+
+	// Client + account-open indexes are cleared.
+	_, err = e.bk.GetOrderByClientID(e.ctx, 1, 10, 7)
+	require.Error(t, err, "client_order_index mapping should be removed after eviction")
+
+	var post int
+	require.NoError(t, e.bk.IterateAccountOpenOrders(e.ctx, 10, 0, func(orderbooktypes.Order) bool {
+		post++
+		return false
+	}))
+	require.Zero(t, post, "evicted reduce-only maker must not survive in AccountOpenOrders")
 }
 
 // TestMatchOrder_MakerReduceOnlyNoFlip enforces that a reduce-only maker

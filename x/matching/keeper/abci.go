@@ -6,7 +6,6 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
-	orderbooktypes "github.com/perpdex/perpdex-l1/x/orderbook/types"
 )
 
 // EndBlocker iterates every order currently parked in the trigger index and
@@ -69,11 +68,10 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 	}
 
 	for _, t := range due {
-		o, err := k.bookKeeper.GetOrder(ctx, t.orderIndex)
+		// ActivateTrigger removes the trigger registration and flips
+		// status to Open in one shot, returning the live Order.
+		o, err := k.bookKeeper.ActivateTrigger(ctx, t.orderIndex)
 		if err != nil {
-			continue
-		}
-		if err := k.bookKeeper.RemoveTrigger(ctx, t.market, t.triggerPrice, t.orderIndex); err != nil {
 			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
 				"trigger_dequeue_error",
 				sdk.NewAttribute("order_index", uintToStr(t.orderIndex)),
@@ -92,7 +90,6 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 			o.TimeInForce = perptypes.IOC
 			o.Price = 0
 		}
-		o.Status = perptypes.OrderStatusOpen
 		params, err := k.Params.Get(ctx)
 		if err != nil {
 			return err
@@ -100,9 +97,17 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 		filled, status, err := k.matchOrder(ctx, &o, params.MaxFillsPerMsg)
 		_ = filled
 		if err != nil {
-			o.Status = perptypes.OrderStatusCancelled
-			_ = k.bookKeeper.SetOrder(ctx, o)
-			_ = k.bookKeeper.UnindexAccountOpenOrder(ctx, o)
+			// Match failed mid-trigger: we already removed the
+			// trigger registration via ActivateTrigger, so cancel
+			// the order to keep state consistent (status=Cancelled
+			// + indexes cleared). CancelOrder is idempotent for
+			// orders without a resting entry.
+			if _, cerr := k.bookKeeper.CancelOrder(ctx, o.OrderIndex); cerr != nil {
+				// Already-terminal orders or missing entries
+				// surface as ErrOrderNotCancelable; ignore so
+				// the original match error wins.
+				_ = cerr
+			}
 			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
 				"trigger_match_error",
 				sdk.NewAttribute("order_index", uintToStr(o.OrderIndex)),
@@ -111,34 +116,18 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 			continue
 		}
 		o.Status = status
+		// IOC residue is cancelled. Otherwise OpenOrder branches on
+		// status: terminal orders just persist, residual base rests
+		// on the book with indexes attached.
 		if o.TimeInForce == perptypes.IOC && o.RemainingBaseAmount > 0 {
 			o.Status = perptypes.OrderStatusCancelled
-		} else if o.RemainingBaseAmount > 0 {
-			entry := orderbooktypes.OrderBookEntry{
-				OrderIndex:          o.OrderIndex,
-				OwnerAccountIndex:   o.OwnerAccountIndex,
-				Price:               o.Price,
-				Nonce:               o.Nonce,
-				RemainingBaseAmount: o.RemainingBaseAmount,
-				Expiry:              o.Expiry,
-				ReduceOnly:          o.ReduceOnly,
-				OrderType:           o.OrderType,
-			}
-			if err := k.bookKeeper.InsertOrderbookEntry(ctx, o.MarketIndex, o.IsAsk, entry); err != nil {
-				sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
-					"trigger_insert_error",
-					sdk.NewAttribute("order_index", uintToStr(o.OrderIndex)),
-					sdk.NewAttribute("err", err.Error()),
-				))
-			}
 		}
-		_ = k.bookKeeper.SetOrder(ctx, o)
-		// If the activated trigger reached a terminal status, drop the
-		// account-level open marker that was set when the order was
-		// originally accepted.
-		switch o.Status {
-		case perptypes.OrderStatusFilled, perptypes.OrderStatusCancelled:
-			_ = k.bookKeeper.UnindexAccountOpenOrder(ctx, o)
+		if err := k.bookKeeper.OpenOrder(ctx, o, false); err != nil {
+			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
+				"trigger_insert_error",
+				sdk.NewAttribute("order_index", uintToStr(o.OrderIndex)),
+				sdk.NewAttribute("err", err.Error()),
+			))
 		}
 	}
 	return nil

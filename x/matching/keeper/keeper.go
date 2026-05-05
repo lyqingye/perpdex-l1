@@ -95,43 +95,15 @@ func (k Keeper) CancelAllOpenOrdersForAccount(ctx context.Context, accountIdx ui
 	}
 	cancelled := uint32(0)
 	for _, o := range targets {
-		if err := k.cancelOrderForLiquidation(ctx, o); err != nil {
+		// orderbook.CancelOrder owns the state-machine, entry/trigger
+		// removal, and index cleanup for cancellations across user,
+		// liquidation, and EndBlocker call sites.
+		if _, err := k.bookKeeper.CancelOrder(ctx, o.OrderIndex); err != nil {
 			return cancelled, err
 		}
 		cancelled++
 	}
 	return cancelled, nil
-}
-
-// cancelOrderForLiquidation is the internal cancel routine used by the
-// liquidation cancel-all path. It mirrors msgServer.cancelOrderInternal
-// but lives on the bare Keeper so the liquidation module can invoke it
-// without going through the msg server (which would re-do unnecessary
-// authority checks).
-func (k Keeper) cancelOrderForLiquidation(ctx context.Context, o orderbooktypes.Order) error {
-	switch o.Status {
-	case perptypes.OrderStatusOpen, perptypes.OrderStatusPartiallyFilled:
-		if o.RemainingBaseAmount == 0 {
-			return nil
-		}
-		if err := k.bookKeeper.RemoveOrderbookEntry(ctx, o.MarketIndex, o.IsAsk, o.OrderIndex); err != nil {
-			return err
-		}
-	case perptypes.OrderStatusTriggeredPending:
-		if err := k.bookKeeper.RemoveTrigger(ctx, o.MarketIndex, o.TriggerPrice, o.OrderIndex); err != nil {
-			return err
-		}
-	default:
-		return nil
-	}
-	o.Status = perptypes.OrderStatusCancelled
-	if err := k.bookKeeper.SetOrder(ctx, o); err != nil {
-		return err
-	}
-	if err := k.bookKeeper.UnindexClientOrderIfMatches(ctx, o); err != nil {
-		return err
-	}
-	return k.bookKeeper.UnindexAccountOpenOrder(ctx, o)
 }
 
 func (k Keeper) Authority() string { return k.authority }
