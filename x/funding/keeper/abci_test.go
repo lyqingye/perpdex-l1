@@ -269,7 +269,7 @@ func TestProcessMarketSample_StaleOracleSkipsSample(t *testing.T) {
 	require.EqualValues(t, 0, got.LastUpdatedTimestamp, "stale oracle must not throttle retries")
 }
 
-func TestSettleMarket_StaleOracleClearsWindowAndAdvancesGlobalRound(t *testing.T) {
+func TestSettleMarket_StaleOracleReturnsErrorAndAdvancesGlobalRound(t *testing.T) {
 	oldRoundTs := int64(1_699_996_399_999)
 	mk := &stubMarket{
 		markets: map[uint32]markettypes.Market{
@@ -298,17 +298,19 @@ func TestSettleMarket_StaleOracleClearsWindowAndAdvancesGlobalRound(t *testing.T
 		LastFundingRoundTimestamp: oldRoundTs,
 	}))
 
-	require.NoError(t, k.BeginBlocker(ctx))
+	err := k.BeginBlocker(ctx)
+	require.Error(t, err)
+	require.True(t, oracletypes.ErrStalePrice.Is(err))
 	got := mk.details[1]
 	require.True(t, got.FundingRatePrefixSum.IsZero())
-	require.EqualValues(t, 0, got.AggregatePremiumSum)
-	require.EqualValues(t, 0, got.TotalPremiumSamples)
+	require.EqualValues(t, 10_101*60, got.AggregatePremiumSum)
+	require.EqualValues(t, 60, got.TotalPremiumSamples)
 	meta, metaErr := k.Metadata.Get(ctx)
 	require.NoError(t, metaErr)
 	require.EqualValues(t, ctx.BlockTime().UnixMilli(), meta.LastFundingRoundTimestamp)
 }
 
-func TestSettleMarkets_GlobalRoundAllowsPartialSettlement(t *testing.T) {
+func TestSettleMarkets_GlobalRoundPartiallySettlesAndReturnsStaleError(t *testing.T) {
 	oldRoundTs := int64(1_699_996_399_999)
 	mk := &stubMarket{
 		markets: map[uint32]markettypes.Market{
@@ -355,7 +357,9 @@ func TestSettleMarkets_GlobalRoundAllowsPartialSettlement(t *testing.T) {
 		LastFundingRoundTimestamp: oldRoundTs,
 	}))
 
-	require.NoError(t, k.BeginBlocker(ctx))
+	err := k.BeginBlocker(ctx)
+	require.Error(t, err)
+	require.True(t, oracletypes.ErrStalePrice.Is(err))
 
 	settled := mk.details[1]
 	require.EqualValues(t, 60_000_000, settled.FundingRatePrefixSum.Int64())
@@ -364,8 +368,8 @@ func TestSettleMarkets_GlobalRoundAllowsPartialSettlement(t *testing.T) {
 
 	skipped := mk.details[2]
 	require.True(t, skipped.FundingRatePrefixSum.IsZero())
-	require.EqualValues(t, 0, skipped.AggregatePremiumSum)
-	require.EqualValues(t, 0, skipped.TotalPremiumSamples)
+	require.EqualValues(t, 20_000*60, skipped.AggregatePremiumSum)
+	require.EqualValues(t, 60, skipped.TotalPremiumSamples)
 
 	meta, metaErr := k.Metadata.Get(ctx)
 	require.NoError(t, metaErr)
