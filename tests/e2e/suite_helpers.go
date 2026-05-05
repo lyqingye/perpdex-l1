@@ -105,8 +105,9 @@ func (s *PerpdexTestSuite) CancelOrder(user TestUser, marketIndex uint32, orderI
 // SetOraclePrice writes a (mark, index) price tuple straight into the
 // oracle keeper, bypassing the vote-extension pipeline. Used by every
 // e2e test that needs a deterministic price fixture: in production the
-// equivalent path is the proposer-injected MsgAggregateOracleVotes
-// emitted by oracle.VoteExtensionHandler.PrepareProposal.
+// equivalent path is the dydx/Connect-style ABCI++ pipeline where
+// PrepareProposal injects the prior block's ExtendedCommitInfo bytes as
+// Txs[0] and PreBlock decodes/aggregates them into per-market prices.
 func (s *PerpdexTestSuite) SetOraclePrice(marketIndex uint32, indexPrice, markPrice uint32) {
 	now := s.Ctx.BlockTime().UnixMilli()
 	height := s.Ctx.BlockHeight()

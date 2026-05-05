@@ -48,10 +48,11 @@ func (s *LiquidationSuite) SetupTest() {
 	})
 	s.MarketIndex = s.CreatePerpMarket(msg.DefaultPerpMarketOpts(1, s.BTCAssetIndex))
 
-	// Note: oracle prices are now seeded directly via `s.SetOraclePrice`
-	// (the runtime path is the proposer-injected MsgAggregateOracleVotes
-	// emitted by oracle.VoteExtensionHandler.PrepareProposal which is
-	// not exercised in these unit-style scenarios).
+	// Note: oracle prices are seeded directly via `s.SetOraclePrice`. The
+	// runtime path is the dydx/Connect-style ABCI++ pipeline (validators
+	// emit per-market prices via vote extensions; PreBlock decodes the
+	// proposer-injected ExtendedCommitInfo and runs the weighted median).
+	// That pipeline has its own dedicated suite in `e2e_oracle_test.go`.
 }
 
 // openHurtablePosition deposits 10 USDC for user0 (the future victim) and

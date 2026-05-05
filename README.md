@@ -70,11 +70,24 @@ Use the Go version declared in `go.mod`. Docker is required for protobuf
 generation targets because they run through the Cosmos proto-builder image.
 
 ```bash
-make build         # builds ./build/perpd
-make install       # installs perpd into $GOPATH/bin
-make clean         # removes build artifacts
-make tidy          # runs go mod tidy
+make build           # builds ./build/perpd
+make install         # installs perpd into $GOPATH/bin
+make build-sidecar   # builds ./oracle-sidecar/build/oracle-sidecar
+make install-sidecar # installs the sidecar into $GOPATH/bin
+make dev-stack       # starts perpd + oracle-sidecar locally for dev/QA
+make clean           # removes build artifacts
+make tidy            # runs go mod tidy
 ```
+
+## Running validators with the oracle
+
+The chain ships a dydx/Slinky-style ABCI++ vote-extension price feed. Each
+validator is expected to run the [`oracle-sidecar`](./oracle-sidecar)
+binary alongside `perpd`; the sidecar streams prices from Binance, OKX
+and CoinGecko, exposes them on gRPC, and the chain daemon relays them
+into vote extensions and PreBlock aggregation. See
+[`docs/oracle/README.md`](./docs/oracle/README.md) for architecture, the
+five-step quick start, and reference deployment examples.
 
 ## Test And Lint
 
