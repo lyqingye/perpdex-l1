@@ -12,22 +12,22 @@ import (
 	"github.com/perpdex/perpdex-l1/tests/e2e/msg"
 )
 
-// FundingSuite drives the perpetual-funding pipeline:
+// FundingSuite drives the perpetual-funding pipeline (Lighter spec):
 //
-//   - x/funding BeginBlocker samples (impact_price - index_price) every
-//     block once an oracle price is set, accumulating it into
+//   - x/funding BeginBlocker samples the Lighter premium
+//     `(max(0, ImpactBid - index) - max(0, index - ImpactAsk)) / index`
+//     once a minute per market and accumulates the sample into
 //     `MarketDetails.AggregatePremiumSum`.
-//   - When `now - LastFundingRoundTimestamp >= FundingPeriodMs / Divisor`
-//     (~7.5min by default) the keeper averages the samples, double-clamps
-//     the result and bumps `MarketDetails.FundingRatePrefixSum`.
-//   - On the next position touch (e.g. trade or explicit
-//     SettlePositionFunding) the position absorbs the prefix-sum delta
-//     into its EntryQuote.
-//
-// We exercise the first settle in a single block (since
-// LastFundingRoundTimestamp starts at 0 the OR-branch fires immediately on
-// the first sample) and then verify a position picks up the funding rate
-// when SettlePositionFunding is called.
+//   - When `now - LastFundingRoundTimestamp >= FundingPeriodMs` (one hour),
+//     the keeper averages the samples, applies the double clamp -- the
+//     small clamp adjusts towards the configured InterestRate -- and divides
+//     by `FundingPeriodDivisor` (default 8). The 1-hour rate is then folded
+//     into `MarketDetails.FundingRatePrefixSum` as `mark_price * rate` so
+//     positions can settle via `pos * delta_prefix / TICK`.
+//   - On the next position touch (e.g. a trade or explicit
+//     `SettlePositionFunding`) the position absorbs the prefix-sum delta
+//     into its EntryQuote, matching the Lighter formula
+//     `funding = position * mark * fundingRate`.
 type FundingSuite struct {
 	e2e.PerpdexTestSuite
 
@@ -57,33 +57,45 @@ func (s *FundingSuite) SetupTest() {
 	s.MarketIndex = s.CreatePerpMarket(msg.DefaultPerpMarketOpts(1, s.BTCAssetIndex))
 }
 
-// TestPremiumAccumulatesAndSettles walks the funding pipeline end-to-end:
+// TestPremiumAccumulatesAndSettles walks the Lighter funding pipeline
+// end-to-end:
 //
 //  1. user0/user1 each deposit 100k USDC and open opposing positions of
-//     1_000_000 base @ 50000 — a non-trivial size so a small funding rate
-//     yields a measurable EntryQuote delta.
-//  2. user2 places resting bid @ 49999, user3 places resting ask @ 50001
-//     so impact_bid / impact_ask is well-defined for the funding sampler.
+//     1_000_000 base @ 50_000 -- a non-trivial size so the per-round funding
+//     rate yields a measurable EntryQuote delta.
+//  2. user2 places a resting bid @ 49_999, user3 a resting ask @ 50_001
+//     with enough depth to absorb the full `ImpactUsdcAmount` -- so the
+//     funding sampler reads ImpactBid=49_999, ImpactAsk=50_001.
 //  3. user3 is whitelisted as the oracle provider; they inject
-//     index_price=49500, mark_price=50000. Premium = ~+10101 (well above
-//     FundingSmallClamp=500), so the rate post-clamp pegs at +500.
-//  4. The first AdvanceBlock fires BeginBlocker which samples the premium
-//     and immediately settles (because LastFundingRoundTimestamp==0). The
-//     prefix sum should grow by the clamped rate.
-//  5. We then call FundingKeeper.SettlePositionFunding on user0's short
-//     position and assert EntryQuote moved by `position * delta / TICK`.
+//     index_price=49_500, mark_price=50_000. Premium per-sample is
+//     `(max(0, 49_999 - 49_500) - 0) * 1e6 / 49_500 = 10_080`.
+//  4. We advance one full funding period (1 hour + a minute of slack) so
+//     BeginBlocker takes a fresh sample then settles the round.
+//
+// Expected per-round math:
+//
+//	premium = 10_080 (single sample average)
+//	correction = clamp(ir - premium, -SmallClamp, +SmallClamp)
+//	           = clamp(0 - 10_080, -500, +500) = -500
+//	smallClamped = 10_080 + (-500) = 9_580
+//	bigClamped   = clamp(9_580, -40_000, +40_000) = 9_580
+//	rate         = 9_580 / 8 = 1_197 (truncated)
+//	prefix delta = mark * rate = 50_000 * 1_197 = 59_850_000
+//
+//  5. Force an explicit SettlePositionFunding for user0's short. The
+//     payment is `pos * delta / TICK = -1_000_000 * 59_850_000 / 1_000_000
+//     = -59_850_000`, so EntryQuote drops by 59_850_000 (short pays funding
+//     when premium is positive).
 func (s *FundingSuite) TestPremiumAccumulatesAndSettles() {
 	const depositUSDC = uint64(100_000_000_000) // 100k USDC, external precision
 	const orderQty = uint64(1_000_000)
 	const tradePrice = uint32(50_000)
 	const restingBidPrice = uint32(49_999)
 	const restingAskPrice = uint32(50_001)
-	const restingQty = uint64(100)
-	const restingDepositUSDC = uint64(50_000_000_000) // 50k USDC
+	const restingQty = uint64(12_000) // 12_000 * 50_000 = 6e8 quote-ticks ≥ ImpactUsdcAmount=5e8
 
 	for i := 0; i < 4; i++ {
 		s.DepositUSDC(&s.Users[i], depositUSDC)
-		_ = restingDepositUSDC // bookkeeping note for reviewers
 	}
 
 	// Seed the oracle up front so the risk keeper can classify the
@@ -117,7 +129,9 @@ func (s *FundingSuite) TestPremiumAccumulatesAndSettles() {
 	s.Require().Equal(math.NewInt(-int64(orderQty)), user0Pos)
 	s.Require().Equal(math.NewInt(int64(orderQty)), user1Pos)
 
-	// 2. Lay down impact-defining resting orders that won't cross.
+	// 2. Lay down impact-defining resting orders that won't cross. The
+	// resting depth must cover the orderbook's `ImpactUsdcAmount`
+	// notional on each side or the funding sampler skips the sample.
 	_ = s.PlaceLimitOrder(s.Users[2], msg.OrderOpts{
 		MarketIndex:      s.MarketIndex,
 		IsAsk:            false,
@@ -153,26 +167,29 @@ func (s *FundingSuite) TestPremiumAccumulatesAndSettles() {
 	preDetails := s.QueryMarketDetails(s.MarketIndex)
 	prePrefix := preDetails.FundingRatePrefixSum
 
-	// 4. AdvanceBlock — the first block where BeginBlocker observes both
-	//    impact and oracle prices. The base suite's earlier AdvanceBlock
-	//    set `Metadata.LastFundingRoundTimestamp` to the current block's
-	//    time, so we must wait at least one settle interval
-	//    (FundingPeriodMs / FundingPeriodDivisor = 7.5 min) before the
-	//    funding round will be closed. We advance 8 minutes to be safe.
-	s.AdvanceBlockBy(8 * time.Minute)
+	// 4. Advance one full funding period plus a minute of slack so the
+	// next BeginBlocker:
+	//   - clears the per-market 1-minute throttle (LastUpdatedTimestamp
+	//     was last bumped during DepositUSDC / PlaceLimitOrder blocks),
+	//     allowing one fresh premium sample;
+	//   - crosses the hour-boundary
+	//     `now - LastFundingRoundTimestamp >= FundingPeriodMs` and so
+	//     fires the settle branch.
+	s.AdvanceBlockBy(time.Duration(perptypes.FundingPeriod)*time.Millisecond + time.Minute)
 
 	postDetails := s.QueryMarketDetails(s.MarketIndex)
 	postPrefix := postDetails.FundingRatePrefixSum
 
-	// premium = (impact - index) * tick / index = (50000-49500)*1e6/49500
-	//        ≈ +10101  → above FundingSmallClamp=500 → clamped to +500.
-	// After settle: aggregate_premium_sum reset, samples reset, prefix
-	// advanced by +500 (so the new prefix is greater than the pre-prefix).
+	// premium per sample = (49_999 - 49_500) * 1e6 / 49_500 = 10_080
+	// correction = clamp(0 - 10_080, -500, +500) = -500
+	// smallClamped = 10_080 - 500 = 9_580
+	// bigClamped = 9_580 (within ±40_000)
+	// rate = 9_580 / 8 = 1_197
+	// prefix delta = mark * rate = 50_000 * 1_197 = 59_850_000
+	const expectedDelta = int64(59_850_000)
 	delta := postPrefix.Sub(prePrefix)
-	s.Require().True(delta.IsPositive(),
-		"funding rate prefix sum must advance once a positive premium settles (delta=%s)", delta.String())
-	s.Require().LessOrEqual(delta.Int64(), int64(perptypes.FundingSmallClamp),
-		"clamped rate must not exceed FundingSmallClamp (delta=%s)", delta.String())
+	s.Require().Equal(expectedDelta, delta.Int64(),
+		"prefix sum must advance by mark * rate = 50_000 * 1_197 = 59_850_000")
 
 	// 5. Force an explicit funding settlement on user0's short position.
 	preEQUser0 := s.QueryPosition(s.Users[0].AccountIndex, s.MarketIndex).EntryQuote
@@ -181,11 +198,16 @@ func (s *FundingSuite) TestPremiumAccumulatesAndSettles() {
 	)
 	postEQUser0 := s.QueryPosition(s.Users[0].AccountIndex, s.MarketIndex).EntryQuote
 
-	// pay = position * delta / TICK = -1_000_000 * 500 / 1_000_000 = -500.
+	// pay = position * delta / TICK
+	//     = -1_000_000 * 59_850_000 / 1_000_000
+	//     = -59_850_000
 	// SettlePositionFunding adds `pay` to entry_quote: short positions
 	// pay funding when premium is positive (longs receive), which
-	// manifests as EntryQuote getting more negative for the short side.
+	// manifests as EntryQuote getting more negative for the short side
+	// and uPnL = pos*mark - EntryQuote dropping by exactly the funding
+	// paid.
+	const expectedPay = int64(-59_850_000)
 	moved := postEQUser0.Sub(preEQUser0)
-	s.Require().True(moved.IsNegative(),
-		"short position must lose entry-quote on positive funding (moved=%s)", moved.String())
+	s.Require().Equal(expectedPay, moved.Int64(),
+		"short position EntryQuote must drop by pos * delta / TICK = -59_850_000")
 }

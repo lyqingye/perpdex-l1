@@ -22,6 +22,11 @@ type OracleKeeper interface {
 type OrderbookKeeper interface {
 	BestBidAsk(ctx context.Context, market uint32) (uint32, uint32, error)
 	ComputeImpactPrice(ctx context.Context, market uint32, isAsk bool, usdcAmount uint64) (uint32, bool, error)
+	// ImpactUsdcAmount returns the governance-configured impact notional
+	// (`Params.ImpactUsdcAmount` in x/orderbook). Funding samples the
+	// VWAP across this much resting quote depth on each side of the book
+	// to derive the per-minute premium.
+	ImpactUsdcAmount(ctx context.Context) (uint64, error)
 }
 
 type AccountKeeper interface {

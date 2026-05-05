@@ -54,12 +54,28 @@ func NewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, authori
 
 func (k Keeper) Authority() string { return k.authority }
 
-// SettlePositionFunding applies the difference between the global
-// funding_rate_prefix_sum and the position's last_funding_rate_prefix_sum to
-// the position collateral, then snapshots the new prefix sum.
+// SettlePositionFunding applies the per-round Lighter funding payment to a
+// position by leveraging the cumulative prefix sum maintained by
+// `settleMarket`.
 //
-// Returns (delta, nil) where delta is positive when the position gains and
-// negative when it pays funding.
+// The prefix sum stores `Σ mark_t * rate_t` across rounds, so taking the
+// delta against the position's snapshot and multiplying by the (signed)
+// position size gives:
+//
+//	pay = position * (Σ_now mark_t*rate_t - Σ_last mark_t*rate_t) / FundingRateTick
+//	    = Σ_unsettled (position * mark_t * rate_t) / FundingRateTick
+//
+// which matches Lighter's `funding = position * mark * fundingRate`.
+//
+// The funding amount is applied to `EntryQuote` so it folds directly into
+// `uPnL = position * mark - EntryQuote`:
+//   - long with positive funding rate: `pay > 0`, `EntryQuote` rises and
+//     `uPnL` drops by exactly the funding the long paid out.
+//   - short with positive funding rate: `pay < 0`, `EntryQuote` falls and
+//     `uPnL` rises by exactly the funding the short received.
+//
+// Returns nil on success and snapshots the new prefix sum on the position so
+// the next settlement only charges newly accumulated rounds.
 func (k Keeper) SettlePositionFunding(ctx context.Context, accountIndex uint64, marketIndex uint32) error {
 	pos, err := k.accountKeeper.GetPosition(ctx, accountIndex, marketIndex)
 	if err != nil {
@@ -77,10 +93,7 @@ func (k Keeper) SettlePositionFunding(ctx context.Context, accountIndex uint64, 
 		pos.LastFundingRatePrefixSum = d.FundingRatePrefixSum
 		return k.accountKeeper.SetPosition(ctx, pos)
 	}
-	// Funding payment = position * delta_prefix_sum / FUNDING_RATE_TICK.
-	// position is signed; delta is signed.
 	pay := pos.Position.Mul(delta).Quo(math.NewInt(perptypes.FundingRateTick))
-	// Adjust accumulated entry quote to reflect funding paid/received.
 	pos.EntryQuote = pos.EntryQuote.Add(pay)
 	pos.LastFundingRatePrefixSum = d.FundingRatePrefixSum
 	return k.accountKeeper.SetPosition(ctx, pos)
