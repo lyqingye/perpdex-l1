@@ -88,10 +88,17 @@ TOML
 ```
 
 After ~30 seconds the chain's `OraclePrice` store will start receiving
-non-zero entries; you can verify with:
+non-zero entries. The `x/oracle` module currently exposes only gRPC and
+REST query endpoints (no Cobra subcommand); to inspect a single market
+use either:
 
 ```sh
-perpd query oracle prices
+# gRPC (cosmos-sdk reflection enabled by default on :9090)
+grpcurl -plaintext -d '{"market_index":1}' \
+  localhost:9090 perpdex.oracle.v1.Query/OraclePrice
+
+# REST (assumes [api].enable=true in app.toml; default port 1317)
+curl -s http://localhost:1317/perpdex/oracle/v1/price/1
 ```
 
 ## Reference docs

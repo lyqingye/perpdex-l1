@@ -29,7 +29,10 @@ type Config struct {
 	// ExtendVote reads it. Default 5s.
 	MaxAge time.Duration
 	// Enabled lets operators short-circuit the daemon entirely (e.g. on a
-	// non-validator full node). Defaults to true.
+	// non-validator full node). Defaults to false so non-validator full
+	// nodes (and the e2e test rig) do not silently spawn a goroutine that
+	// races against teardown; validator operators MUST set
+	// `oracle.enabled = true` in app.toml.
 	Enabled bool
 }
 

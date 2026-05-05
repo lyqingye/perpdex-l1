@@ -135,10 +135,13 @@ func (c *Config) Validate() error {
 }
 
 // Default returns an opinionated config sufficient to run a dev sidecar
-// against public endpoints with no credentials.
+// against public endpoints with no credentials. The pair set, intervals
+// and CoinGecko slug map are kept in lock-step with the bundled
+// `oracle-sidecar/oracle.json` so `--config ""` and `--config
+// oracle.json` produce equivalent behaviour.
 func Default() *Config {
 	c := &Config{
-		Pairs: []string{"BTC/USD", "ETH/USD"},
+		Pairs: []string{"BTC/USD", "ETH/USD", "SOL/USD"},
 		Providers: map[string]ProviderConfig{
 			"binance": {Enabled: true, Interval: Duration(1500 * time.Millisecond), Decimals: 8},
 			"okx":     {Enabled: true, Interval: Duration(1500 * time.Millisecond), Decimals: 8},
@@ -146,7 +149,7 @@ func Default() *Config {
 				Enabled:  true,
 				Interval: Duration(5 * time.Second),
 				Decimals: 8,
-				Slugs:    map[string]string{"BTC": "bitcoin", "ETH": "ethereum"},
+				Slugs:    map[string]string{"BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana"},
 			},
 		},
 	}

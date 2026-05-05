@@ -115,9 +115,21 @@ docker compose up --build
 Confirm operation:
 
 ```sh
-grpcurl -plaintext localhost:8080 perpdex.oracle.sidecar.v1.Oracle/Prices
-curl http://localhost:9091/api/v1/query?query=perpdex_oracle_sidecar_pairs_observed
-docker compose exec perpd perpd query oracle prices
+# Sidecar prices (the binary does not register gRPC reflection, so the
+# bundled .proto must be supplied):
+grpcurl -plaintext \
+  -import-path oracle-sidecar/service/proto -proto oracle.proto \
+  localhost:8080 perpdex.oracle.sidecar.v1.Oracle/Prices
+
+# Sidecar metrics scraped by Prometheus:
+curl 'http://localhost:9091/api/v1/query?query=perpdex_oracle_sidecar_pairs_observed'
+
+# Aggregated chain-side oracle price for market_index=1 (cosmos-sdk
+# gRPC reflection is enabled by default on :9090). The x/oracle module
+# does not expose a Cobra subcommand at the moment; use gRPC or REST:
+docker compose exec perpd grpcurl -plaintext \
+  -d '{"market_index":1}' localhost:9090 perpdex.oracle.v1.Query/OraclePrice
+docker compose exec perpd curl -s http://localhost:1317/perpdex/oracle/v1/price/1
 ```
 
 ## Production hardening checklist

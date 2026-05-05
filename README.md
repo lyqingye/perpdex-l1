@@ -74,7 +74,9 @@ make build           # builds ./build/perpd
 make install         # installs perpd into $GOPATH/bin
 make build-sidecar   # builds ./oracle-sidecar/build/oracle-sidecar
 make install-sidecar # installs the sidecar into $GOPATH/bin
-make dev-stack       # starts perpd + oracle-sidecar locally for dev/QA
+make dev-stack       # builds both binaries, runs the sidecar in the
+                     #   foreground and prints a reminder to start
+                     #   `perpd` in another shell with [oracle].enabled=true
 make clean           # removes build artifacts
 make tidy            # runs go mod tidy
 ```

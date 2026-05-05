@@ -7,16 +7,23 @@ order in which they tend to surface.
 
 ## 1. `OraclePrice` store stays empty after starting the chain
 
-**Symptoms.** `perpd query oracle prices` returns no rows; risk /
-liquidation reject orders with `oracle price not found`.
+**Symptoms.** Queries against the chain's `x/oracle` module (e.g.
+`grpcurl -plaintext -d '{"market_index":1}' localhost:9090
+perpdex.oracle.v1.Query/OraclePrice`) return a zero/default
+`OraclePrice`; risk / liquidation reject orders with `oracle price not
+found`.
 
 **Diagnosis.**
 
 ```sh
 # Is the daemon enabled?
 grep -A5 '\[oracle\]' ~/.perpd/config/app.toml
-# Does the sidecar reachable from the chain process?
-grpcurl -plaintext localhost:8080 perpdex.oracle.sidecar.v1.Oracle/Prices
+# Is the sidecar reachable from the chain process? (the sidecar binary
+# does not register gRPC reflection, so grpcurl must be pointed at the
+# bundled .proto file.)
+grpcurl -plaintext \
+  -import-path oracle-sidecar/service/proto -proto oracle.proto \
+  localhost:8080 perpdex.oracle.sidecar.v1.Oracle/Prices
 # Are vote extensions enabled at consensus level?
 perpd query consensus params abci
 ```
