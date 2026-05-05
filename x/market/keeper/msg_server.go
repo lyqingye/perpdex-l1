@@ -72,6 +72,9 @@ func (m msgServer) CreateMarket(ctx context.Context, msg *types.MsgCreateMarket)
 
 	market.CreatedAt = sdk.UnwrapSDKContext(ctx).BlockTime().UnixMilli()
 	market.Status = perptypes.MarketStatusActive
+	if details.LastFundingRoundTimestamp == 0 {
+		details.LastFundingRoundTimestamp = market.CreatedAt
+	}
 	if err := m.SetMarket(ctx, market); err != nil {
 		return nil, err
 	}

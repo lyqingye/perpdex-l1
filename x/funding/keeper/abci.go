@@ -66,20 +66,9 @@ func (k Keeper) BeginBlocker(ctx context.Context) error {
 	}); err != nil {
 		return err
 	}
-	// Settle on the funding-period boundary (one hour by default). Per the
-	// Lighter spec the divisor is applied to the rate, not to the cadence.
-	settleEvery := params.FundingPeriodMs
-	if settleEvery > 0 && (meta.LastFundingRoundTimestamp == 0 || now-meta.LastFundingRoundTimestamp >= settleEvery) {
-		settled, err := k.SettleAllMarkets(ctx, params)
-		if err != nil && firstErr == nil {
+	if params.FundingPeriodMs > 0 {
+		if err := k.SettleAllMarkets(ctx, params, now, meta.LastFundingRoundTimestamp); err != nil && firstErr == nil {
 			firstErr = err
-		}
-		if !settled {
-			return firstErr
-		}
-		meta.LastFundingRoundTimestamp = now
-		if err := k.Metadata.Set(ctx, meta); err != nil {
-			return err
 		}
 	}
 	return firstErr
@@ -184,35 +173,48 @@ func (k Keeper) processMarketSample(ctx context.Context, marketIdx uint32, now i
 	return k.marketKeeper.SetMarketDetails(ctx, d)
 }
 
-// SettleAllMarkets converts each market's aggregate_premium_sum into a
-// clamped funding rate, advances `FundingRatePrefixSum` by `mark_price *
-// rate`, and resets the per-window accumulator. Errors are surfaced via
-// per-market events. The returned boolean is false when at least one market did
-// not settle, which tells BeginBlocker not to advance the global round clock.
-func (k Keeper) SettleAllMarkets(ctx context.Context, params types.ParamsAlias) (bool, error) {
+// SettleAllMarkets converts each due market's aggregate_premium_sum into a
+// clamped funding rate, advances `FundingRatePrefixSum` by `mark_price * rate`,
+// resets the per-window accumulator, and advances that market's funding round
+// timestamp. Markets settle independently: one market with a stale oracle does
+// not block other markets from closing their own funding windows.
+func (k Keeper) SettleAllMarkets(ctx context.Context, params types.ParamsAlias, now int64, fallbackRoundTs int64) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
-	allSettled := true
 	var firstErr error
 	if err := k.marketKeeper.IterateMarkets(ctx, func(m markettypes.Market) bool {
 		if m.MarketType != perptypes.MarketTypePerps || m.Status != perptypes.MarketStatusActive {
 			return false
 		}
-		if err := k.settleMarket(ctx, m.MarketIndex, params); err != nil {
+		if err := k.settleMarketIfDue(ctx, m.MarketIndex, params, now, fallbackRoundTs); err != nil {
 			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
 				"funding_settle_error",
 				sdk.NewAttribute("market_index", strconv.FormatUint(uint64(m.MarketIndex), 10)),
 				sdk.NewAttribute("err", err.Error()),
 			))
-			allSettled = false
 			if !isOracleUnavailable(err) && firstErr == nil {
 				firstErr = err
 			}
 		}
 		return false
 	}); err != nil {
-		return false, err
+		return err
 	}
-	return allSettled, firstErr
+	return firstErr
+}
+
+func (k Keeper) settleMarketIfDue(ctx context.Context, marketIdx uint32, params types.ParamsAlias, now int64, fallbackRoundTs int64) error {
+	d, err := k.marketKeeper.GetMarketDetails(ctx, marketIdx)
+	if err != nil {
+		return err
+	}
+	lastRoundTs := d.LastFundingRoundTimestamp
+	if lastRoundTs == 0 {
+		lastRoundTs = fallbackRoundTs
+	}
+	if lastRoundTs != 0 && now-lastRoundTs < params.FundingPeriodMs {
+		return nil
+	}
+	return k.settleMarket(ctx, d, params, now)
 }
 
 // settleMarket applies the Lighter funding-rate formula to one market:
@@ -226,18 +228,15 @@ func (k Keeper) SettleAllMarkets(ctx context.Context, params types.ParamsAlias) 
 // `position * delta_prefix_sum / FundingRateTick`, which reduces to
 // `position * mark * rate / FundingRateTick` -- exactly the Lighter funding
 // payment definition `funding = position * mark * fundingRate`.
-func (k Keeper) settleMarket(ctx context.Context, marketIdx uint32, params types.ParamsAlias) error {
-	d, err := k.marketKeeper.GetMarketDetails(ctx, marketIdx)
-	if err != nil {
-		return err
-	}
+func (k Keeper) settleMarket(ctx context.Context, d markettypes.MarketDetails, params types.ParamsAlias, roundTs int64) error {
 	if d.FundingRatePrefixSum.IsNil() {
 		d.FundingRatePrefixSum = math.ZeroInt()
 	}
 	if d.TotalPremiumSamples == 0 {
-		return nil
+		d.LastFundingRoundTimestamp = roundTs
+		return k.marketKeeper.SetMarketDetails(ctx, d)
 	}
-	px, err := k.oracleKeeper.GetPrice(ctx, marketIdx)
+	px, err := k.oracleKeeper.GetPrice(ctx, d.MarketIndex)
 	if err != nil {
 		return err
 	}
@@ -269,6 +268,7 @@ func (k Keeper) settleMarket(ctx context.Context, marketIdx uint32, params types
 	d.FundingRatePrefixSum = d.FundingRatePrefixSum.Add(inc)
 	d.AggregatePremiumSum = 0
 	d.TotalPremiumSamples = 0
+	d.LastFundingRoundTimestamp = roundTs
 	return k.marketKeeper.SetMarketDetails(ctx, d)
 }
 
