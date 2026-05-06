@@ -124,12 +124,25 @@ func (*stubMarket) SetMarketDetails(_ context.Context, _ markettypes.MarketDetai
 	return nil
 }
 
+// stubFill is a flattened record over the small subset of fill fields
+// the matching tests assert against. Captured uniformly across perp
+// and spot so existing tests can keep using `.fills` for cardinality
+// checks and `.fills[i].BaseAmount` for size checks without juggling
+// two slices.
+type stubFill struct {
+	MakerAccountIndex uint64
+	TakerAccountIndex uint64
+	MarketIndex       uint32
+	BaseAmount        uint64
+	IsTakerAsk        bool
+}
+
 // stubTrade records every fill it sees and applies the position delta to
 // the linked stubAccount so subsequent matching iterations see the
 // updated maker/taker positions (mirroring real trade-keeper behaviour).
 type stubTrade struct {
 	ak    *stubAccount
-	fills []tradekeeper.Fill
+	fills []stubFill
 }
 
 func (s *stubTrade) applyDelta(acc uint64, mkt uint32, delta int64) {
@@ -138,8 +151,14 @@ func (s *stubTrade) applyDelta(acc uint64, mkt uint32, delta int64) {
 	s.ak.pos[key(acc, mkt)] = cur
 }
 
-func (s *stubTrade) ApplyPerpsMatching(_ context.Context, f tradekeeper.Fill) error {
-	s.fills = append(s.fills, f)
+func (s *stubTrade) ApplyPerpsMatching(_ context.Context, f tradekeeper.PerpFill) error {
+	s.fills = append(s.fills, stubFill{
+		MakerAccountIndex: f.MakerAccountIndex,
+		TakerAccountIndex: f.TakerAccountIndex,
+		MarketIndex:       f.MarketIndex,
+		BaseAmount:        f.BaseAmount,
+		IsTakerAsk:        f.IsTakerAsk,
+	})
 	base := int64(f.BaseAmount)
 	if f.IsTakerAsk {
 		// taker sells, maker buys
@@ -153,8 +172,14 @@ func (s *stubTrade) ApplyPerpsMatching(_ context.Context, f tradekeeper.Fill) er
 	return nil
 }
 
-func (s *stubTrade) ApplySpotMatching(_ context.Context, f tradekeeper.Fill, _, _ uint32) error {
-	s.fills = append(s.fills, f)
+func (s *stubTrade) ApplySpotMatching(_ context.Context, f tradekeeper.SpotFill, _, _ uint32) error {
+	s.fills = append(s.fills, stubFill{
+		MakerAccountIndex: f.MakerAccountIndex,
+		TakerAccountIndex: f.TakerAccountIndex,
+		MarketIndex:       f.MarketIndex,
+		BaseAmount:        f.BaseAmount,
+		IsTakerAsk:        f.IsTakerAsk,
+	})
 	return nil
 }
 

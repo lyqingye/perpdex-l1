@@ -215,7 +215,7 @@ func (k Keeper) autoADL(
 		if !size.IsPositive() {
 			continue
 		}
-		fill := tradekeeper.Fill{
+		fill := tradekeeper.PerpFill{
 			MakerAccountIndex: victim,
 			TakerAccountIndex: c.AccountIndex,
 			MarketIndex:       marketIdx,
