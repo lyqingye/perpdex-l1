@@ -9,6 +9,7 @@ import (
 	cmtprototypes "github.com/cometbft/cometbft/proto/tendermint/types"
 
 	"cosmossdk.io/log"
+	cosmosmath "cosmossdk.io/math"
 	storetypes "cosmossdk.io/store/types"
 
 	"github.com/cosmos/cosmos-sdk/runtime"
@@ -48,8 +49,20 @@ func newOrderbookKeeper(t *testing.T) (orderbookkeeper.Keeper, sdk.Context) {
 		runtime.NewKVStoreService(keys[types.StoreKey]),
 		"px1xqcnyve5x5mrwwpev93xxer9venks6t29ke4l8",
 		stubMarketKeeper{},
+		stubLocker{},
 	)
 	return k, ctx
+}
+
+// stubLocker is a no-op SpotLocker used in orderbook unit tests that do
+// not exercise lock-on-place behaviour.
+type stubLocker struct{}
+
+func (stubLocker) IncreaseLockedBalance(_ context.Context, _ uint64, _ uint32, _ cosmosmath.Int) error {
+	return nil
+}
+func (stubLocker) DecreaseLockedBalance(_ context.Context, _ uint64, _ uint32, _ cosmosmath.Int) error {
+	return nil
 }
 
 // makeOrder builds a minimal but valid Order suitable for OpenOrder. A

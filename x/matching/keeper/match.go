@@ -8,6 +8,7 @@ import (
 	perptypes "github.com/perpdex/perpdex-l1/types"
 	orderbooktypes "github.com/perpdex/perpdex-l1/x/orderbook/types"
 	tradekeeper "github.com/perpdex/perpdex-l1/x/trade/keeper"
+	tradetypes "github.com/perpdex/perpdex-l1/x/trade/types"
 )
 
 // matchOrder runs the 12-step matching loop for a taker order. It returns the
@@ -164,33 +165,80 @@ func (k Keeper) matchOrder(ctx context.Context, taker *orderbooktypes.Order, max
 			TakerFee:          market.TakerFee,
 			MakerFee:          market.MakerFee,
 		}
+
+		// Each (maker, fill) iteration runs inside an isolated cache
+		// context so a recoverable failure (maker risk regression,
+		// maker insufficient balance, ...) discards the partial
+		// position / collateral / OI writes from ApplyPerpsMatching
+		// and the matching loop can evict the bad maker and try the
+		// next price level — Lighter parity with `cancel_maker_order`
+		// in matching_engine.rs. A taker-side recoverable failure
+		// stops the loop but preserves all prior writeCache fills.
+		// Hard errors (funding settle / OI / bank failure) propagate
+		// up and revert the entire CreateOrder Msg.
+		sdkCtx := sdk.UnwrapSDKContext(ctx)
+		cacheCtx, writeCache := sdkCtx.CacheContext()
+		var applyErr error
 		if isPerp {
-			if err := k.tradeKeeper.ApplyPerpsMatching(ctx, fill); err != nil {
-				return totalFilled, perptypes.OrderStatusCancelled, err
-			}
+			applyErr = k.tradeKeeper.ApplyPerpsMatching(cacheCtx, fill)
 		} else {
-			if err := k.tradeKeeper.ApplySpotMatching(ctx, fill, market.BaseAssetId, market.QuoteAssetId); err != nil {
-				return totalFilled, perptypes.OrderStatusCancelled, err
+			applyErr = k.tradeKeeper.ApplySpotMatching(cacheCtx, fill, market.BaseAssetId, market.QuoteAssetId)
+		}
+		if applyErr == nil {
+			// FillMakerOrder also runs inside the cache so a
+			// downstream failure leaves the orderbook entry
+			// untouched.
+			if _, err := k.bookKeeper.FillMakerOrder(cacheCtx, best.OrderIndex, tradeBase); err != nil {
+				applyErr = err
 			}
 		}
-		// FillMakerOrder atomically updates the orderbook entry and
-		// the maker Order record (PartiallyFilled / Filled), and
-		// clears the client + account-open indexes when the maker
-		// fully fills.
-		if _, err := k.bookKeeper.FillMakerOrder(ctx, best.OrderIndex, tradeBase); err != nil {
-			return totalFilled, perptypes.OrderStatusCancelled, err
+
+		switch {
+		case applyErr == nil:
+			writeCache()
+			taker.RemainingBaseAmount -= tradeBase
+			totalFilled += tradeBase
+			fills++
+			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
+				"order_fill",
+				sdk.NewAttribute("market_index", uintToStr(uint64(taker.MarketIndex))),
+				sdk.NewAttribute("price", uintToStr(uint64(best.Price))),
+				sdk.NewAttribute("base", uintToStr(tradeBase)),
+			))
+		case tradetypes.IsRecoverableMakerError(applyErr):
+			// Discard cache, evict the bad maker on the OUTER ctx
+			// so the next loop iteration won't peek the same
+			// resting order, then continue.
+			if _, err := k.bookKeeper.EvictMakerOrder(ctx, best.OrderIndex, perptypes.OrderStatusCancelled); err != nil {
+				return totalFilled, perptypes.OrderStatusCancelled, err
+			}
+			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
+				"maker_evicted_bad_state",
+				sdk.NewAttribute("market_index", uintToStr(uint64(taker.MarketIndex))),
+				sdk.NewAttribute("order_index", uintToStr(best.OrderIndex)),
+				sdk.NewAttribute("reason", applyErr.Error()),
+			))
+			continue
+		case tradetypes.IsRecoverableTakerError(applyErr):
+			// Discard cache. Previously committed fills (any
+			// writeCache calls in earlier loop iterations) are
+			// retained; the residue is force-cancelled — the taker
+			// just proved it cannot satisfy further fills, so
+			// resting it on the book would only re-trigger the
+			// same failure for downstream takers. Lighter parity:
+			// `cancel_taker_order` pops the taker register
+			// regardless of TIF.
+			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
+				"taker_aborted_bad_state",
+				sdk.NewAttribute("market_index", uintToStr(uint64(taker.MarketIndex))),
+				sdk.NewAttribute("reason", applyErr.Error()),
+			))
+			return totalFilled, perptypes.OrderStatusCancelled, nil
+		default:
+			// Hard error: discard cache and propagate so the whole
+			// Msg reverts atomically.
+			return totalFilled, perptypes.OrderStatusCancelled, applyErr
 		}
-
-		taker.RemainingBaseAmount -= tradeBase
-		totalFilled += tradeBase
-		fills++
-
-		sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
-			"order_fill",
-			sdk.NewAttribute("market_index", uintToStr(uint64(taker.MarketIndex))),
-			sdk.NewAttribute("price", uintToStr(uint64(best.Price))),
-			sdk.NewAttribute("base", uintToStr(tradeBase)),
-		))
 	}
 	if taker.RemainingBaseAmount == 0 {
 		return totalFilled, perptypes.OrderStatusFilled, nil

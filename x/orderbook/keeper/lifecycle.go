@@ -3,9 +3,67 @@ package keeper
 import (
 	"context"
 
+	"cosmossdk.io/math"
+
 	perptypes "github.com/perpdex/perpdex-l1/types"
+	markettypes "github.com/perpdex/perpdex-l1/x/market/types"
 	"github.com/perpdex/perpdex-l1/x/orderbook/types"
 )
+
+// computeSpotLock returns (assetID, amount) the order should hold while
+// resting on the orderbook. For an ask the seller locks `remaining_base`
+// units of the base asset; for a bid the buyer locks `remaining_base *
+// price` units of the quote asset. Lighter parity:
+// `get_locked_amount_and_ask_asset_index` in l2_create_order.rs.
+func computeSpotLock(o types.Order, market markettypes.Market) (uint32, math.Int) {
+	if o.IsAsk {
+		return market.BaseAssetId, math.NewIntFromUint64(o.RemainingBaseAmount)
+	}
+	notional := math.NewIntFromUint64(o.RemainingBaseAmount).
+		Mul(math.NewIntFromUint64(uint64(o.Price)))
+	return market.QuoteAssetId, notional
+}
+
+// applySpotLockOnOpen reserves the proportional resources for a spot
+// resting order. Perp markets are no-ops: their resource control comes
+// from the open-order count cap (and the post-trade risk check), not a
+// real balance lock.
+func (k Keeper) applySpotLockOnOpen(ctx context.Context, o types.Order) error {
+	if k.spotLocker == nil {
+		return nil
+	}
+	market, err := k.marketKeeper.GetMarket(ctx, o.MarketIndex)
+	if err != nil {
+		return err
+	}
+	if market.MarketType != perptypes.MarketTypeSpot {
+		return nil
+	}
+	assetID, amount := computeSpotLock(o, market)
+	return k.spotLocker.IncreaseLockedBalance(ctx, o.OwnerAccountIndex, assetID, amount)
+}
+
+// releaseSpotLockOnClose drops the (still-locked) portion of a resting
+// spot order's resources when it leaves the book without trading further
+// (cancel / GTT eviction / reduce-only eviction). For a partially-filled
+// order, `o.RemainingBaseAmount` already reflects the post-fill residue,
+// which equals the residual lock — partial fills consume the lock 1:1
+// inside ApplySpotMatching's spotMakerDebit, so we only release what is
+// still reserved here.
+func (k Keeper) releaseSpotLockOnClose(ctx context.Context, o types.Order) error {
+	if k.spotLocker == nil {
+		return nil
+	}
+	market, err := k.marketKeeper.GetMarket(ctx, o.MarketIndex)
+	if err != nil {
+		return err
+	}
+	if market.MarketType != perptypes.MarketTypeSpot {
+		return nil
+	}
+	assetID, amount := computeSpotLock(o, market)
+	return k.spotLocker.DecreaseLockedBalance(ctx, o.OwnerAccountIndex, assetID, amount)
+}
 
 // OpenOrder accepts a freshly-created or post-match Order and reconciles
 // every piece of orderbook state to match `o.Status` in one atomic step:
@@ -23,6 +81,13 @@ import (
 func (k Keeper) OpenOrder(ctx context.Context, o types.Order, isPostOnly bool) error {
 	switch o.Status {
 	case perptypes.OrderStatusOpen, perptypes.OrderStatusPartiallyFilled:
+		// Lock-on-place for spot residue first: if the lock fails
+		// (insufficient available balance) the entry/index writes
+		// below never happen, so a malicious caller cannot rest an
+		// under-funded spot order. Perp markets are no-ops here.
+		if err := k.applySpotLockOnOpen(ctx, o); err != nil {
+			return err
+		}
 		entry := types.OrderBookEntry{
 			OrderIndex:          o.OrderIndex,
 			OwnerAccountIndex:   o.OwnerAccountIndex,
@@ -151,6 +216,13 @@ func (k Keeper) EvictMakerOrder(ctx context.Context, makerIndex uint64, terminal
 	if err := k.removeOrderbookEntry(ctx, maker.MarketIndex, maker.IsAsk, makerIndex); err != nil {
 		return types.Order{}, err
 	}
+	// Release any still-locked spot resources before flipping the order
+	// to its terminal status. We use the pre-mutation copy of `maker`
+	// (with its current RemainingBaseAmount) because the lock that was
+	// reserved at OpenOrder time is sized off the residue.
+	if err := k.releaseSpotLockOnClose(ctx, maker); err != nil {
+		return types.Order{}, err
+	}
 	maker.Status = terminalStatus
 	if err := k.unindexClientOrderIfMatches(ctx, maker); err != nil {
 		return types.Order{}, err
@@ -188,6 +260,13 @@ func (k Keeper) CancelOrder(ctx context.Context, orderIndex uint64) (types.Order
 			return types.Order{}, types.ErrOrderNotCancelable.Wrapf("order_index=%d already fully filled", o.OrderIndex)
 		}
 		if err := k.removeOrderbookEntry(ctx, o.MarketIndex, o.IsAsk, o.OrderIndex); err != nil {
+			return types.Order{}, err
+		}
+		// Release residue lock for resting spot orders. Trigger
+		// cancels do not need to release because triggers do not
+		// lock at OpenTriggerOrder time — the lock only happens
+		// after activation when the order rests on the book.
+		if err := k.releaseSpotLockOnClose(ctx, o); err != nil {
 			return types.Order{}, err
 		}
 	case perptypes.OrderStatusTriggeredPending:

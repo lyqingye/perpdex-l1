@@ -6,6 +6,7 @@ import (
 
 	"cosmossdk.io/collections"
 	"cosmossdk.io/core/store"
+	sdkerrors "cosmossdk.io/errors"
 	"cosmossdk.io/math"
 
 	"github.com/cosmos/cosmos-sdk/codec"
@@ -222,7 +223,16 @@ func (k Keeper) ApplyPerpsMatching(ctx context.Context, f Fill) error {
 			return err
 		}
 		if !ok {
-			return fmt.Errorf("trade: account %d risk regression", idx)
+			// Classify the regression by side so the matching
+			// loop can evict a bad maker (and continue) without
+			// reverting the entire taker tx, while a bad taker
+			// stops further fills but keeps the prior ones.
+			if idx == f.MakerAccountIndex {
+				return sdkerrors.Wrapf(types.ErrMakerRiskRegression,
+					"account %d", idx)
+			}
+			return sdkerrors.Wrapf(types.ErrTakerRiskRegression,
+				"account %d", idx)
 		}
 	}
 	return nil
@@ -336,21 +346,35 @@ func sameSign(a, b math.Int) bool {
 // ApplySpotMatching applies a spot fill: taker gives quote, gets base (buy)
 // or vice versa (sell). UNIFIED collateral mode keeps account.collateral and
 // account_asset.balance synchronized.
+//
+// The maker side debits its locked balance first (lock-on-place semantics
+// from x/orderbook OpenOrder), spilling into available balance only if the
+// caller forgot to lock — defensive parity with Lighter where resting
+// orders always have their resources locked. The taker side debits its
+// available balance directly.
+//
+// Insufficient-balance errors are wrapped into Maker* / Taker* sentinels
+// so the matching loop can evict a bad maker and continue, or stop a bad
+// taker without reverting prior fills.
 func (k Keeper) ApplySpotMatching(ctx context.Context, f Fill, baseAssetID, quoteAssetID uint32) error {
 	notional := math.NewIntFromUint64(f.BaseAmount).Mul(math.NewIntFromUint64(uint64(f.Price)))
-	// Direction: taker is ask -> taker sells base, buys quote.
+	baseAmt := math.NewIntFromUint64(f.BaseAmount)
 	if f.IsTakerAsk {
-		if err := k.transferAsset(ctx, f.TakerAccountIndex, f.MakerAccountIndex, baseAssetID, math.NewIntFromUint64(f.BaseAmount)); err != nil {
+		// taker sells base, maker buys base — maker owes quote
+		// (locked at place time), taker owes base (unlocked).
+		if err := k.spotMakerDebit(ctx, f.MakerAccountIndex, f.TakerAccountIndex, quoteAssetID, notional); err != nil {
 			return err
 		}
-		if err := k.transferAsset(ctx, f.MakerAccountIndex, f.TakerAccountIndex, quoteAssetID, notional); err != nil {
+		if err := k.spotTakerDebit(ctx, f.TakerAccountIndex, f.MakerAccountIndex, baseAssetID, baseAmt); err != nil {
 			return err
 		}
 	} else {
-		if err := k.transferAsset(ctx, f.MakerAccountIndex, f.TakerAccountIndex, baseAssetID, math.NewIntFromUint64(f.BaseAmount)); err != nil {
+		// taker buys base, maker sells base — maker owes base
+		// (locked at place time), taker owes quote (unlocked).
+		if err := k.spotMakerDebit(ctx, f.MakerAccountIndex, f.TakerAccountIndex, baseAssetID, baseAmt); err != nil {
 			return err
 		}
-		if err := k.transferAsset(ctx, f.TakerAccountIndex, f.MakerAccountIndex, quoteAssetID, notional); err != nil {
+		if err := k.spotTakerDebit(ctx, f.TakerAccountIndex, f.MakerAccountIndex, quoteAssetID, notional); err != nil {
 			return err
 		}
 	}
@@ -358,21 +382,33 @@ func (k Keeper) ApplySpotMatching(ctx context.Context, f Fill, baseAssetID, quot
 	if !f.NoFee {
 		takerFee := notional.Mul(math.NewIntFromUint64(uint64(f.TakerFee))).Quo(math.NewInt(int64(perptypes.FeeTick)))
 		makerFee := notional.Mul(math.NewIntFromUint64(uint64(f.MakerFee))).Quo(math.NewInt(int64(perptypes.FeeTick)))
-		if err := k.transferAsset(ctx, f.TakerAccountIndex, perptypes.TreasuryAccountIndex, quoteAssetID, takerFee); err != nil {
-			return err
+		if takerFee.IsPositive() {
+			if err := k.spotTakerDebit(ctx, f.TakerAccountIndex, perptypes.TreasuryAccountIndex, quoteAssetID, takerFee); err != nil {
+				return err
+			}
 		}
-		if err := k.transferAsset(ctx, f.MakerAccountIndex, perptypes.TreasuryAccountIndex, quoteAssetID, makerFee); err != nil {
-			return err
+		if makerFee.IsPositive() {
+			// Maker fee is paid out of whatever quote balance the
+			// maker still has after the lock release; debiting
+			// from available is correct because the lock only
+			// covered notional, not fees.
+			if err := k.spotMakerDebit(ctx, f.MakerAccountIndex, perptypes.TreasuryAccountIndex, quoteAssetID, makerFee); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
 
-// transferAsset moves `amount` of `assetID` from `from` to `to`. The source
-// must have a balance at least equal to `amount`; otherwise the transfer
-// aborts with an insufficient funds error rather than silently producing a
-// negative balance (which would break asset conservation).
-func (k Keeper) transferAsset(ctx context.Context, from, to uint64, assetID uint32, amount math.Int) error {
+// spotMakerDebit moves `amount` of `assetID` from `from` (a maker) to
+// `to`, draining the maker's locked balance first (lock-on-place
+// accounting from x/orderbook.OpenOrder) and falling back to the
+// available balance only if the lock is short — defensive parity with
+// Lighter where resting orders always have their resources locked.
+//
+// Insufficient-balance errors are wrapped into ErrMakerInsufficientBalance
+// so the matching loop can evict the bad maker and continue.
+func (k Keeper) spotMakerDebit(ctx context.Context, from, to uint64, assetID uint32, amount math.Int) error {
 	if amount.IsNegative() {
 		return fmt.Errorf("trade: transfer amount must be non-negative")
 	}
@@ -383,9 +419,62 @@ func (k Keeper) transferAsset(ctx context.Context, from, to uint64, assetID uint
 	if src.Balance.IsNil() {
 		src.Balance = math.ZeroInt()
 	}
+	if src.LockedBalance.IsNil() {
+		src.LockedBalance = math.ZeroInt()
+	}
 	if src.Balance.LT(amount) {
-		return fmt.Errorf("trade: account %d insufficient balance for asset %d: have %s need %s",
+		return sdkerrors.Wrapf(types.ErrMakerInsufficientBalance,
+			"account %d asset %d have %s need %s",
 			from, assetID, src.Balance.String(), amount.String())
+	}
+	dst, err := k.accountKeeper.GetAccountAsset(ctx, to, assetID)
+	if err != nil {
+		return err
+	}
+	if dst.Balance.IsNil() {
+		dst.Balance = math.ZeroInt()
+	}
+	// Drain the lock first so a partial fill releases the proportional
+	// portion of resources reserved at place time.
+	lockedDrain := amount
+	if lockedDrain.GT(src.LockedBalance) {
+		lockedDrain = src.LockedBalance
+	}
+	src.LockedBalance = src.LockedBalance.Sub(lockedDrain)
+	src.Balance = src.Balance.Sub(amount)
+	dst.Balance = dst.Balance.Add(amount)
+	if err := k.accountKeeper.SetAccountAsset(ctx, src); err != nil {
+		return err
+	}
+	return k.accountKeeper.SetAccountAsset(ctx, dst)
+}
+
+// spotTakerDebit moves `amount` of `assetID` from `from` (a taker) to
+// `to`. Takers in spot matching are not lock-on-place (only resting
+// orders lock), so the debit goes straight against the available
+// balance.
+//
+// Insufficient-balance errors are wrapped into ErrTakerInsufficientBalance
+// so the matching loop can stop the taker without reverting prior fills.
+func (k Keeper) spotTakerDebit(ctx context.Context, from, to uint64, assetID uint32, amount math.Int) error {
+	if amount.IsNegative() {
+		return fmt.Errorf("trade: transfer amount must be non-negative")
+	}
+	src, err := k.accountKeeper.GetAccountAsset(ctx, from, assetID)
+	if err != nil {
+		return err
+	}
+	if src.Balance.IsNil() {
+		src.Balance = math.ZeroInt()
+	}
+	available := src.Balance
+	if !src.LockedBalance.IsNil() {
+		available = available.Sub(src.LockedBalance)
+	}
+	if available.LT(amount) {
+		return sdkerrors.Wrapf(types.ErrTakerInsufficientBalance,
+			"account %d asset %d available %s need %s",
+			from, assetID, available.String(), amount.String())
 	}
 	dst, err := k.accountKeeper.GetAccountAsset(ctx, to, assetID)
 	if err != nil {
@@ -401,3 +490,4 @@ func (k Keeper) transferAsset(ctx context.Context, from, to uint64, assetID uint
 	}
 	return k.accountKeeper.SetAccountAsset(ctx, dst)
 }
+

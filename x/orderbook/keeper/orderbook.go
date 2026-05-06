@@ -465,7 +465,21 @@ func (k Keeper) HasOpenClientOrder(ctx context.Context, market uint32, account u
 //
 // Internal helper. External callers go through OpenOrder / OpenTriggerOrder.
 func (k Keeper) indexAccountOpenOrder(ctx context.Context, o types.Order) error {
-	return k.AccountOpenOrders.Set(ctx, collections.Join(o.OwnerAccountIndex, o.OrderIndex))
+	key := collections.Join(o.OwnerAccountIndex, o.OrderIndex)
+	had, err := k.AccountOpenOrders.Has(ctx, key)
+	if err != nil {
+		return err
+	}
+	if err := k.AccountOpenOrders.Set(ctx, key); err != nil {
+		return err
+	}
+	if had {
+		// Already counted (e.g. ActivateTrigger -> OpenOrder
+		// re-indexes the same order). Avoid double-incrementing
+		// the per-(account,market) cap counter.
+		return nil
+	}
+	return k.bumpAccountOpenOrderCount(ctx, o.OwnerAccountIndex, o.MarketIndex, +1)
 }
 
 // unindexAccountOpenOrder removes the (account, order_index) tuple. Safe
@@ -474,7 +488,56 @@ func (k Keeper) indexAccountOpenOrder(ctx context.Context, o types.Order) error 
 // Internal helper. External callers go through CancelOrder / FillMakerOrder /
 // EvictMakerOrder.
 func (k Keeper) unindexAccountOpenOrder(ctx context.Context, o types.Order) error {
-	return k.AccountOpenOrders.Remove(ctx, collections.Join(o.OwnerAccountIndex, o.OrderIndex))
+	key := collections.Join(o.OwnerAccountIndex, o.OrderIndex)
+	had, err := k.AccountOpenOrders.Has(ctx, key)
+	if err != nil {
+		return err
+	}
+	if err := k.AccountOpenOrders.Remove(ctx, key); err != nil {
+		return err
+	}
+	if !had {
+		return nil
+	}
+	return k.bumpAccountOpenOrderCount(ctx, o.OwnerAccountIndex, o.MarketIndex, -1)
+}
+
+// bumpAccountOpenOrderCount adjusts the cap-tracking counter by delta
+// (+1 / -1). The counter never goes below zero — clamping protects
+// against stale unindex calls from genesis or test fixtures that did
+// not write the matching index entry.
+func (k Keeper) bumpAccountOpenOrderCount(ctx context.Context, accIdx uint64, marketIdx uint32, delta int32) error {
+	key := collections.Join(accIdx, marketIdx)
+	cur, err := k.AccountOpenOrderCount.Get(ctx, key)
+	if err != nil && !errors.Is(err, collections.ErrNotFound) {
+		return err
+	}
+	next := int64(cur) + int64(delta)
+	if next < 0 {
+		next = 0
+	}
+	if next == 0 {
+		// Avoid persisting trivial zero rows.
+		if cur != 0 {
+			return k.AccountOpenOrderCount.Remove(ctx, key)
+		}
+		return nil
+	}
+	return k.AccountOpenOrderCount.Set(ctx, key, uint32(next))
+}
+
+// GetAccountOpenOrderCount returns the current number of resting +
+// trigger-pending orders held by `account` in `market`. Zero is
+// returned for an absent row, matching the implicit default.
+func (k Keeper) GetAccountOpenOrderCount(ctx context.Context, accIdx uint64, marketIdx uint32) (uint32, error) {
+	cur, err := k.AccountOpenOrderCount.Get(ctx, collections.Join(accIdx, marketIdx))
+	if err != nil {
+		if errors.Is(err, collections.ErrNotFound) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	return cur, nil
 }
 
 // IterateAccountOpenOrders walks every order currently indexed as open

@@ -73,27 +73,54 @@ func (s *stubAccount) IsAuthorized(_ context.Context, _ string, _ uint64) (bool,
 	return true, nil
 }
 
-type stubMarket struct{}
+func (s *stubAccount) AvailableBalance(_ context.Context, _ uint64, _ uint32) (math.Int, error) {
+	// Stub assumes infinite spot liquidity for matching tests; the
+	// dedicated spot lock tests live in x/orderbook keeper tests.
+	return math.NewInt(1 << 62), nil
+}
 
-func (stubMarket) GetMarket(_ context.Context, idx uint32) (markettypes.Market, error) {
+// stubLocker is a no-op SpotLocker used by orderbook tests that do not
+// exercise spot lock semantics directly.
+type stubLocker struct{}
+
+func (stubLocker) IncreaseLockedBalance(_ context.Context, _ uint64, _ uint32, _ math.Int) error {
+	return nil
+}
+func (stubLocker) DecreaseLockedBalance(_ context.Context, _ uint64, _ uint32, _ math.Int) error {
+	return nil
+}
+
+type stubMarket struct {
+	maxOpenOrders uint32
+	nextNonceAsk  int64
+	nextNonceBid  int64
+}
+
+func (s *stubMarket) GetMarket(_ context.Context, idx uint32) (markettypes.Market, error) {
 	return markettypes.Market{
-		MarketIndex: idx,
-		MarketType:  perptypes.MarketTypePerps,
-		Status:      perptypes.MarketStatusActive,
-		TakerFee:    0,
-		MakerFee:    0,
+		MarketIndex:             idx,
+		MarketType:              perptypes.MarketTypePerps,
+		Status:                  perptypes.MarketStatusActive,
+		TakerFee:                0,
+		MakerFee:                0,
+		MaxOpenOrdersPerAccount: s.maxOpenOrders,
 	}, nil
 }
 
-func (stubMarket) GetMarketDetails(_ context.Context, idx uint32) (markettypes.MarketDetails, error) {
+func (*stubMarket) GetMarketDetails(_ context.Context, idx uint32) (markettypes.MarketDetails, error) {
 	return markettypes.MarketDetails{MarketIndex: idx}, nil
 }
 
-func (stubMarket) AllocateNonce(_ context.Context, _ uint32, _ bool) (int64, error) {
-	return 1, nil
+func (s *stubMarket) AllocateNonce(_ context.Context, _ uint32, isAsk bool) (int64, error) {
+	if isAsk {
+		s.nextNonceAsk++
+		return s.nextNonceAsk, nil
+	}
+	s.nextNonceBid--
+	return s.nextNonceBid, nil
 }
 
-func (stubMarket) SetMarketDetails(_ context.Context, _ markettypes.MarketDetails) error {
+func (*stubMarket) SetMarketDetails(_ context.Context, _ markettypes.MarketDetails) error {
 	return nil
 }
 
@@ -139,6 +166,7 @@ type matchEnv struct {
 	tk  *stubTrade
 	bk  orderbookkeeper.Keeper
 	k   Keeper
+	mk  *stubMarket
 }
 
 func newMatchEnv(t *testing.T) *matchEnv {
@@ -148,11 +176,13 @@ func newMatchEnv(t *testing.T) *matchEnv {
 	cms := integration.CreateMultiStore(keys, log.NewTestLogger(t))
 	ctx := sdk.NewContext(cms, cmtprototypes.Header{}, true, log.NewTestLogger(t))
 
+	mk := &stubMarket{}
 	bk := orderbookkeeper.NewKeeper(
 		cdc,
 		runtime.NewKVStoreService(keys[orderbooktypes.StoreKey]),
 		"px1xqcnyve5x5mrwwpev93xxer9venks6t29ke4l8",
-		stubMarket{},
+		mk,
+		stubLocker{},
 	)
 
 	ak := newStubAccount()
@@ -162,13 +192,13 @@ func newMatchEnv(t *testing.T) *matchEnv {
 		runtime.NewKVStoreService(keys[matchingtypes.StoreKey]),
 		"px1xqcnyve5x5mrwwpev93xxer9venks6t29ke4l8",
 		ak,
-		stubMarket{},
+		mk,
 		bk,
 		tk,
 	)
 	require.NoError(t, k.Params.Set(ctx, matchingtypes.Params{MaxFillsPerMsg: 64, MaxCancelsPerMsg: 128}))
 
-	return &matchEnv{ctx: ctx, ak: ak, tk: tk, bk: bk, k: k}
+	return &matchEnv{ctx: ctx, ak: ak, tk: tk, bk: bk, k: k, mk: mk}
 }
 
 // rest places a maker order on the book through the public OpenOrder
