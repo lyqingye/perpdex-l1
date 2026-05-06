@@ -115,11 +115,11 @@ func (m msgServer) CreatePublicPool(ctx context.Context, msg *types.MsgCreatePub
 	}
 
 	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
-		"create_public_pool",
-		sdk.NewAttribute("pool_account_index", strconv.FormatUint(idx, 10)),
-		sdk.NewAttribute("master_account_index", strconv.FormatUint(master.AccountIndex, 10)),
-		sdk.NewAttribute("account_type", strconv.FormatUint(uint64(resolvedType), 10)),
-		sdk.NewAttribute("initial_total_shares", strconv.FormatUint(msg.InitialTotalShares, 10)),
+		types.EventTypeCreatePublicPool,
+		sdk.NewAttribute(types.AttributeKeyPoolAccountIndex, strconv.FormatUint(idx, 10)),
+		sdk.NewAttribute(types.AttributeKeyMasterAccountIndex, strconv.FormatUint(master.AccountIndex, 10)),
+		sdk.NewAttribute(types.AttributeKeyAccountType, strconv.FormatUint(uint64(resolvedType), 10)),
+		sdk.NewAttribute(types.AttributeKeyInitialTotalShares, strconv.FormatUint(msg.InitialTotalShares, 10)),
 	))
 	return &types.MsgCreatePublicPoolResponse{PoolAccountIndex: idx}, nil
 }
@@ -220,10 +220,10 @@ func (m msgServer) UpdatePublicPool(ctx context.Context, msg *types.MsgUpdatePub
 	}
 
 	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
-		"update_public_pool",
-		sdk.NewAttribute("pool_account_index", strconv.FormatUint(pool.AccountIndex, 10)),
-		sdk.NewAttribute("status", strconv.FormatUint(uint64(msg.NewStatus), 10)),
-		sdk.NewAttribute("operator_fee", strconv.FormatUint(uint64(msg.NewOperatorFee), 10)),
+		types.EventTypeUpdatePublicPool,
+		sdk.NewAttribute(types.AttributeKeyPoolAccountIndex, strconv.FormatUint(pool.AccountIndex, 10)),
+		sdk.NewAttribute(types.AttributeKeyStatus, strconv.FormatUint(uint64(msg.NewStatus), 10)),
+		sdk.NewAttribute(types.AttributeKeyOperatorFee, strconv.FormatUint(uint64(msg.NewOperatorFee), 10)),
 	))
 	return &types.MsgUpdatePublicPoolResponse{}, nil
 }
@@ -420,11 +420,11 @@ func (m msgServer) MintShares(ctx context.Context, msg *types.MsgMintShares) (*t
 	}
 
 	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
-		"mint_shares",
-		sdk.NewAttribute("pool_account_index", strconv.FormatUint(pool.AccountIndex, 10)),
-		sdk.NewAttribute("sender_master", strconv.FormatUint(master.AccountIndex, 10)),
-		sdk.NewAttribute("share_amount", shareAmount.String()),
-		sdk.NewAttribute("principal_amount", usdc.String()),
+		types.EventTypeMintShares,
+		sdk.NewAttribute(types.AttributeKeyPoolAccountIndex, strconv.FormatUint(pool.AccountIndex, 10)),
+		sdk.NewAttribute(types.AttributeKeySenderMaster, strconv.FormatUint(master.AccountIndex, 10)),
+		sdk.NewAttribute(types.AttributeKeyShareAmount, shareAmount.String()),
+		sdk.NewAttribute(types.AttributeKeyPrincipalAmount, usdc.String()),
 	))
 	return &types.MsgMintSharesResponse{ShareAmount: shareAmount}, nil
 }
@@ -663,12 +663,12 @@ func (m msgServer) burnSharesCore(
 	}
 
 	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
-		"burn_shares",
-		sdk.NewAttribute("pool_account_index", strconv.FormatUint(poolIdx, 10)),
-		sdk.NewAttribute("depositor", strconv.FormatUint(depositor.AccountIndex, 10)),
-		sdk.NewAttribute("share_amount", shareAmount.String()),
-		sdk.NewAttribute("operator_fee_shares", operatorFeeShares.String()),
-		sdk.NewAttribute("usdc_amount", deliveredUSDC.String()),
+		types.EventTypeBurnShares,
+		sdk.NewAttribute(types.AttributeKeyPoolAccountIndex, strconv.FormatUint(poolIdx, 10)),
+		sdk.NewAttribute(types.AttributeKeyDepositor, strconv.FormatUint(depositor.AccountIndex, 10)),
+		sdk.NewAttribute(types.AttributeKeyShareAmount, shareAmount.String()),
+		sdk.NewAttribute(types.AttributeKeyOperatorFeeShares, operatorFeeShares.String()),
+		sdk.NewAttribute(types.AttributeKeyUsdcAmount, deliveredUSDC.String()),
 	))
 	return &types.MsgBurnSharesResponse{UsdcAmount: deliveredUSDC.Uint64()}, nil
 }
@@ -730,11 +730,11 @@ func (m msgServer) StrategyTransfer(ctx context.Context, msg *types.MsgStrategyT
 	}
 
 	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
-		"strategy_transfer",
-		sdk.NewAttribute("pool_account_index", strconv.FormatUint(pool.AccountIndex, 10)),
-		sdk.NewAttribute("from", strconv.FormatUint(uint64(msg.FromStrategy), 10)),
-		sdk.NewAttribute("to", strconv.FormatUint(uint64(msg.ToStrategy), 10)),
-		sdk.NewAttribute("amount", msg.Amount.String()),
+		types.EventTypeStrategyTransfer,
+		sdk.NewAttribute(types.AttributeKeyPoolAccountIndex, strconv.FormatUint(pool.AccountIndex, 10)),
+		sdk.NewAttribute(types.AttributeKeyFrom, strconv.FormatUint(uint64(msg.FromStrategy), 10)),
+		sdk.NewAttribute(types.AttributeKeyTo, strconv.FormatUint(uint64(msg.ToStrategy), 10)),
+		sdk.NewAttribute(types.AttributeKeyAmount, msg.Amount.String()),
 	))
 	return &types.MsgStrategyTransferResponse{}, nil
 }

@@ -80,11 +80,11 @@ func (m msgServer) Deposit(ctx context.Context, msg *types.MsgDeposit) (*types.M
 	}
 
 	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
-		"deposit",
-		sdk.NewAttribute("account_index", strconv.FormatUint(acc.AccountIndex, 10)),
-		sdk.NewAttribute("asset_index", strconv.FormatUint(uint64(msg.AssetIndex), 10)),
-		sdk.NewAttribute("amount", strconv.FormatUint(msg.Amount, 10)),
-		sdk.NewAttribute("route", strconv.FormatUint(uint64(msg.RouteType), 10)),
+		types.EventTypeDeposit,
+		sdk.NewAttribute(types.AttributeKeyAccountIndex, strconv.FormatUint(acc.AccountIndex, 10)),
+		sdk.NewAttribute(types.AttributeKeyAssetIndex, strconv.FormatUint(uint64(msg.AssetIndex), 10)),
+		sdk.NewAttribute(types.AttributeKeyAmount, strconv.FormatUint(msg.Amount, 10)),
+		sdk.NewAttribute(types.AttributeKeyRoute, strconv.FormatUint(uint64(msg.RouteType), 10)),
 	))
 
 	return &types.MsgDepositResponse{AccountIndex: acc.AccountIndex}, nil

@@ -2,10 +2,12 @@ package keeper
 
 import (
 	"context"
+	"strconv"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
+	"github.com/perpdex/perpdex-l1/x/market/types"
 )
 
 // EndBlocker scans the expiry index and marks expired markets as EXPIRED. It
@@ -34,24 +36,10 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 				sdk.UnwrapSDKContext(ctx).Logger().Error("market: apply exit failed", "market", m.MarketIndex, "err", err)
 			}
 			sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
-				"market_expired",
-				sdk.NewAttribute("market_index", uintToStr(uint64(m.MarketIndex))),
+				types.EventTypeMarketExpired,
+				sdk.NewAttribute(types.AttributeKeyMarketIndex, strconv.FormatUint(uint64(m.MarketIndex), 10)),
 			))
 		}
 	}
 	return nil
-}
-
-func uintToStr(u uint64) string {
-	if u == 0 {
-		return "0"
-	}
-	var b [20]byte
-	i := len(b)
-	for u > 0 {
-		i--
-		b[i] = byte('0' + u%10)
-		u /= 10
-	}
-	return string(b[i:])
 }

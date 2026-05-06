@@ -2,10 +2,12 @@ package keeper
 
 import (
 	"context"
+	"strconv"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
+	"github.com/perpdex/perpdex-l1/x/matching/types"
 	orderbooktypes "github.com/perpdex/perpdex-l1/x/orderbook/types"
 	tradekeeper "github.com/perpdex/perpdex-l1/x/trade/keeper"
 	tradetypes "github.com/perpdex/perpdex-l1/x/trade/types"
@@ -200,10 +202,10 @@ func (k Keeper) matchOrder(ctx context.Context, taker *orderbooktypes.Order, max
 			totalFilled += tradeBase
 			fills++
 			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
-				"order_fill",
-				sdk.NewAttribute("market_index", uintToStr(uint64(taker.MarketIndex))),
-				sdk.NewAttribute("price", uintToStr(uint64(best.Price))),
-				sdk.NewAttribute("base", uintToStr(tradeBase)),
+				types.EventTypeOrderFill,
+				sdk.NewAttribute(types.AttributeKeyMarketIndex, strconv.FormatUint(uint64(taker.MarketIndex), 10)),
+				sdk.NewAttribute(types.AttributeKeyPrice, strconv.FormatUint(uint64(best.Price), 10)),
+				sdk.NewAttribute(types.AttributeKeyBase, strconv.FormatUint(tradeBase, 10)),
 			))
 		case tradetypes.IsRecoverableMakerError(applyErr):
 			// Discard cache, evict the bad maker on the OUTER ctx
@@ -213,10 +215,10 @@ func (k Keeper) matchOrder(ctx context.Context, taker *orderbooktypes.Order, max
 				return totalFilled, perptypes.OrderStatusCancelled, err
 			}
 			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
-				"maker_evicted_bad_state",
-				sdk.NewAttribute("market_index", uintToStr(uint64(taker.MarketIndex))),
-				sdk.NewAttribute("order_index", uintToStr(best.OrderIndex)),
-				sdk.NewAttribute("reason", applyErr.Error()),
+				types.EventTypeMakerEvictedBadState,
+				sdk.NewAttribute(types.AttributeKeyMarketIndex, strconv.FormatUint(uint64(taker.MarketIndex), 10)),
+				sdk.NewAttribute(types.AttributeKeyOrderIndex, strconv.FormatUint(best.OrderIndex, 10)),
+				sdk.NewAttribute(types.AttributeKeyReason, applyErr.Error()),
 			))
 			continue
 		case tradetypes.IsRecoverableTakerError(applyErr):
@@ -229,9 +231,9 @@ func (k Keeper) matchOrder(ctx context.Context, taker *orderbooktypes.Order, max
 			// `cancel_taker_order` pops the taker register
 			// regardless of TIF.
 			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
-				"taker_aborted_bad_state",
-				sdk.NewAttribute("market_index", uintToStr(uint64(taker.MarketIndex))),
-				sdk.NewAttribute("reason", applyErr.Error()),
+				types.EventTypeTakerAbortedBadState,
+				sdk.NewAttribute(types.AttributeKeyMarketIndex, strconv.FormatUint(uint64(taker.MarketIndex), 10)),
+				sdk.NewAttribute(types.AttributeKeyReason, applyErr.Error()),
 			))
 			return totalFilled, perptypes.OrderStatusCancelled, nil
 		default:
@@ -247,18 +249,4 @@ func (k Keeper) matchOrder(ctx context.Context, taker *orderbooktypes.Order, max
 		return totalFilled, perptypes.OrderStatusPartiallyFilled, nil
 	}
 	return totalFilled, perptypes.OrderStatusOpen, nil
-}
-
-func uintToStr(u uint64) string {
-	if u == 0 {
-		return "0"
-	}
-	var b [20]byte
-	i := len(b)
-	for u > 0 {
-		i--
-		b[i] = byte('0' + u%10)
-		u /= 10
-	}
-	return string(b[i:])
 }
