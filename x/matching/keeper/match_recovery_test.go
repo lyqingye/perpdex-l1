@@ -311,5 +311,5 @@ func TestMatchOrder_BadMakerCachePreservesUnfailedFills(t *testing.T) {
 	// stubTrade only records SUCCESSFUL fills (the failing fill never
 	// hits the underlying recorder because injectingTrade short-
 	// circuits), so we should see exactly two recorded fills.
-	require.Len(t, inj.stubTrade.fills, 2)
+	require.Len(t, inj.fills, 2)
 }
