@@ -52,9 +52,9 @@ func (k Keeper) BeginBlocker(ctx context.Context) error {
 		}
 		if err := k.processMarketSample(ctx, m.MarketIndex, now, params); err != nil {
 			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
-				"funding_sample_error",
-				sdk.NewAttribute("market_index", strconv.FormatUint(uint64(m.MarketIndex), 10)),
-				sdk.NewAttribute("err", err.Error()),
+				types.EventTypeFundingSampleError,
+				sdk.NewAttribute(types.AttributeKeyMarketIndex, strconv.FormatUint(uint64(m.MarketIndex), 10)),
+				sdk.NewAttribute(types.AttributeKeyErr, err.Error()),
 			))
 			if firstErr == nil {
 				firstErr = err
@@ -182,9 +182,9 @@ func (k Keeper) SettleAllMarkets(ctx context.Context, params types.ParamsAlias) 
 		}
 		if err := k.settleMarket(ctx, m.MarketIndex, params); err != nil {
 			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
-				"funding_settle_error",
-				sdk.NewAttribute("market_index", strconv.FormatUint(uint64(m.MarketIndex), 10)),
-				sdk.NewAttribute("err", err.Error()),
+				types.EventTypeFundingSettleError,
+				sdk.NewAttribute(types.AttributeKeyMarketIndex, strconv.FormatUint(uint64(m.MarketIndex), 10)),
+				sdk.NewAttribute(types.AttributeKeyErr, err.Error()),
 			))
 			if firstErr == nil {
 				firstErr = err

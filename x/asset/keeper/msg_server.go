@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"strconv"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
@@ -77,9 +78,9 @@ func (m msgServer) RegisterAsset(ctx context.Context, msg *types.MsgRegisterAsse
 	}
 
 	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
-		"asset_registered",
-		sdk.NewAttribute("asset_index", uintToString(uint64(idx))),
-		sdk.NewAttribute("denom", msg.Denom),
+		types.EventTypeAssetRegistered,
+		sdk.NewAttribute(types.AttributeKeyAssetIndex, strconv.FormatUint(uint64(idx), 10)),
+		sdk.NewAttribute(types.AttributeKeyDenom, msg.Denom),
 	))
 
 	return &types.MsgRegisterAssetResponse{AssetIndex: uint32(idx)}, nil
@@ -113,18 +114,4 @@ func (m msgServer) UpdateParams(ctx context.Context, msg *types.MsgUpdateParams)
 		return nil, err
 	}
 	return &types.MsgUpdateParamsResponse{}, nil
-}
-
-func uintToString(u uint64) string {
-	if u == 0 {
-		return "0"
-	}
-	var b [20]byte
-	i := len(b)
-	for u > 0 {
-		i--
-		b[i] = byte('0' + u%10)
-		u /= 10
-	}
-	return string(b[i:])
 }

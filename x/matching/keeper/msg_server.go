@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"strconv"
 
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -249,12 +250,12 @@ func (m msgServer) CreateOrder(ctx context.Context, msg *types.MsgCreateOrder) (
 		if avail.LT(lockAmt) {
 			order.Status = perptypes.OrderStatusCancelled
 			sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
-				"order_residue_unlockable",
-				sdk.NewAttribute("market_index", uintToStr(uint64(order.MarketIndex))),
-				sdk.NewAttribute("order_index", uintToStr(order.OrderIndex)),
-				sdk.NewAttribute("asset_id", uintToStr(uint64(assetID))),
-				sdk.NewAttribute("available", avail.String()),
-				sdk.NewAttribute("required", lockAmt.String()),
+				types.EventTypeOrderResidueUnlockable,
+				sdk.NewAttribute(types.AttributeKeyMarketIndex, strconv.FormatUint(uint64(order.MarketIndex), 10)),
+				sdk.NewAttribute(types.AttributeKeyOrderIndex, strconv.FormatUint(order.OrderIndex, 10)),
+				sdk.NewAttribute(types.AttributeKeyAssetID, strconv.FormatUint(uint64(assetID), 10)),
+				sdk.NewAttribute(types.AttributeKeyAvailable, avail.String()),
+				sdk.NewAttribute(types.AttributeKeyRequired, lockAmt.String()),
 			))
 		}
 	}

@@ -173,11 +173,11 @@ func (k Keeper) Liquidate(ctx context.Context, victim uint64, marketIdx uint32, 
 		return err
 	}
 	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
-		"liquidate",
-		sdk.NewAttribute("victim", strconv.FormatUint(victim, 10)),
-		sdk.NewAttribute("market_index", strconv.FormatUint(uint64(marketIdx), 10)),
-		sdk.NewAttribute("base_amount", strconv.FormatUint(baseAmount, 10)),
-		sdk.NewAttribute("zero_price", strconv.FormatUint(uint64(zeroPrice), 10)),
+		types.EventTypeLiquidate,
+		sdk.NewAttribute(types.AttributeKeyVictim, strconv.FormatUint(victim, 10)),
+		sdk.NewAttribute(types.AttributeKeyMarketIndex, strconv.FormatUint(uint64(marketIdx), 10)),
+		sdk.NewAttribute(types.AttributeKeyBaseAmount, strconv.FormatUint(baseAmount, 10)),
+		sdk.NewAttribute(types.AttributeKeyZeroPrice, strconv.FormatUint(uint64(zeroPrice), 10)),
 	))
 	return nil
 }
@@ -374,10 +374,10 @@ func (k Keeper) ApplyExitPosition(ctx context.Context, marketIdx uint32) error {
 		return err
 	}
 	sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
-		"market_exit_position",
-		sdk.NewAttribute("market_index", strconv.FormatUint(uint64(marketIdx), 10)),
-		sdk.NewAttribute("close_price", strconv.FormatUint(uint64(closePrice), 10)),
-		sdk.NewAttribute("closed_positions", strconv.FormatUint(uint64(closed), 10)),
+		types.EventTypeMarketExitPosition,
+		sdk.NewAttribute(types.AttributeKeyMarketIndex, strconv.FormatUint(uint64(marketIdx), 10)),
+		sdk.NewAttribute(types.AttributeKeyClosePrice, strconv.FormatUint(uint64(closePrice), 10)),
+		sdk.NewAttribute(types.AttributeKeyClosedPositions, strconv.FormatUint(uint64(closed), 10)),
 	))
 	return nil
 }
@@ -514,9 +514,9 @@ func (k Keeper) processAccount(
 	}
 	if crossStatus != perptypes.HealthHealthy {
 		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
-			"liquidation_flagged",
-			sdk.NewAttribute("account_index", strconv.FormatUint(a.AccountIndex, 10)),
-			sdk.NewAttribute("status", strconv.FormatUint(uint64(crossStatus), 10)),
+			types.EventTypeLiquidationFlagged,
+			sdk.NewAttribute(types.AttributeKeyAccountIndex, strconv.FormatUint(a.AccountIndex, 10)),
+			sdk.NewAttribute(types.AttributeKeyStatus, strconv.FormatUint(uint64(crossStatus), 10)),
 		))
 	}
 	return nil

@@ -10,6 +10,7 @@ import (
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
 	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
+	"github.com/perpdex/perpdex-l1/x/liquidation/types"
 	tradekeeper "github.com/perpdex/perpdex-l1/x/trade/keeper"
 )
 
@@ -236,14 +237,14 @@ func (k Keeper) autoADL(
 			continue
 		}
 		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
-			"auto_adl",
-			sdk.NewAttribute("victim", strconv.FormatUint(victim, 10)),
-			sdk.NewAttribute("market_index", strconv.FormatUint(uint64(marketIdx), 10)),
-			sdk.NewAttribute("counterparty", strconv.FormatUint(c.AccountIndex, 10)),
-			sdk.NewAttribute("base_amount", strconv.FormatUint(size.Uint64(), 10)),
-			sdk.NewAttribute("price", strconv.FormatUint(uint64(settlePrice), 10)),
-			sdk.NewAttribute("victim_zero_price", strconv.FormatUint(uint64(victimZP), 10)),
-			sdk.NewAttribute("cand_zero_price", strconv.FormatUint(uint64(c.ZeroPrice), 10)),
+			types.EventTypeAutoADL,
+			sdk.NewAttribute(types.AttributeKeyVictim, strconv.FormatUint(victim, 10)),
+			sdk.NewAttribute(types.AttributeKeyMarketIndex, strconv.FormatUint(uint64(marketIdx), 10)),
+			sdk.NewAttribute(types.AttributeKeyCounterparty, strconv.FormatUint(c.AccountIndex, 10)),
+			sdk.NewAttribute(types.AttributeKeyBaseAmount, strconv.FormatUint(size.Uint64(), 10)),
+			sdk.NewAttribute(types.AttributeKeyPrice, strconv.FormatUint(uint64(settlePrice), 10)),
+			sdk.NewAttribute(types.AttributeKeyVictimZeroPrice, strconv.FormatUint(uint64(victimZP), 10)),
+			sdk.NewAttribute(types.AttributeKeyCandZeroPrice, strconv.FormatUint(uint64(c.ZeroPrice), 10)),
 		))
 		remaining = remaining.Sub(size)
 		*attemptsLeft--

@@ -2,10 +2,12 @@ package keeper
 
 import (
 	"context"
+	"strconv"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
+	"github.com/perpdex/perpdex-l1/x/matching/types"
 )
 
 // EndBlocker iterates every order currently parked in the trigger index and
@@ -26,9 +28,9 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 		px, err := k.oracleKeeper.GetPrice(ctx, market)
 		if err != nil {
 			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
-				"trigger_oracle_error",
-				sdk.NewAttribute("market_index", uintToStr(uint64(market))),
-				sdk.NewAttribute("err", err.Error()),
+				types.EventTypeTriggerOracleError,
+				sdk.NewAttribute(types.AttributeKeyMarketIndex, strconv.FormatUint(uint64(market), 10)),
+				sdk.NewAttribute(types.AttributeKeyErr, err.Error()),
 			))
 			return false
 		}
@@ -73,9 +75,9 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 		o, err := k.bookKeeper.ActivateTrigger(ctx, t.orderIndex)
 		if err != nil {
 			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
-				"trigger_dequeue_error",
-				sdk.NewAttribute("order_index", uintToStr(t.orderIndex)),
-				sdk.NewAttribute("err", err.Error()),
+				types.EventTypeTriggerDequeueError,
+				sdk.NewAttribute(types.AttributeKeyOrderIndex, strconv.FormatUint(t.orderIndex, 10)),
+				sdk.NewAttribute(types.AttributeKeyErr, err.Error()),
 			))
 			continue
 		}
@@ -109,9 +111,9 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 				_ = cerr
 			}
 			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
-				"trigger_match_error",
-				sdk.NewAttribute("order_index", uintToStr(o.OrderIndex)),
-				sdk.NewAttribute("err", err.Error()),
+				types.EventTypeTriggerMatchError,
+				sdk.NewAttribute(types.AttributeKeyOrderIndex, strconv.FormatUint(o.OrderIndex, 10)),
+				sdk.NewAttribute(types.AttributeKeyErr, err.Error()),
 			))
 			continue
 		}
@@ -124,9 +126,9 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 		}
 		if err := k.bookKeeper.OpenOrder(ctx, o, false); err != nil {
 			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
-				"trigger_insert_error",
-				sdk.NewAttribute("order_index", uintToStr(o.OrderIndex)),
-				sdk.NewAttribute("err", err.Error()),
+				types.EventTypeTriggerInsertError,
+				sdk.NewAttribute(types.AttributeKeyOrderIndex, strconv.FormatUint(o.OrderIndex, 10)),
+				sdk.NewAttribute(types.AttributeKeyErr, err.Error()),
 			))
 		}
 	}
