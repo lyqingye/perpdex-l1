@@ -11,17 +11,17 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 		return err
 	}
 	for _, a := range gs.Accounts {
-		if err := k.SetAccount(ctx, a); err != nil {
+		if err := k.setAccount(ctx, a); err != nil {
 			return err
 		}
 	}
 	for _, aa := range gs.AccountAssets {
-		if err := k.SetAccountAsset(ctx, aa); err != nil {
+		if err := k.setAccountAsset(ctx, aa); err != nil {
 			return err
 		}
 	}
 	for _, p := range gs.AccountPositions {
-		if err := k.SetPosition(ctx, p); err != nil {
+		if err := k.setPosition(ctx, p); err != nil {
 			return err
 		}
 	}

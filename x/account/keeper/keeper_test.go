@@ -20,6 +20,7 @@ import (
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
 	accountkeeper "github.com/perpdex/perpdex-l1/x/account/keeper"
+	"github.com/perpdex/perpdex-l1/x/account/keeper/keepertest"
 	"github.com/perpdex/perpdex-l1/x/account/types"
 	assetkeeper "github.com/perpdex/perpdex-l1/x/asset/keeper"
 	assettypes "github.com/perpdex/perpdex-l1/x/asset/types"
@@ -193,7 +194,7 @@ func TestWithdraw_RejectsPoolAccount(t *testing.T) {
 		AccountType:  perptypes.PublicPoolAccountType,
 		Collateral:   math.NewInt(1_000_000),
 	}
-	require.NoError(t, env.ak.SetAccount(env.ctx, pool))
+	require.NoError(t, keepertest.SetAccountForTest(env.ctx, env.ak, pool))
 
 	_, err := srv.Withdraw(env.ctx, &types.MsgWithdraw{
 		Sender:       owner,
@@ -218,7 +219,7 @@ func TestTransfer_RejectsMissingDestination(t *testing.T) {
 		AccountType:  perptypes.MasterAccountType,
 		Collateral:   math.NewInt(10_000),
 	}
-	require.NoError(t, env.ak.SetAccount(env.ctx, src))
+	require.NoError(t, keepertest.SetAccountForTest(env.ctx, env.ak, src))
 
 	_, err := srv.Transfer(env.ctx, &types.MsgTransfer{
 		Sender:           owner,
@@ -239,7 +240,7 @@ func TestUpdateLeverage_RejectsBelowMarketMinIMF(t *testing.T) {
 	srv := accountkeeper.NewMsgServerImpl(env.ak)
 
 	owner := "px1qv9pzxqlyckngw6zf9g9whn9d3eh4qvgsxc8cx"
-	require.NoError(t, env.ak.SetAccount(env.ctx, types.Account{
+	require.NoError(t, keepertest.SetAccountForTest(env.ctx, env.ak, types.Account{
 		AccountIndex: 888,
 		OwnerAddress: owner,
 		AccountType:  perptypes.MasterAccountType,

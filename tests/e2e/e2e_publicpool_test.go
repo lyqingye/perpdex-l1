@@ -6,6 +6,7 @@ import (
 	"cosmossdk.io/math"
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
+	accountkeepertest "github.com/perpdex/perpdex-l1/x/account/keeper/keepertest"
 	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
 	matchingtypes "github.com/perpdex/perpdex-l1/x/matching/types"
 
@@ -221,7 +222,7 @@ func (s *PublicPoolSuite) TestStrategyTransfer_OnlyIF() {
 	insf, err := s.App.PerpAccountKeeper.GetAccount(s.Ctx, perptypes.InsuranceFundOperatorAccountIdx)
 	s.Require().NoError(err)
 	insf.PublicPoolInfo.Strategies[0] = math.NewInt(100)
-	s.Require().NoError(s.App.PerpAccountKeeper.SetAccount(s.Ctx, insf))
+	s.Require().NoError(accountkeepertest.SetAccountForTest(s.Ctx, s.App.PerpAccountKeeper, insf))
 
 	s.StrategyTransfer(s.GovAddress.String(),
 		perptypes.InsuranceFundOperatorAccountIdx, 0, 1, math.NewInt(40))
@@ -249,13 +250,13 @@ func (s *PublicPoolSuite) TestForceBurnShares() {
 		PrincipalAmount: math.NewInt(500_000),
 		EntryTimestamp:  s.BlockTime().UnixMilli(),
 	}}
-	s.Require().NoError(s.App.PerpAccountKeeper.SetAccount(s.Ctx, master))
+	s.Require().NoError(accountkeepertest.SetAccountForTest(s.Ctx, s.App.PerpAccountKeeper, master))
 
 	insf, err := s.App.PerpAccountKeeper.GetAccount(s.Ctx, insfIdx)
 	s.Require().NoError(err)
 	insf.PublicPoolInfo.TotalShares = math.NewInt(1500)
 	insf.PublicPoolInfo.OperatorShares = math.NewInt(1000)
-	s.Require().NoError(s.App.PerpAccountKeeper.SetAccount(s.Ctx, insf))
+	s.Require().NoError(accountkeepertest.SetAccountForTest(s.Ctx, s.App.PerpAccountKeeper, insf))
 	s.Require().NoError(s.App.PerpAccountKeeper.AddCollateral(
 		s.Ctx, insfIdx, math.NewInt(1_500_000_000)))
 

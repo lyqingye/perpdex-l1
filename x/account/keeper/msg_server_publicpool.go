@@ -79,26 +79,16 @@ func (m msgServer) CreatePublicPool(ctx context.Context, msg *types.MsgCreatePub
 		)
 	}
 
-	// Allocate pool sub-account index.
-	idx, err := m.allocatePoolSubAccountIndex(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	now := sdk.UnwrapSDKContext(ctx).BlockTime().UnixMilli()
 	zeros := make([]math.Int, perptypes.NbStrategies)
 	for i := range zeros {
 		zeros[i] = math.ZeroInt()
 	}
-	pool := types.Account{
-		AccountIndex:       idx,
-		MasterAccountIndex: master.AccountIndex,
-		OwnerAddress:       master.OwnerAddress,
+	pool, err := m.CreatePublicPoolAccount(ctx, PublicPoolAccountParams{
+		Master:             master,
 		AccountType:        resolvedType,
 		AccountTradingMode: resolvedMode,
-		Collateral:         seedCollat,
-		CreatedAt:          now,
-		PublicPoolInfo: &types.PublicPoolInfo{
+		SeedCollateral:     seedCollat,
+		Info: &types.PublicPoolInfo{
 			Status:               perptypes.PublicPoolStatusActive,
 			OperatorFee:          msg.OperatorFee,
 			MinOperatorShareRate: msg.MinOperatorShareRate,
@@ -106,8 +96,8 @@ func (m msgServer) CreatePublicPool(ctx context.Context, msg *types.MsgCreatePub
 			OperatorShares:       math.NewIntFromUint64(msg.InitialTotalShares),
 			Strategies:           zeros,
 		},
-	}
-	if err := m.SetAccount(ctx, pool); err != nil {
+	})
+	if err != nil {
 		return nil, err
 	}
 	if err := m.AddCollateral(ctx, master.AccountIndex, seedCollat.Neg()); err != nil {
@@ -116,33 +106,12 @@ func (m msgServer) CreatePublicPool(ctx context.Context, msg *types.MsgCreatePub
 
 	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
 		types.EventTypeCreatePublicPool,
-		sdk.NewAttribute(types.AttributeKeyPoolAccountIndex, strconv.FormatUint(idx, 10)),
+		sdk.NewAttribute(types.AttributeKeyPoolAccountIndex, strconv.FormatUint(pool.AccountIndex, 10)),
 		sdk.NewAttribute(types.AttributeKeyMasterAccountIndex, strconv.FormatUint(master.AccountIndex, 10)),
 		sdk.NewAttribute(types.AttributeKeyAccountType, strconv.FormatUint(uint64(resolvedType), 10)),
 		sdk.NewAttribute(types.AttributeKeyInitialTotalShares, strconv.FormatUint(msg.InitialTotalShares, 10)),
 	))
-	return &types.MsgCreatePublicPoolResponse{PoolAccountIndex: idx}, nil
-}
-
-// allocatePoolSubAccountIndex pulls the next sub-account index, skipping
-// any reserved indexes. Mirrors CreateSubAccount's allocation logic
-// without the master-type guard so that the IF master (which carries
-// nil owner) can still spawn sub-accounts.
-func (m msgServer) allocatePoolSubAccountIndex(ctx context.Context) (uint64, error) {
-	idx, err := m.NextSubIndex.Next(ctx)
-	if err != nil {
-		return 0, err
-	}
-	for idx < perptypes.MinSubAccountIndex {
-		idx, err = m.NextSubIndex.Next(ctx)
-		if err != nil {
-			return 0, err
-		}
-	}
-	if idx > perptypes.MaxAccountIndex {
-		return 0, types.ErrAccountIndexExceed.Wrapf("sub idx=%d", idx)
-	}
-	return idx, nil
+	return &types.MsgCreatePublicPoolResponse{PoolAccountIndex: pool.AccountIndex}, nil
 }
 
 // ---------- UpdatePublicPool ----------
@@ -198,10 +167,12 @@ func (m msgServer) UpdatePublicPool(ctx context.Context, msg *types.MsgUpdatePub
 		}
 	}
 
-	pool.PublicPoolInfo.Status = msg.NewStatus
-	pool.PublicPoolInfo.OperatorFee = msg.NewOperatorFee
-	pool.PublicPoolInfo.MinOperatorShareRate = msg.NewMinOperatorShareRate
-	if err := m.SetAccount(ctx, pool); err != nil {
+	if _, err := m.UpdatePublicPoolInfo(ctx, pool.AccountIndex, func(info *types.PublicPoolInfo) error {
+		info.Status = msg.NewStatus
+		info.OperatorFee = msg.NewOperatorFee
+		info.MinOperatorShareRate = msg.NewMinOperatorShareRate
+		return nil
+	}); err != nil {
 		return nil, err
 	}
 
@@ -372,49 +343,24 @@ func (m msgServer) MintShares(ctx context.Context, msg *types.MsgMintShares) (*t
 		return nil, err
 	}
 
-	// Re-fetch pool after collateral change to keep info in sync.
-	pool, err = m.GetAccount(ctx, pool.AccountIndex)
-	if err != nil {
-		return nil, err
-	}
-	info := pool.PublicPoolInfo
-	info.TotalShares = info.TotalShares.Add(shareAmount)
-	if isOperator {
-		info.OperatorShares = info.OperatorShares.Add(shareAmount)
-	} else {
+	if _, err := m.UpdatePublicPoolInfo(ctx, pool.AccountIndex, func(info *types.PublicPoolInfo) error {
+		info.TotalShares = info.TotalShares.Add(shareAmount)
+		if isOperator {
+			info.OperatorShares = info.OperatorShares.Add(shareAmount)
+			return nil
+		}
 		// Non-operator mint may not break min_operator_share_rate.
 		if !CheckMinOperatorShareRate(*info) {
-			return nil, types.ErrOperatorRateViolation
+			return types.ErrOperatorRateViolation
 		}
-	}
-	pool.PublicPoolInfo = info
-	if err := m.SetAccount(ctx, pool); err != nil {
+		return nil
+	}); err != nil {
 		return nil, err
 	}
 
-	// Update LP-side share entry on master row.
 	if !isOperator {
-		master, err = m.GetAccount(ctx, master.AccountIndex)
-		if err != nil {
-			return nil, err
-		}
 		now := sdk.UnwrapSDKContext(ctx).BlockTime().UnixMilli()
-		if i, ok := FindShareEntry(master, pool.AccountIndex); ok {
-			master.PublicPoolShares[i].ShareAmount = master.PublicPoolShares[i].ShareAmount.Add(shareAmount)
-			master.PublicPoolShares[i].PrincipalAmount = master.PublicPoolShares[i].PrincipalAmount.Add(usdc)
-			master.PublicPoolShares[i].EntryTimestamp = now
-		} else {
-			if uint32(len(master.PublicPoolShares)) >= uint32(perptypes.SharesListSize) {
-				return nil, types.ErrSharesListFull
-			}
-			master.PublicPoolShares = append(master.PublicPoolShares, types.PublicPoolShare{
-				PublicPoolIndex: pool.AccountIndex,
-				ShareAmount:     shareAmount,
-				PrincipalAmount: usdc,
-				EntryTimestamp:  now,
-			})
-		}
-		if err := m.SetAccount(ctx, master); err != nil {
+		if err := m.UpsertPublicPoolShare(ctx, master.AccountIndex, pool.AccountIndex, shareAmount, usdc, now); err != nil {
 			return nil, err
 		}
 	}
@@ -603,61 +549,41 @@ func (m msgServer) burnSharesCore(
 	}
 	deliveredCollat := deliveredUSDC.Mul(math.NewIntFromUint64(perptypes.USDCToCollateralMultiplier))
 
-	// Mutate pool.public_pool_info.
-	info.TotalShares = info.TotalShares.Sub(burnedShares)
-	if isOperator {
-		info.OperatorShares = info.OperatorShares.Sub(shareAmount)
-	} else {
-		// Non-frozen operator-rate invariant after a non-operator burn:
-		// the operator floor cannot have been violated since
-		// total_shares only decreased; still re-check defensively.
-		// Operator-fee shares are awarded to the operator.
-		info.OperatorShares = info.OperatorShares.Add(operatorFeeShares)
-	}
-	// Non-frozen pools must always respect the operator floor, including
-	// when an operator burn drove OperatorShares to zero (previously the
-	// IsPositive guard let that edge case bypass the check, letting the
-	// operator withdraw their skin-in-the-game entirely).
-	if !frozen && !CheckMinOperatorShareRate(*info) {
-		return nil, types.ErrOperatorRateViolation
+	// Mutate pool.public_pool_info via the cohesive helper. The
+	// callback runs before persistence so the operator-floor check
+	// can short-circuit the write on violation.
+	if _, err := m.UpdatePublicPoolInfo(ctx, poolIdx, func(info *types.PublicPoolInfo) error {
+		info.TotalShares = info.TotalShares.Sub(burnedShares)
+		if isOperator {
+			info.OperatorShares = info.OperatorShares.Sub(shareAmount)
+		} else {
+			// Non-frozen operator-rate invariant after a non-operator burn:
+			// the operator floor cannot have been violated since
+			// total_shares only decreased; still re-check defensively.
+			// Operator-fee shares are awarded to the operator.
+			info.OperatorShares = info.OperatorShares.Add(operatorFeeShares)
+		}
+		// Non-frozen pools must always respect the operator floor, including
+		// when an operator burn drove OperatorShares to zero (previously the
+		// IsPositive guard let that edge case bypass the check, letting the
+		// operator withdraw their skin-in-the-game entirely).
+		if !frozen && !CheckMinOperatorShareRate(*info) {
+			return types.ErrOperatorRateViolation
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
-	// Re-fetch & write pool with updated info + reduced collateral.
 	if err := m.AddCollateral(ctx, poolIdx, deliveredCollat.Neg()); err != nil {
 		return nil, err
 	}
-	pool, err = m.GetAccount(ctx, poolIdx)
-	if err != nil {
-		return nil, err
-	}
-	pool.PublicPoolInfo = info
-	if err := m.SetAccount(ctx, pool); err != nil {
-		return nil, err
-	}
-
-	// Credit depositor's master collateral.
 	if err := m.AddCollateral(ctx, depositor.AccountIndex, deliveredCollat); err != nil {
 		return nil, err
 	}
 
-	// Update depositor share entry / principal_amount.
 	if !isOperator {
-		depositor, err = m.GetAccount(ctx, depositor.AccountIndex)
-		if err != nil {
-			return nil, err
-		}
-		entryIdx, _ = FindShareEntry(depositor, poolIdx)
-		entry := depositor.PublicPoolShares[entryIdx]
-		// principal_delta = entry.principal * share_amount / owned_shares
-		principalDelta := entry.PrincipalAmount.Mul(shareAmount).Quo(entry.ShareAmount)
-		entry.ShareAmount = entry.ShareAmount.Sub(shareAmount)
-		entry.PrincipalAmount = entry.PrincipalAmount.Sub(principalDelta)
-		if entry.ShareAmount.IsZero() {
-			depositor.PublicPoolShares = append(depositor.PublicPoolShares[:entryIdx], depositor.PublicPoolShares[entryIdx+1:]...)
-		} else {
-			depositor.PublicPoolShares[entryIdx] = entry
-		}
-		if err := m.SetAccount(ctx, depositor); err != nil {
+		if err := m.ReducePublicPoolShare(ctx, depositor.AccountIndex, poolIdx, shareAmount); err != nil {
 			return nil, err
 		}
 	}
@@ -700,32 +626,34 @@ func (m msgServer) StrategyTransfer(ctx context.Context, msg *types.MsgStrategyT
 		msg.ToStrategy >= uint32(perptypes.NbStrategies) {
 		return nil, types.ErrInvalidStrategyIdx
 	}
-	if len(pool.PublicPoolInfo.Strategies) != perptypes.NbStrategies {
-		// Defensive: rebuild zeros if migration ever drifts the slot count.
-		fixed := make([]math.Int, perptypes.NbStrategies)
-		for i := range fixed {
-			fixed[i] = math.ZeroInt()
+	if _, err := m.UpdatePublicPoolInfo(ctx, pool.AccountIndex, func(info *types.PublicPoolInfo) error {
+		if len(info.Strategies) != perptypes.NbStrategies {
+			// Defensive: rebuild zeros if migration ever drifts the slot count.
+			fixed := make([]math.Int, perptypes.NbStrategies)
+			for i := range fixed {
+				fixed[i] = math.ZeroInt()
+			}
+			copy(fixed, info.Strategies)
+			info.Strategies = fixed
 		}
-		copy(fixed, pool.PublicPoolInfo.Strategies)
-		pool.PublicPoolInfo.Strategies = fixed
-	}
-	from := pool.PublicPoolInfo.Strategies[msg.FromStrategy]
-	if from.IsNil() {
-		from = math.ZeroInt()
-	}
-	if from.LT(msg.Amount) {
-		return nil, types.ErrInsufficientFunds.Wrapf(
-			"strategy[%d] has %s, need %s",
-			msg.FromStrategy, from.String(), msg.Amount.String(),
-		)
-	}
-	to := pool.PublicPoolInfo.Strategies[msg.ToStrategy]
-	if to.IsNil() {
-		to = math.ZeroInt()
-	}
-	pool.PublicPoolInfo.Strategies[msg.FromStrategy] = from.Sub(msg.Amount)
-	pool.PublicPoolInfo.Strategies[msg.ToStrategy] = to.Add(msg.Amount)
-	if err := m.SetAccount(ctx, pool); err != nil {
+		from := info.Strategies[msg.FromStrategy]
+		if from.IsNil() {
+			from = math.ZeroInt()
+		}
+		if from.LT(msg.Amount) {
+			return types.ErrInsufficientFunds.Wrapf(
+				"strategy[%d] has %s, need %s",
+				msg.FromStrategy, from.String(), msg.Amount.String(),
+			)
+		}
+		to := info.Strategies[msg.ToStrategy]
+		if to.IsNil() {
+			to = math.ZeroInt()
+		}
+		info.Strategies[msg.FromStrategy] = from.Sub(msg.Amount)
+		info.Strategies[msg.ToStrategy] = to.Add(msg.Amount)
+		return nil
+	}); err != nil {
 		return nil, err
 	}
 

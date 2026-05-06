@@ -378,70 +378,75 @@ var errPositionOutOfBounds = errors.New("trade: post-trade position out of bound
 // circuit; the caller wraps it into the appropriate maker / taker
 // sentinel.
 func (k Keeper) applyPositionChange(ctx context.Context, accountIdx uint64, marketIdx uint32, price uint32, baseAmount uint64, sign int64) (positionChangeResult, error) {
-	pos, err := k.accountKeeper.GetPosition(ctx, accountIdx, marketIdx)
+	var (
+		old         accounttypes.AccountPosition
+		curSize     math.Int
+		newSize     math.Int
+		realizedPnL = math.ZeroInt()
+	)
+
+	updated, err := k.accountKeeper.UpdatePosition(ctx, accountIdx, marketIdx, func(pos *accounttypes.AccountPosition) error {
+		old = clonePosition(*pos)
+		curSize = pos.Position
+		delta := math.NewIntFromUint64(baseAmount).MulRaw(sign)
+		newSize = curSize.Add(delta)
+
+		curEntryQuote := pos.EntryQuote
+		if curEntryQuote.IsNil() {
+			curEntryQuote = math.ZeroInt()
+		}
+		notional := math.NewIntFromUint64(baseAmount).Mul(math.NewIntFromUint64(uint64(price))).MulRaw(sign)
+
+		switch {
+		case curSize.IsZero():
+			// open new position
+			pos.EntryQuote = notional
+		case sameSign(curSize, delta):
+			// increase
+			pos.EntryQuote = curEntryQuote.Add(notional)
+		case newSize.IsZero() || sameSign(curSize, newSize):
+			// pure decrease (or close): realize partial PnL
+			realizedPnL = notional.Add(curEntryQuote.Mul(delta).Quo(curSize.Neg()))
+			// scale entry_quote proportionally to remaining size
+			if curSize.IsZero() {
+				pos.EntryQuote = math.ZeroInt()
+			} else {
+				pos.EntryQuote = curEntryQuote.Mul(newSize).Quo(curSize)
+			}
+		default:
+			// flip: close existing then open in opposite direction.
+			//
+			// Of the `baseAmount` units traded, `|curSize|` units close
+			// the existing position and the remainder opens the new one
+			// on the opposite side. The trade-side notional for the
+			// closing portion is `closeBase * price * sign` (signed by
+			// the trade direction, NOT the position direction): if the
+			// trade is a sell, the closing leg also sells, so the
+			// notional carries `sign = -1`. Using `-sign` here would
+			// produce a +/- mismatch between `closeNotional` and
+			// `curEntryQuote` and inflate `realized_pnl` by 2× the
+			// closing leg's notional — corrupting PnL realization on
+			// every flip.
+			closeBase := curSize.Abs()
+			closeNotional := closeBase.Mul(math.NewIntFromUint64(uint64(price))).MulRaw(sign)
+			realizedPnL = closeNotional.Add(curEntryQuote)
+			residual := delta.Add(curSize) // residual same sign as delta
+			residualNotional := residual.Mul(math.NewIntFromUint64(uint64(price)))
+			pos.EntryQuote = residualNotional
+		}
+		pos.Position = newSize
+
+		// Bounds check ahead of persistence so we never store a
+		// position the prover circuit would reject.
+		if !isWithinPositionBounds(pos.Position, pos.EntryQuote) {
+			return errPositionOutOfBounds
+		}
+		return nil
+	})
 	if err != nil {
 		return positionChangeResult{}, err
 	}
-	old := clonePosition(pos)
-	curSize := pos.Position
-	delta := math.NewIntFromUint64(baseAmount).MulRaw(sign)
-	newSize := curSize.Add(delta)
 
-	curEntryQuote := pos.EntryQuote
-	if curEntryQuote.IsNil() {
-		curEntryQuote = math.ZeroInt()
-	}
-	notional := math.NewIntFromUint64(baseAmount).Mul(math.NewIntFromUint64(uint64(price))).MulRaw(sign)
-
-	realizedPnL := math.ZeroInt()
-	switch {
-	case curSize.IsZero():
-		// open new position
-		pos.EntryQuote = notional
-	case sameSign(curSize, delta):
-		// increase
-		pos.EntryQuote = curEntryQuote.Add(notional)
-	case newSize.IsZero() || sameSign(curSize, newSize):
-		// pure decrease (or close): realize partial PnL
-		realizedPnL = notional.Add(curEntryQuote.Mul(delta).Quo(curSize.Neg()))
-		// scale entry_quote proportionally to remaining size
-		if curSize.IsZero() {
-			pos.EntryQuote = math.ZeroInt()
-		} else {
-			pos.EntryQuote = curEntryQuote.Mul(newSize).Quo(curSize)
-		}
-	default:
-		// flip: close existing then open in opposite direction.
-		//
-		// Of the `baseAmount` units traded, `|curSize|` units close
-		// the existing position and the remainder opens the new one
-		// on the opposite side. The trade-side notional for the
-		// closing portion is `closeBase * price * sign` (signed by
-		// the trade direction, NOT the position direction): if the
-		// trade is a sell, the closing leg also sells, so the
-		// notional carries `sign = -1`. Using `-sign` here would
-		// produce a +/- mismatch between `closeNotional` and
-		// `curEntryQuote` and inflate `realized_pnl` by 2× the
-		// closing leg's notional — corrupting PnL realization on
-		// every flip.
-		closeBase := curSize.Abs()
-		closeNotional := closeBase.Mul(math.NewIntFromUint64(uint64(price))).MulRaw(sign)
-		realizedPnL = closeNotional.Add(curEntryQuote)
-		residual := delta.Add(curSize) // residual same sign as delta
-		residualNotional := residual.Mul(math.NewIntFromUint64(uint64(price)))
-		pos.EntryQuote = residualNotional
-	}
-	pos.Position = newSize
-
-	// Bounds check ahead of `SetPosition` so we never persist a
-	// position the prover circuit would reject.
-	if !isWithinPositionBounds(pos.Position, pos.EntryQuote) {
-		return positionChangeResult{}, errPositionOutOfBounds
-	}
-
-	if err := k.accountKeeper.SetPosition(ctx, pos); err != nil {
-		return positionChangeResult{}, err
-	}
 	// OI contribution from this account: |new| - |old|. Positive when the
 	// account grows its exposure, negative when reducing / closing.
 	oiDelta := newSize.Abs().Sub(curSize.Abs())
@@ -449,7 +454,7 @@ func (k Keeper) applyPositionChange(ctx context.Context, accountIdx uint64, mark
 		AccountIdx:  accountIdx,
 		MarketIdx:   marketIdx,
 		Old:         old,
-		New:         clonePosition(pos),
+		New:         clonePosition(updated),
 		OIDelta:     oiDelta.Int64(),
 		SideFlipped: !curSize.IsZero() && !newSize.IsZero() && !sameSign(curSize, newSize),
 		RealizedPnL: realizedPnL,
@@ -482,11 +487,18 @@ func (k Keeper) applyPositionFinancials(ctx context.Context, res *positionChange
 	// in coming into the trade; flipping the routing on a position
 	// that just opened mid-fill would be inconsistent.
 	if res.Old.MarginMode == perptypes.IsolatedMargin {
-		if res.New.AllocatedMargin.IsNil() {
-			res.New.AllocatedMargin = math.ZeroInt()
+		updated, err := k.accountKeeper.UpdatePosition(ctx, res.AccountIdx, res.MarketIdx, func(p *accounttypes.AccountPosition) error {
+			if p.AllocatedMargin.IsNil() {
+				p.AllocatedMargin = math.ZeroInt()
+			}
+			p.AllocatedMargin = p.AllocatedMargin.Add(delta)
+			return nil
+		})
+		if err != nil {
+			return err
 		}
-		res.New.AllocatedMargin = res.New.AllocatedMargin.Add(delta)
-		return k.accountKeeper.SetPosition(ctx, res.New)
+		res.New = clonePosition(updated)
+		return nil
 	}
 	return k.accountKeeper.AddCollateral(ctx, res.AccountIdx, delta)
 }
@@ -500,11 +512,18 @@ func (k Keeper) debitFromMarginPool(ctx context.Context, res *positionChangeResu
 		return nil
 	}
 	if res.Old.MarginMode == perptypes.IsolatedMargin {
-		if res.New.AllocatedMargin.IsNil() {
-			res.New.AllocatedMargin = math.ZeroInt()
+		updated, err := k.accountKeeper.UpdatePosition(ctx, res.AccountIdx, res.MarketIdx, func(p *accounttypes.AccountPosition) error {
+			if p.AllocatedMargin.IsNil() {
+				p.AllocatedMargin = math.ZeroInt()
+			}
+			p.AllocatedMargin = p.AllocatedMargin.Sub(amount)
+			return nil
+		})
+		if err != nil {
+			return err
 		}
-		res.New.AllocatedMargin = res.New.AllocatedMargin.Sub(amount)
-		return k.accountKeeper.SetPosition(ctx, res.New)
+		res.New = clonePosition(updated)
+		return nil
 	}
 	return k.accountKeeper.AddCollateral(ctx, res.AccountIdx, amount.Neg())
 }
@@ -555,13 +574,17 @@ func (k Keeper) applyIsolatedMargin(ctx context.Context, res *positionChangeResu
 			}
 		}
 	}
-	if res.New.AllocatedMargin.IsNil() {
-		res.New.AllocatedMargin = math.ZeroInt()
-	}
-	res.New.AllocatedMargin = res.New.AllocatedMargin.Add(delta)
-	if err := k.accountKeeper.SetPosition(ctx, res.New); err != nil {
+	updated, err := k.accountKeeper.UpdatePosition(ctx, res.AccountIdx, res.MarketIdx, func(p *accounttypes.AccountPosition) error {
+		if p.AllocatedMargin.IsNil() {
+			p.AllocatedMargin = math.ZeroInt()
+		}
+		p.AllocatedMargin = p.AllocatedMargin.Add(delta)
+		return nil
+	})
+	if err != nil {
 		return err
 	}
+	res.New = clonePosition(updated)
 	return k.accountKeeper.AddCollateral(ctx, res.AccountIdx, delta.Neg())
 }
 
@@ -831,41 +854,13 @@ func (k Keeper) spotMakerDebit(ctx context.Context, from, to uint64, assetID uin
 	if amount.IsNegative() {
 		return fmt.Errorf("trade: transfer amount must be non-negative")
 	}
-	src, err := k.accountKeeper.GetAccountAsset(ctx, from, assetID)
-	if err != nil {
+	if err := k.accountKeeper.TransferAccountAssetBalance(ctx, from, to, assetID, amount, true /* drainLockedFirst */); err != nil {
+		if errors.Is(err, accounttypes.ErrInsufficientFunds) {
+			return sdkerrors.Wrapf(types.ErrMakerInsufficientBalance, "%s", err.Error())
+		}
 		return err
 	}
-	if src.Balance.IsNil() {
-		src.Balance = math.ZeroInt()
-	}
-	if src.LockedBalance.IsNil() {
-		src.LockedBalance = math.ZeroInt()
-	}
-	if src.Balance.LT(amount) {
-		return sdkerrors.Wrapf(types.ErrMakerInsufficientBalance,
-			"account %d asset %d have %s need %s",
-			from, assetID, src.Balance.String(), amount.String())
-	}
-	dst, err := k.accountKeeper.GetAccountAsset(ctx, to, assetID)
-	if err != nil {
-		return err
-	}
-	if dst.Balance.IsNil() {
-		dst.Balance = math.ZeroInt()
-	}
-	// Drain the lock first so a partial fill releases the proportional
-	// portion of resources reserved at place time.
-	lockedDrain := amount
-	if lockedDrain.GT(src.LockedBalance) {
-		lockedDrain = src.LockedBalance
-	}
-	src.LockedBalance = src.LockedBalance.Sub(lockedDrain)
-	src.Balance = src.Balance.Sub(amount)
-	dst.Balance = dst.Balance.Add(amount)
-	if err := k.accountKeeper.SetAccountAsset(ctx, src); err != nil {
-		return err
-	}
-	return k.accountKeeper.SetAccountAsset(ctx, dst)
+	return nil
 }
 
 // spotTakerDebit moves `amount` of `assetID` from `from` (a taker) to
@@ -879,34 +874,12 @@ func (k Keeper) spotTakerDebit(ctx context.Context, from, to uint64, assetID uin
 	if amount.IsNegative() {
 		return fmt.Errorf("trade: transfer amount must be non-negative")
 	}
-	src, err := k.accountKeeper.GetAccountAsset(ctx, from, assetID)
-	if err != nil {
+	if err := k.accountKeeper.TransferAccountAssetBalance(ctx, from, to, assetID, amount, false /* drainLockedFirst */); err != nil {
+		if errors.Is(err, accounttypes.ErrInsufficientFunds) {
+			return sdkerrors.Wrapf(types.ErrTakerInsufficientBalance, "%s", err.Error())
+		}
 		return err
 	}
-	if src.Balance.IsNil() {
-		src.Balance = math.ZeroInt()
-	}
-	available := src.Balance
-	if !src.LockedBalance.IsNil() {
-		available = available.Sub(src.LockedBalance)
-	}
-	if available.LT(amount) {
-		return sdkerrors.Wrapf(types.ErrTakerInsufficientBalance,
-			"account %d asset %d available %s need %s",
-			from, assetID, available.String(), amount.String())
-	}
-	dst, err := k.accountKeeper.GetAccountAsset(ctx, to, assetID)
-	if err != nil {
-		return err
-	}
-	if dst.Balance.IsNil() {
-		dst.Balance = math.ZeroInt()
-	}
-	src.Balance = src.Balance.Sub(amount)
-	dst.Balance = dst.Balance.Add(amount)
-	if err := k.accountKeeper.SetAccountAsset(ctx, src); err != nil {
-		return err
-	}
-	return k.accountKeeper.SetAccountAsset(ctx, dst)
+	return nil
 }
 

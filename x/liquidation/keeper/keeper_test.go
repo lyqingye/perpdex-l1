@@ -71,9 +71,38 @@ func (s *stubAccount) GetPosition(_ context.Context, acc uint64, mkt uint32) (ac
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}, nil
 }
+// SetPosition is the stub-only fixture helper used by the suite.
+// Production code never calls a generic position setter; the
+// liquidation AccountKeeper interface only exposes UpdatePosition.
 func (s *stubAccount) SetPosition(_ context.Context, p accounttypes.AccountPosition) error {
 	s.pos[[2]uint64{p.AccountIndex, uint64(p.MarketIndex)}] = p
 	return nil
+}
+
+// UpdatePosition mirrors the real keeper's RMW closure surface so
+// any future liquidation write driven through the keeper interface
+// keeps working in the in-memory stub. The current liquidation
+// keeper does not invoke it, but the AccountKeeper interface
+// requires it for parity with x/trade / x/funding.
+func (s *stubAccount) UpdatePosition(
+	ctx context.Context,
+	accIdx uint64,
+	marketIdx uint32,
+	mut func(*accounttypes.AccountPosition) error,
+) (accounttypes.AccountPosition, error) {
+	pos, err := s.GetPosition(ctx, accIdx, marketIdx)
+	if err != nil {
+		return accounttypes.AccountPosition{}, err
+	}
+	pos.AccountIndex = accIdx
+	pos.MarketIndex = marketIdx
+	if err := mut(&pos); err != nil {
+		return accounttypes.AccountPosition{}, err
+	}
+	if err := s.SetPosition(ctx, pos); err != nil {
+		return accounttypes.AccountPosition{}, err
+	}
+	return pos, nil
 }
 func (s *stubAccount) AddCollateral(_ context.Context, idx uint64, delta math.Int) error {
 	a := s.accounts[idx]

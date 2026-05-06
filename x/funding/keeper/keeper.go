@@ -11,6 +11,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/codec"
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
+	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
 	"github.com/perpdex/perpdex-l1/x/funding/types"
 )
 
@@ -77,10 +78,6 @@ func (k Keeper) Authority() string { return k.authority }
 // Returns nil on success and snapshots the new prefix sum on the position so
 // the next settlement only charges newly accumulated rounds.
 func (k Keeper) SettlePositionFunding(ctx context.Context, accountIndex uint64, marketIndex uint32) error {
-	pos, err := k.accountKeeper.GetPosition(ctx, accountIndex, marketIndex)
-	if err != nil {
-		return err
-	}
 	d, err := k.marketKeeper.GetMarketDetails(ctx, marketIndex)
 	if err != nil {
 		return err
@@ -88,17 +85,29 @@ func (k Keeper) SettlePositionFunding(ctx context.Context, accountIndex uint64, 
 	if d.FundingRatePrefixSum.IsNil() {
 		d.FundingRatePrefixSum = math.ZeroInt()
 	}
-	if pos.Position.IsZero() {
+	_, err = k.accountKeeper.UpdatePosition(ctx, accountIndex, marketIndex, func(pos *accounttypes.AccountPosition) error {
+		if pos.LastFundingRatePrefixSum.IsNil() {
+			pos.LastFundingRatePrefixSum = math.ZeroInt()
+		}
+		if pos.Position.IsNil() {
+			pos.Position = math.ZeroInt()
+		}
+		if pos.EntryQuote.IsNil() {
+			pos.EntryQuote = math.ZeroInt()
+		}
+		if pos.Position.IsZero() {
+			pos.LastFundingRatePrefixSum = d.FundingRatePrefixSum
+			return nil
+		}
+		delta := d.FundingRatePrefixSum.Sub(pos.LastFundingRatePrefixSum)
+		if delta.IsZero() {
+			pos.LastFundingRatePrefixSum = d.FundingRatePrefixSum
+			return nil
+		}
+		pay := pos.Position.Mul(delta).Quo(math.NewInt(perptypes.FundingRateTick))
+		pos.EntryQuote = pos.EntryQuote.Add(pay)
 		pos.LastFundingRatePrefixSum = d.FundingRatePrefixSum
-		return k.accountKeeper.SetPosition(ctx, pos)
-	}
-	delta := d.FundingRatePrefixSum.Sub(pos.LastFundingRatePrefixSum)
-	if delta.IsZero() {
-		pos.LastFundingRatePrefixSum = d.FundingRatePrefixSum
-		return k.accountKeeper.SetPosition(ctx, pos)
-	}
-	pay := pos.Position.Mul(delta).Quo(math.NewInt(perptypes.FundingRateTick))
-	pos.EntryQuote = pos.EntryQuote.Add(pay)
-	pos.LastFundingRatePrefixSum = d.FundingRatePrefixSum
-	return k.accountKeeper.SetPosition(ctx, pos)
+		return nil
+	})
+	return err
 }

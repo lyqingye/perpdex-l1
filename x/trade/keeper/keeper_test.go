@@ -47,6 +47,10 @@ func (s *stubAccount) GetAccount(_ context.Context, idx uint64) (accounttypes.Ac
 	return accounttypes.Account{AccountIndex: idx, Collateral: math.ZeroInt()}, nil
 }
 
+// SetAccount is kept on the stub solely as a fixture-setup convenience
+// for tests in this package. Production code never calls it: the
+// AccountKeeper interface in x/trade/types no longer surfaces a
+// generic Account setter, all writes go through cohesive mutators.
 func (s *stubAccount) SetAccount(_ context.Context, a accounttypes.Account) error {
 	cp := a
 	s.accounts[a.AccountIndex] = &cp
@@ -70,10 +74,35 @@ func (s *stubAccount) GetPosition(_ context.Context, acc uint64, mkt uint32) (ac
 	}, nil
 }
 
+// SetPosition is the stub-only fixture helper (see SetAccount).
 func (s *stubAccount) SetPosition(_ context.Context, p accounttypes.AccountPosition) error {
 	cp := p
 	s.pos[posKey(p.AccountIndex, p.MarketIndex)] = &cp
 	return nil
+}
+
+// UpdatePosition mirrors the real keeper's RMW closure surface so
+// the trade keeper (which now drives every position write through
+// accountKeeper.UpdatePosition) can run against the stub.
+func (s *stubAccount) UpdatePosition(
+	ctx context.Context,
+	accIdx uint64,
+	marketIdx uint32,
+	mut func(*accounttypes.AccountPosition) error,
+) (accounttypes.AccountPosition, error) {
+	pos, err := s.GetPosition(ctx, accIdx, marketIdx)
+	if err != nil {
+		return accounttypes.AccountPosition{}, err
+	}
+	pos.AccountIndex = accIdx
+	pos.MarketIndex = marketIdx
+	if err := mut(&pos); err != nil {
+		return accounttypes.AccountPosition{}, err
+	}
+	if err := s.SetPosition(ctx, pos); err != nil {
+		return accounttypes.AccountPosition{}, err
+	}
+	return pos, nil
 }
 
 func (s *stubAccount) AddCollateral(_ context.Context, idx uint64, delta math.Int) error {
@@ -101,10 +130,73 @@ func (s *stubAccount) GetAccountAsset(_ context.Context, acc uint64, assetIdx ui
 	}, nil
 }
 
+// SetAccountAsset is the stub-only fixture helper (see SetAccount).
 func (s *stubAccount) SetAccountAsset(_ context.Context, aa accounttypes.AccountAsset) error {
 	cp := aa
 	s.assets[posKey(aa.AccountIndex, aa.AssetIndex)] = &cp
 	return nil
+}
+
+// TransferAccountAssetBalance mirrors the real keeper's spot transfer
+// helper so the trade keeper's spotMakerDebit / spotTakerDebit paths
+// run unchanged against the stub.
+func (s *stubAccount) TransferAccountAssetBalance(
+	ctx context.Context,
+	from, to uint64,
+	assetIdx uint32,
+	amount math.Int,
+	drainLockedFirst bool,
+) error {
+	if amount.IsNil() || amount.IsZero() {
+		return nil
+	}
+	if amount.IsNegative() {
+		return accounttypes.ErrInsufficientFunds.Wrap("transfer amount must be non-negative")
+	}
+	src, err := s.GetAccountAsset(ctx, from, assetIdx)
+	if err != nil {
+		return err
+	}
+	if src.Balance.IsNil() {
+		src.Balance = math.ZeroInt()
+	}
+	if src.LockedBalance.IsNil() {
+		src.LockedBalance = math.ZeroInt()
+	}
+	if drainLockedFirst {
+		if src.Balance.LT(amount) {
+			return accounttypes.ErrInsufficientFunds.Wrapf(
+				"account %d asset %d have %s need %s",
+				from, assetIdx, src.Balance.String(), amount.String())
+		}
+	} else {
+		available := src.Balance.Sub(src.LockedBalance)
+		if available.LT(amount) {
+			return accounttypes.ErrInsufficientFunds.Wrapf(
+				"account %d asset %d available %s need %s",
+				from, assetIdx, available.String(), amount.String())
+		}
+	}
+	dst, err := s.GetAccountAsset(ctx, to, assetIdx)
+	if err != nil {
+		return err
+	}
+	if dst.Balance.IsNil() {
+		dst.Balance = math.ZeroInt()
+	}
+	if drainLockedFirst {
+		drain := amount
+		if drain.GT(src.LockedBalance) {
+			drain = src.LockedBalance
+		}
+		src.LockedBalance = src.LockedBalance.Sub(drain)
+	}
+	src.Balance = src.Balance.Sub(amount)
+	dst.Balance = dst.Balance.Add(amount)
+	if err := s.SetAccountAsset(ctx, src); err != nil {
+		return err
+	}
+	return s.SetAccountAsset(ctx, dst)
 }
 
 type stubMarket struct {
