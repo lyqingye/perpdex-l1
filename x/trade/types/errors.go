@@ -32,6 +32,31 @@ var (
 	// ErrTakerInsufficientBalance: taker spot transfer fails. Soft:
 	// stop taker, preserve prior fills.
 	ErrTakerInsufficientBalance = errors.Register(ModuleName, 5, "taker insufficient balance for fill")
+
+	// ErrMakerInvalidPosition: maker post-trade position size or
+	// entry_quote would overflow the perp circuit width
+	// (POSITION_SIZE_BITS / ENTRY_QUOTE_BITS in lighter). Soft:
+	// evict maker and continue. Lighter parity with the
+	// `is_new_maker_position_invalid` branch in
+	// `is_valid_perps_trade`.
+	ErrMakerInvalidPosition = errors.Register(ModuleName, 6, "maker post-trade position out of bounds")
+
+	// ErrTakerInvalidPosition: taker post-trade position size or
+	// entry_quote overflow. Soft: stop taker, preserve prior fills.
+	ErrTakerInvalidPosition = errors.Register(ModuleName, 7, "taker post-trade position out of bounds")
+
+	// ErrMakerInsufficientCollateral: maker isolated position grows
+	// (or flips) and the auto-allocated `margin_delta` exceeds the
+	// account's available cross collateral. Soft: evict maker and
+	// continue. Lighter parity with the
+	// `is_maker_has_enough_cross_collateral` branch in
+	// `is_valid_perps_trade`.
+	ErrMakerInsufficientCollateral = errors.Register(ModuleName, 8, "maker insufficient cross collateral for isolated margin allocation")
+
+	// ErrTakerInsufficientCollateral: taker side of the isolated
+	// margin auto-allocation cannot be funded from cross collateral.
+	// Soft: stop taker, preserve prior fills.
+	ErrTakerInsufficientCollateral = errors.Register(ModuleName, 9, "taker insufficient cross collateral for isolated margin allocation")
 )
 
 // IsRecoverableMakerError reports whether err is a sentinel that the
@@ -41,7 +66,12 @@ func IsRecoverableMakerError(err error) bool {
 	if err == nil {
 		return false
 	}
-	return errors.IsOf(err, ErrMakerRiskRegression, ErrMakerInsufficientBalance)
+	return errors.IsOf(err,
+		ErrMakerRiskRegression,
+		ErrMakerInsufficientBalance,
+		ErrMakerInvalidPosition,
+		ErrMakerInsufficientCollateral,
+	)
 }
 
 // IsRecoverableTakerError reports whether err is a sentinel that the
@@ -51,5 +81,10 @@ func IsRecoverableTakerError(err error) bool {
 	if err == nil {
 		return false
 	}
-	return errors.IsOf(err, ErrTakerRiskRegression, ErrTakerInsufficientBalance)
+	return errors.IsOf(err,
+		ErrTakerRiskRegression,
+		ErrTakerInsufficientBalance,
+		ErrTakerInvalidPosition,
+		ErrTakerInsufficientCollateral,
+	)
 }

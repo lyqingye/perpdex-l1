@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"cosmossdk.io/collections"
@@ -12,6 +13,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/codec"
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
+	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
 	"github.com/perpdex/perpdex-l1/x/trade/types"
 )
 
@@ -107,14 +109,26 @@ type Fill struct {
 }
 
 // ApplyPerpsMatching applies a perp fill to both maker and taker positions.
-// Implements the 8-step pipeline from 14-trade.md §3:
+// Implements the 8-step pipeline from 14-trade.md §3 with full lighter
+// `is_valid_perps_trade` parity:
 //  1. settle pending funding for both sides
-//  2. compute position deltas (4 scenarios)
-//  3. realize PnL into collateral
-//  4. apply taker/maker fees, transfer to TREASURY
-//  5. recompute isolated allocated_margin if needed
-//  6. update OI using |position| deltas (both sides, divided by 2)
-//  7. validate IsValidRiskChange for BOTH taker and maker
+//  2. snapshot pre-state risk
+//  3. compute position deltas (4 scenarios) + bounds-check
+//     `|position|` and `|entry_quote|` against POSITION_SIZE_BITS /
+//     ENTRY_QUOTE_BITS (lighter `is_new_position_valid`)
+//  4. route realized PnL: isolated → allocated_margin, cross → collateral
+//  5. apply taker/maker fees + treasury (and liquidation improvement
+//     fee when present)
+//  6. for isolated positions, auto-allocate `margin_delta` from cross
+//     collateral (lighter `calculate_isolated_margin_change`) and pre-
+//     check `available_cross_collateral >= margin_delta`
+//  7. update OI using `|position|` deltas (both sides, divided by 2)
+//  8. validate IsValidRiskChange for BOTH taker and maker
+//
+// Each per-side failure is wrapped into the corresponding maker / taker
+// sentinel so the matching loop can evict the bad maker (and continue)
+// or stop the bad taker (preserving prior fills) per Lighter
+// `cancel_maker_order` / `cancel_taker_order` semantics.
 func (k Keeper) ApplyPerpsMatching(ctx context.Context, f Fill) error {
 	if err := k.fundingKeeper.SettlePositionFunding(ctx, f.MakerAccountIndex, f.MarketIndex); err != nil {
 		return err
@@ -122,9 +136,6 @@ func (k Keeper) ApplyPerpsMatching(ctx context.Context, f Fill) error {
 	if err := k.fundingKeeper.SettlePositionFunding(ctx, f.TakerAccountIndex, f.MarketIndex); err != nil {
 		return err
 	}
-	// Snapshot pre-state risk for both sides so IsValidRiskChange can
-	// enforce strict improvement for accounts that were already
-	// unhealthy (e.g. reducing an underwater position).
 	if !f.NoRiskCheck {
 		if err := k.riskKeeper.SnapshotPreRisk(ctx, f.MakerAccountIndex); err != nil {
 			return err
@@ -140,43 +151,70 @@ func (k Keeper) ApplyPerpsMatching(ctx context.Context, f Fill) error {
 	}
 	takerSign := -makerSign
 
-	makerOIDelta, err := k.applyPositionChange(ctx, f.MakerAccountIndex, f.MarketIndex, f.Price, f.BaseAmount, makerSign)
+	makerRes, err := k.applyPositionChange(ctx, f.MakerAccountIndex, f.MarketIndex, f.Price, f.BaseAmount, makerSign)
 	if err != nil {
+		if errors.Is(err, errPositionOutOfBounds) {
+			return sdkerrors.Wrapf(types.ErrMakerInvalidPosition,
+				"account %d market %d", f.MakerAccountIndex, f.MarketIndex)
+		}
 		return err
 	}
-	takerOIDelta, err := k.applyPositionChange(ctx, f.TakerAccountIndex, f.MarketIndex, f.Price, f.BaseAmount, takerSign)
+	takerRes, err := k.applyPositionChange(ctx, f.TakerAccountIndex, f.MarketIndex, f.Price, f.BaseAmount, takerSign)
 	if err != nil {
+		if errors.Is(err, errPositionOutOfBounds) {
+			return sdkerrors.Wrapf(types.ErrTakerInvalidPosition,
+				"account %d market %d", f.TakerAccountIndex, f.MarketIndex)
+		}
 		return err
 	}
 
+	// Compute fees once so we can both route the per-side debit and
+	// later feed the SAME fee value into the isolated-margin delta
+	// calculation (lighter parity: `trade_pnl - fee` enters
+	// `result_if_position_open_and_open_interest_increased`).
+	notional := math.NewIntFromUint64(f.BaseAmount).Mul(math.NewIntFromUint64(uint64(f.Price)))
+	var takerFee, makerFee math.Int
+	if f.NoFee {
+		takerFee = math.ZeroInt()
+		makerFee = math.ZeroInt()
+	} else {
+		takerFee = notional.Mul(math.NewIntFromUint64(uint64(f.TakerFee))).Quo(math.NewInt(int64(perptypes.FeeTick)))
+		makerFee = notional.Mul(math.NewIntFromUint64(uint64(f.MakerFee))).Quo(math.NewInt(int64(perptypes.FeeTick)))
+	}
+
+	// Route realized PnL + fee to the right pool (allocated_margin
+	// for isolated positions, cross collateral for cross). This
+	// mirrors lighter's `taker_collateral_delta` flowing into
+	// `allocated_margin` for isolated and into cross collateral for
+	// cross before the margin_delta auto-allocation step.
+	if err := k.applyPositionFinancials(ctx, &takerRes, takerFee); err != nil {
+		return err
+	}
+	if err := k.applyPositionFinancials(ctx, &makerRes, makerFee); err != nil {
+		return err
+	}
+
+	// Treasury fee credit (sum of both sides). Treasury is the
+	// `TreasuryAccountIndex` cross account regardless of whether
+	// either side is isolated — the fee flows to a global pool.
 	if !f.NoFee {
-		notional := math.NewIntFromUint64(f.BaseAmount).Mul(math.NewIntFromUint64(uint64(f.Price)))
-		takerFee := notional.Mul(math.NewIntFromUint64(uint64(f.TakerFee))).Quo(math.NewInt(int64(perptypes.FeeTick)))
-		makerFee := notional.Mul(math.NewIntFromUint64(uint64(f.MakerFee))).Quo(math.NewInt(int64(perptypes.FeeTick)))
-		if !takerFee.IsZero() {
-			if err := k.accountKeeper.AddCollateral(ctx, f.TakerAccountIndex, takerFee.Neg()); err != nil {
-				return err
-			}
-		}
-		if !makerFee.IsZero() {
-			if err := k.accountKeeper.AddCollateral(ctx, f.MakerAccountIndex, makerFee.Neg()); err != nil {
-				return err
-			}
-		}
-		// Standard maker/taker fees route to the treasury (account 0).
 		treasuryFee := takerFee.Add(makerFee)
 		if !treasuryFee.IsZero() {
 			if err := k.accountKeeper.AddCollateral(ctx, perptypes.TreasuryAccountIndex, treasuryFee); err != nil {
 				return err
 			}
 		}
-		// Liquidation improvement-over-zero-price fee. Per Lighter
-		// spec it routes to the LLP / insurance fund (the recipient
-		// the liquidation keeper passes in), capped at 1% of notional.
 		if f.LiquidationFeeBps > 0 {
 			liqFee := liquidationImprovementFee(f, notional)
 			if liqFee.IsPositive() {
-				if err := k.accountKeeper.AddCollateral(ctx, f.MakerAccountIndex, liqFee.Neg()); err != nil {
+				// The improvement fee is debited from the
+				// victim (maker). For an isolated victim
+				// position, take it out of the position's
+				// allocated_margin so the cross account is not
+				// disturbed; for cross take it out of cross
+				// collateral. Either way, credit the LLP /
+				// insurance fund recipient (always cross).
+				if err := k.debitFromMarginPool(ctx, &makerRes, liqFee); err != nil {
 					return err
 				}
 				recipient := f.LiquidationFeeRecipient
@@ -190,11 +228,28 @@ func (k Keeper) ApplyPerpsMatching(ctx context.Context, f Fill) error {
 		}
 	}
 
+	// Auto-allocate isolated margin (lighter
+	// `calculate_isolated_margin_change`). For isolated positions,
+	// compute `margin_delta` from old/new sizes + realized trade
+	// PnL/fee, then move that much from cross collateral into
+	// `allocated_margin`. Refuse the fill when the delta is positive
+	// and available cross collateral is short (lighter parity:
+	// `is_*_has_enough_cross_collateral`). The auto-allocation
+	// honours the same skip-flags as the post-state risk check below
+	// so the partial-liquidation path can still close out an isolated
+	// underwater victim without the cross-collateral safety check.
+	if err := k.applyIsolatedMargin(ctx, &takerRes, takerFee, false /*isMaker*/, f); err != nil {
+		return err
+	}
+	if err := k.applyIsolatedMargin(ctx, &makerRes, makerFee, true /*isMaker*/, f); err != nil {
+		return err
+	}
+
 	// Open interest = sum over accounts of |position|, divided by 2 since
 	// every fill touches exactly two accounts. Using the |newSize|-|oldSize|
 	// delta ensures round-trips (open then close) return OI to its original
 	// value rather than linearly growing with cumulative fill volume.
-	oiDelta := (makerOIDelta + takerOIDelta) / 2
+	oiDelta := (makerRes.OIDelta + takerRes.OIDelta) / 2
 	if err := k.marketKeeper.UpdateOpenInterest(ctx, f.MarketIndex, oiDelta); err != nil {
 		return err
 	}
@@ -279,22 +334,66 @@ func liquidationImprovementFee(f Fill, notional math.Int) math.Int {
 	return rawFee
 }
 
+// positionChangeResult bundles the inputs / outputs of one side's
+// position update so the surrounding ApplyPerpsMatching pipeline can
+// chain through the lighter
+// `realized_pnl → fee → margin_delta → risk` sequence on the right
+// account / market without re-loading state.
+//
+// `New` reflects the position AFTER size + entry_quote are written,
+// but BEFORE the realized-PnL / fee / margin_delta routing — the
+// helpers below mutate `New.AllocatedMargin` as they fold those flows
+// in (and re-persist via `SetPosition` whenever necessary).
+type positionChangeResult struct {
+	AccountIdx  uint64
+	MarketIdx   uint32
+	Old         accounttypes.AccountPosition
+	New         accounttypes.AccountPosition
+	OIDelta     int64
+	SideFlipped bool
+	RealizedPnL math.Int
+}
+
+// errPositionOutOfBounds is the internal sentinel returned by
+// `applyPositionChange` when the post-trade `|position|` or
+// `|entry_quote|` would overflow `POSITION_SIZE_BITS` /
+// `ENTRY_QUOTE_BITS` (lighter `is_new_position_valid` failure mode).
+// `ApplyPerpsMatching` re-wraps it into `ErrMakerInvalidPosition` /
+// `ErrTakerInvalidPosition` so the matching loop can route the failure
+// through `IsRecoverable*Error`.
+var errPositionOutOfBounds = errors.New("trade: post-trade position out of bounds")
+
 // applyPositionChange handles the four position-change scenarios from
-// 14-trade.md §3.2: open new, increase, decrease, flip. It returns the
-// signed open-interest delta (new_size.abs() - old_size.abs()) so the caller
-// can roll the market-level OI forward correctly even for flip scenarios.
-func (k Keeper) applyPositionChange(ctx context.Context, accountIdx uint64, marketIdx uint32, price uint32, baseAmount uint64, sign int64) (int64, error) {
+// 14-trade.md §3.2: open new, increase, decrease, flip. It computes the
+// new position size + entry_quote and the realized PnL but does NOT
+// route the realized PnL anywhere — `applyPositionFinancials` does
+// that based on the position's margin mode (lighter parity).
+//
+// The returned `positionChangeResult` carries enough context for the
+// caller to drive the rest of the lighter `apply_perps_trade` pipeline
+// (fee routing, isolated margin auto-allocation, risk check).
+//
+// `errPositionOutOfBounds` is returned when the new size or entry
+// quote would overflow the bit-width bounds enforced by the prover
+// circuit; the caller wraps it into the appropriate maker / taker
+// sentinel.
+func (k Keeper) applyPositionChange(ctx context.Context, accountIdx uint64, marketIdx uint32, price uint32, baseAmount uint64, sign int64) (positionChangeResult, error) {
 	pos, err := k.accountKeeper.GetPosition(ctx, accountIdx, marketIdx)
 	if err != nil {
-		return 0, err
+		return positionChangeResult{}, err
 	}
+	old := clonePosition(pos)
 	curSize := pos.Position
 	delta := math.NewIntFromUint64(baseAmount).MulRaw(sign)
 	newSize := curSize.Add(delta)
 
 	curEntryQuote := pos.EntryQuote
+	if curEntryQuote.IsNil() {
+		curEntryQuote = math.ZeroInt()
+	}
 	notional := math.NewIntFromUint64(baseAmount).Mul(math.NewIntFromUint64(uint64(price))).MulRaw(sign)
 
+	realizedPnL := math.ZeroInt()
 	switch {
 	case curSize.IsZero():
 		// open new position
@@ -303,11 +402,8 @@ func (k Keeper) applyPositionChange(ctx context.Context, accountIdx uint64, mark
 		// increase
 		pos.EntryQuote = curEntryQuote.Add(notional)
 	case newSize.IsZero() || sameSign(curSize, newSize):
-		// pure decrease (or close): realize partial PnL into collateral
-		realized := notional.Add(curEntryQuote.Mul(delta).Quo(curSize.Neg()))
-		if err := k.accountKeeper.AddCollateral(ctx, accountIdx, realized); err != nil {
-			return 0, err
-		}
+		// pure decrease (or close): realize partial PnL
+		realizedPnL = notional.Add(curEntryQuote.Mul(delta).Quo(curSize.Neg()))
 		// scale entry_quote proportionally to remaining size
 		if curSize.IsZero() {
 			pos.EntryQuote = math.ZeroInt()
@@ -315,25 +411,348 @@ func (k Keeper) applyPositionChange(ctx context.Context, accountIdx uint64, mark
 			pos.EntryQuote = curEntryQuote.Mul(newSize).Quo(curSize)
 		}
 	default:
-		// flip: close existing then open in opposite direction
+		// flip: close existing then open in opposite direction.
+		//
+		// Of the `baseAmount` units traded, `|curSize|` units close
+		// the existing position and the remainder opens the new one
+		// on the opposite side. The trade-side notional for the
+		// closing portion is `closeBase * price * sign` (signed by
+		// the trade direction, NOT the position direction): if the
+		// trade is a sell, the closing leg also sells, so the
+		// notional carries `sign = -1`. Using `-sign` here would
+		// produce a +/- mismatch between `closeNotional` and
+		// `curEntryQuote` and inflate `realized_pnl` by 2× the
+		// closing leg's notional — corrupting PnL realization on
+		// every flip.
 		closeBase := curSize.Abs()
-		closeNotional := closeBase.Mul(math.NewIntFromUint64(uint64(price))).MulRaw(-sign)
-		realized := closeNotional.Add(curEntryQuote)
-		if err := k.accountKeeper.AddCollateral(ctx, accountIdx, realized); err != nil {
-			return 0, err
-		}
+		closeNotional := closeBase.Mul(math.NewIntFromUint64(uint64(price))).MulRaw(sign)
+		realizedPnL = closeNotional.Add(curEntryQuote)
 		residual := delta.Add(curSize) // residual same sign as delta
 		residualNotional := residual.Mul(math.NewIntFromUint64(uint64(price)))
 		pos.EntryQuote = residualNotional
 	}
 	pos.Position = newSize
+
+	// Bounds check ahead of `SetPosition` so we never persist a
+	// position the prover circuit would reject.
+	if !isWithinPositionBounds(pos.Position, pos.EntryQuote) {
+		return positionChangeResult{}, errPositionOutOfBounds
+	}
+
 	if err := k.accountKeeper.SetPosition(ctx, pos); err != nil {
-		return 0, err
+		return positionChangeResult{}, err
 	}
 	// OI contribution from this account: |new| - |old|. Positive when the
 	// account grows its exposure, negative when reducing / closing.
 	oiDelta := newSize.Abs().Sub(curSize.Abs())
-	return oiDelta.Int64(), nil
+	return positionChangeResult{
+		AccountIdx:  accountIdx,
+		MarketIdx:   marketIdx,
+		Old:         old,
+		New:         clonePosition(pos),
+		OIDelta:     oiDelta.Int64(),
+		SideFlipped: !curSize.IsZero() && !newSize.IsZero() && !sameSign(curSize, newSize),
+		RealizedPnL: realizedPnL,
+	}, nil
+}
+
+// applyPositionFinancials routes (`realized_pnl - fee`) to the right
+// pool: into `allocated_margin` for an isolated position (lighter:
+// `is_*_position_isolated` branch), or into cross collateral
+// otherwise. Updates `res.New` in-place and re-persists the position
+// when the allocated_margin changed so downstream
+// `calculateIsolatedMarginDelta` can read the current state.
+//
+// `fee` is the per-side debit owed to the treasury (already non-
+// negative in the caller). When the position closes (`new size == 0`
+// for an isolated position) the realized PnL still flows through
+// allocated_margin first; the subsequent `applyIsolatedMargin` step
+// then releases everything back to cross via a negative margin_delta.
+func (k Keeper) applyPositionFinancials(ctx context.Context, res *positionChangeResult, fee math.Int) error {
+	delta := res.RealizedPnL
+	if !fee.IsZero() {
+		delta = delta.Sub(fee)
+	}
+	if delta.IsZero() {
+		return nil
+	}
+	// Route based on the OLD position's margin mode. The lighter
+	// circuit uses the `old_position.margin_mode` precisely because
+	// it represents what bucket the account thought it was operating
+	// in coming into the trade; flipping the routing on a position
+	// that just opened mid-fill would be inconsistent.
+	if res.Old.MarginMode == perptypes.IsolatedMargin {
+		if res.New.AllocatedMargin.IsNil() {
+			res.New.AllocatedMargin = math.ZeroInt()
+		}
+		res.New.AllocatedMargin = res.New.AllocatedMargin.Add(delta)
+		return k.accountKeeper.SetPosition(ctx, res.New)
+	}
+	return k.accountKeeper.AddCollateral(ctx, res.AccountIdx, delta)
+}
+
+// debitFromMarginPool subtracts `amount` from the side's effective
+// margin pool: `allocated_margin` for an isolated position, cross
+// collateral otherwise. Used by the liquidation improvement-fee path
+// so an isolated victim's cross account is not arbitrarily disturbed.
+func (k Keeper) debitFromMarginPool(ctx context.Context, res *positionChangeResult, amount math.Int) error {
+	if amount.IsZero() {
+		return nil
+	}
+	if res.Old.MarginMode == perptypes.IsolatedMargin {
+		if res.New.AllocatedMargin.IsNil() {
+			res.New.AllocatedMargin = math.ZeroInt()
+		}
+		res.New.AllocatedMargin = res.New.AllocatedMargin.Sub(amount)
+		return k.accountKeeper.SetPosition(ctx, res.New)
+	}
+	return k.accountKeeper.AddCollateral(ctx, res.AccountIdx, amount.Neg())
+}
+
+// applyIsolatedMargin computes the lighter
+// `calculate_isolated_margin_change` delta for an isolated position
+// and applies it: `allocated_margin += margin_delta`,
+// `cross_collateral -= margin_delta`. When the delta is positive (the
+// position needs MORE margin), the available cross USDC collateral is
+// pre-checked via the risk keeper; insufficient headroom surfaces as
+// `ErrMakerInsufficientCollateral` / `ErrTakerInsufficientCollateral`
+// for the matching loop to evict the maker / stop the taker.
+//
+// Cross-margined positions are no-ops here.
+//
+// `SkipMakerRiskCheck` (and `NoRiskCheck`) skip the cross-collateral
+// availability check on the maker side so the partial-liquidation
+// path can still close out an isolated underwater victim. The margin
+// delta itself is still applied so allocated_margin / cross collateral
+// reflect the close-out's accounting cleanly.
+func (k Keeper) applyIsolatedMargin(ctx context.Context, res *positionChangeResult, fee math.Int, isMaker bool, f Fill) error {
+	if res.Old.MarginMode != perptypes.IsolatedMargin {
+		return nil
+	}
+	delta, err := k.calculateIsolatedMarginDelta(ctx, res, fee)
+	if err != nil {
+		return err
+	}
+	if delta.IsZero() {
+		return nil
+	}
+	if delta.IsPositive() {
+		skip := f.NoRiskCheck || (isMaker && f.SkipMakerRiskCheck)
+		if !skip {
+			avail, err := k.riskKeeper.GetAvailableUsdcCollateral(ctx, res.AccountIdx)
+			if err != nil {
+				return err
+			}
+			if avail.LT(delta) {
+				if isMaker {
+					return sdkerrors.Wrapf(types.ErrMakerInsufficientCollateral,
+						"account %d available %s need %s",
+						res.AccountIdx, avail.String(), delta.String())
+				}
+				return sdkerrors.Wrapf(types.ErrTakerInsufficientCollateral,
+					"account %d available %s need %s",
+					res.AccountIdx, avail.String(), delta.String())
+			}
+		}
+	}
+	if res.New.AllocatedMargin.IsNil() {
+		res.New.AllocatedMargin = math.ZeroInt()
+	}
+	res.New.AllocatedMargin = res.New.AllocatedMargin.Add(delta)
+	if err := k.accountKeeper.SetPosition(ctx, res.New); err != nil {
+		return err
+	}
+	return k.accountKeeper.AddCollateral(ctx, res.AccountIdx, delta.Neg())
+}
+
+// calculateIsolatedMarginDelta is the in-Go equivalent of lighter
+// `calculate_isolated_margin_change` for one side. Returns the signed
+// math.Int amount that must be added to the position's
+// `allocated_margin` (and removed from cross collateral) to keep the
+// isolated position correctly margined after the fill:
+//
+//   - new position closed: -max(allocated_margin, 0)  (release the
+//     remainder back to cross)
+//   - side flipped: position_requirement - (allocated_margin +
+//     uPnL_new)  (re-margin the new opposite-side position)
+//   - same side, OI grew: max(0, oi_requirement - trade_pnl) where
+//     trade_pnl = uPnL_new - uPnL_old - fee  (top up by the
+//     incremental IM the fill consumed, less any PnL it generated)
+//   - same side, OI shrank: -min( max(0, new_market_value -
+//     target_value), max(allocated_margin, 0) ) where target_value =
+//     max(ceil(old_market_value * |new| / |old|), position_requirement)
+//     (release the proportional excess but never below the new
+//     position's IM)
+//
+// `fee` is the per-side debit (in collateral units) the trade just
+// paid. `res.New.AllocatedMargin` MUST already include the
+// (realized_pnl - fee) credit produced by `applyPositionFinancials`,
+// matching lighter's ordering where the
+// `taker_collateral_delta`-adjusted allocated_margin feeds into
+// `calculate_isolated_margin_change`.
+func (k Keeper) calculateIsolatedMarginDelta(ctx context.Context, res *positionChangeResult, fee math.Int) (math.Int, error) {
+	newPos := res.New
+	oldPos := res.Old
+	allocated := newPos.AllocatedMargin
+	if allocated.IsNil() {
+		allocated = math.ZeroInt()
+	}
+
+	// case 1: new position closed → release positive allocated_margin
+	if newPos.Position.IsZero() {
+		if allocated.IsPositive() {
+			return allocated.Neg(), nil
+		}
+		return math.ZeroInt(), nil
+	}
+
+	posReq, err := k.riskKeeper.ComputePositionInitialMargin(ctx, res.MarketIdx, newPos.Position.Abs())
+	if err != nil {
+		return math.ZeroInt(), err
+	}
+
+	// case 2: side flipped → re-margin to position_requirement at the
+	// new uPnL-adjusted account state.
+	if res.SideFlipped {
+		newUPnL, err := k.riskKeeper.ComputeUnrealizedPnLAt(ctx, res.MarketIdx, newPos.Position, newPos.EntryQuote)
+		if err != nil {
+			return math.ZeroInt(), err
+		}
+		return posReq.Sub(allocated.Add(newUPnL)), nil
+	}
+
+	if res.OIDelta < 0 {
+		// case 4: same side, OI shrank → proportional release.
+		oldUPnL, err := k.riskKeeper.ComputeUnrealizedPnLAt(ctx, res.MarketIdx, oldPos.Position, oldPos.EntryQuote)
+		if err != nil {
+			return math.ZeroInt(), err
+		}
+		newUPnL, err := k.riskKeeper.ComputeUnrealizedPnLAt(ctx, res.MarketIdx, newPos.Position, newPos.EntryQuote)
+		if err != nil {
+			return math.ZeroInt(), err
+		}
+		oldAllocated := oldPos.AllocatedMargin
+		if oldAllocated.IsNil() {
+			oldAllocated = math.ZeroInt()
+		}
+		oldMV := oldAllocated.Add(oldUPnL)
+		newMV := allocated.Add(newUPnL)
+
+		var targetValue math.Int
+		oldAbs := oldPos.Position.Abs()
+		newAbs := newPos.Position.Abs()
+		if oldMV.IsPositive() && !oldAbs.IsZero() {
+			// ceil_div(oldMV * |new|, |old|).
+			num := oldMV.Mul(newAbs)
+			targetValue = ceilDivPositive(num, oldAbs)
+			if targetValue.LT(posReq) {
+				targetValue = posReq
+			}
+		} else {
+			// oldMV <= 0 ⇒ proportional value collapses to
+			// position_requirement (lighter `MAX(target, posReq)`
+			// with the negative-target shortcut).
+			targetValue = posReq
+		}
+
+		excess := newMV.Sub(targetValue)
+		if excess.IsNegative() {
+			excess = math.ZeroInt()
+		}
+		toMoveOut := allocated
+		if toMoveOut.IsNegative() {
+			toMoveOut = math.ZeroInt()
+		}
+		if excess.GT(toMoveOut) {
+			excess = toMoveOut
+		}
+		if excess.IsZero() {
+			return math.ZeroInt(), nil
+		}
+		return excess.Neg(), nil
+	}
+
+	// case 3: same side, OI grew (or stayed flat). Top up by the
+	// incremental IM less any PnL the fill itself generated.
+	oiAbs := math.NewInt(res.OIDelta).Abs()
+	if oiAbs.IsZero() {
+		return math.ZeroInt(), nil
+	}
+	oiReq, err := k.riskKeeper.ComputePositionInitialMargin(ctx, res.MarketIdx, oiAbs)
+	if err != nil {
+		return math.ZeroInt(), err
+	}
+	oldUPnL, err := k.riskKeeper.ComputeUnrealizedPnLAt(ctx, res.MarketIdx, oldPos.Position, oldPos.EntryQuote)
+	if err != nil {
+		return math.ZeroInt(), err
+	}
+	newUPnL, err := k.riskKeeper.ComputeUnrealizedPnLAt(ctx, res.MarketIdx, newPos.Position, newPos.EntryQuote)
+	if err != nil {
+		return math.ZeroInt(), err
+	}
+	tradePnL := newUPnL.Sub(oldUPnL).Sub(fee)
+	delta := oiReq.Sub(tradePnL)
+	if delta.IsNegative() {
+		return math.ZeroInt(), nil
+	}
+	return delta, nil
+}
+
+// isWithinPositionBounds enforces the prover circuit's hard limits
+// `|position| < 2^POSITION_SIZE_BITS` and `|entry_quote| < 2^ENTRY_QUOTE_BITS`.
+// Lighter `position.is_valid` checks the same envelope.
+func isWithinPositionBounds(position, entryQuote math.Int) bool {
+	if position.IsNil() {
+		position = math.ZeroInt()
+	}
+	if entryQuote.IsNil() {
+		entryQuote = math.ZeroInt()
+	}
+	maxPos := math.NewIntFromUint64(perptypes.MaxPositionSize)
+	maxEntryQuote := math.NewIntFromUint64(perptypes.MaxEntryQuote)
+	if position.Abs().GT(maxPos) {
+		return false
+	}
+	if entryQuote.Abs().GT(maxEntryQuote) {
+		return false
+	}
+	return true
+}
+
+// clonePosition returns a value copy with all math.Int fields
+// guaranteed non-nil so downstream arithmetic doesn't blow up on a
+// freshly-defaulted record.
+func clonePosition(p accounttypes.AccountPosition) accounttypes.AccountPosition {
+	out := p
+	if out.Position.IsNil() {
+		out.Position = math.ZeroInt()
+	}
+	if out.EntryQuote.IsNil() {
+		out.EntryQuote = math.ZeroInt()
+	}
+	if out.LastFundingRatePrefixSum.IsNil() {
+		out.LastFundingRatePrefixSum = math.ZeroInt()
+	}
+	if out.AllocatedMargin.IsNil() {
+		out.AllocatedMargin = math.ZeroInt()
+	}
+	return out
+}
+
+// ceilDivPositive returns ⌈num/den⌉ for non-negative `num` and
+// strictly positive `den`. Mirrors lighter `ceil_div_biguint` on the
+// non-negative branch (the negative-numerator branch is handled in
+// `calculateIsolatedMarginDelta` via the `oldMV <= 0` short-circuit).
+func ceilDivPositive(num, den math.Int) math.Int {
+	if den.IsZero() {
+		return math.ZeroInt()
+	}
+	q := num.Quo(den)
+	r := num.Mod(den)
+	if r.IsZero() {
+		return q
+	}
+	return q.Add(math.OneInt())
 }
 
 func sameSign(a, b math.Int) bool {

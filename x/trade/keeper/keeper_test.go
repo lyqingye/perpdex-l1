@@ -134,6 +134,22 @@ type stubRisk struct {
 	snapshots    int
 	riskChecks   int
 	rejectOnCall int // >0 means reject only on Nth riskCheck call
+
+	// Knobs for the lighter-aligned isolated margin / cross collateral
+	// pre-checks. Tests that need to exercise the
+	// `ErrMaker/TakerInsufficientCollateral` branches can set
+	// `availableCollateral` per-account; the default behaviour
+	// reports an essentially unbounded headroom so existing tests
+	// keep passing.
+	availableCollateral map[uint64]math.Int
+	// markPrice is consulted by ComputePositionInitialMargin /
+	// ComputeUnrealizedPnLAt. Default of 0 means the margin auto-
+	// allocation logic short-circuits to zero (no IM, no uPnL),
+	// preserving legacy test expectations.
+	markPrice uint64
+	// imfBps controls the synthetic IM = notional * imfBps / 10_000
+	// computed by the stub.
+	imfBps uint64
 }
 
 func (s *stubRisk) IsValidRiskChange(_ context.Context, _ uint64) (bool, error) {
@@ -146,6 +162,35 @@ func (s *stubRisk) IsValidRiskChange(_ context.Context, _ uint64) (bool, error) 
 func (s *stubRisk) SnapshotPreRisk(_ context.Context, _ uint64) error {
 	s.snapshots++
 	return nil
+}
+
+func (s *stubRisk) GetAvailableUsdcCollateral(_ context.Context, accountIdx uint64) (math.Int, error) {
+	if s.availableCollateral != nil {
+		if v, ok := s.availableCollateral[accountIdx]; ok {
+			return v, nil
+		}
+	}
+	// Default: large constant so non-isolated / no-margin-delta tests
+	// don't trip the cross-collateral pre-check.
+	return math.NewIntFromUint64(1<<62 - 1), nil
+}
+
+func (s *stubRisk) ComputePositionInitialMargin(_ context.Context, _ uint32, posAbs math.Int) (math.Int, error) {
+	if s.markPrice == 0 || s.imfBps == 0 || posAbs.IsNil() || posAbs.IsZero() {
+		return math.ZeroInt(), nil
+	}
+	notional := posAbs.Mul(math.NewIntFromUint64(s.markPrice))
+	return notional.Mul(math.NewIntFromUint64(s.imfBps)).Quo(math.NewInt(10_000)), nil
+}
+
+func (s *stubRisk) ComputeUnrealizedPnLAt(_ context.Context, _ uint32, position, entryQuote math.Int) (math.Int, error) {
+	if s.markPrice == 0 || position.IsNil() || position.IsZero() {
+		return math.ZeroInt(), nil
+	}
+	if entryQuote.IsNil() {
+		entryQuote = math.ZeroInt()
+	}
+	return position.Mul(math.NewIntFromUint64(s.markPrice)).Sub(entryQuote), nil
 }
 
 func newSdkCtx(t *testing.T) (sdk.Context, *stubAccount, *stubMarket, *stubRisk, tradekeeper.Keeper) {

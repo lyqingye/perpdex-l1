@@ -80,6 +80,18 @@ const (
 	MaxClientOrderIndex   = uint64(281_474_976_710_655)
 )
 
+// Perp position bit-width bounds. Lighter circuit constrains
+// `POSITION_SIZE_BITS = 56` and `ENTRY_QUOTE_BITS = 56`; we mirror the
+// limits here so trade application can refuse fills that would push
+// |position| or |entry_quote| beyond what the prover would accept,
+// classifying the failure as a recoverable maker / taker error.
+const (
+	PositionSizeBits = uint8(56)
+	EntryQuoteBits   = uint8(56)
+	MaxPositionSize  = uint64(1<<56 - 1)
+	MaxEntryQuote    = uint64(1<<56 - 1)
+)
+
 // Min transfer / withdraw amounts (USDC 6-decimal external precision).
 const (
 	MinPartialTransferAmount = uint64(10_000_000)
