@@ -200,8 +200,7 @@ func (m msgServer) UpdateAccountConfig(ctx context.Context, msg *types.MsgUpdate
 		a.AccountType == perptypes.InsuranceFundAccountType {
 		return nil, types.ErrPoolGenericMsg.Wrapf("account %d is a pool account", a.AccountIndex)
 	}
-	a.AccountTradingMode = msg.NewTradingMode
-	if err := m.SetAccount(ctx, a); err != nil {
+	if err := m.UpdateAccountTradingMode(ctx, a.AccountIndex, msg.NewTradingMode); err != nil {
 		return nil, err
 	}
 	return &types.MsgUpdateAccountConfigResponse{}, nil
@@ -223,12 +222,7 @@ func (m msgServer) UpdateAccountAssetConfig(ctx context.Context, msg *types.MsgU
 		a.AccountType == perptypes.InsuranceFundAccountType {
 		return nil, types.ErrPoolGenericMsg.Wrapf("account %d is a pool account", a.AccountIndex)
 	}
-	aa, err := m.GetAccountAsset(ctx, msg.AccountIndex, msg.AssetIndex)
-	if err != nil {
-		return nil, err
-	}
-	aa.MarginMode = msg.NewMarginMode
-	if err := m.SetAccountAsset(ctx, aa); err != nil {
+	if err := m.SetAccountAssetMarginMode(ctx, msg.AccountIndex, msg.AssetIndex, msg.NewMarginMode); err != nil {
 		return nil, err
 	}
 	return &types.MsgUpdateAccountAssetConfigResponse{}, nil
@@ -323,22 +317,36 @@ func (m msgServer) UpdateMargin(ctx context.Context, msg *types.MsgUpdateMargin)
 	}
 	amount := msg.Amount
 
-	if msg.Action == perptypes.AddMargin {
-		pos.AllocatedMargin = pos.AllocatedMargin.Add(amount)
+	switch msg.Action {
+	case perptypes.AddMargin:
+		if _, err := m.UpdatePosition(ctx, msg.AccountIndex, msg.MarketIndex, func(p *types.AccountPosition) error {
+			if p.AllocatedMargin.IsNil() {
+				p.AllocatedMargin = math.ZeroInt()
+			}
+			p.AllocatedMargin = p.AllocatedMargin.Add(amount)
+			return nil
+		}); err != nil {
+			return nil, err
+		}
 		if err := m.AddCollateral(ctx, msg.AccountIndex, amount.Neg()); err != nil {
 			return nil, err
 		}
-	} else {
+	default: // RemoveMargin (validated above).
 		if pos.AllocatedMargin.LT(amount) {
 			return nil, types.ErrInsufficientFunds
 		}
-		pos.AllocatedMargin = pos.AllocatedMargin.Sub(amount)
+		if _, err := m.UpdatePosition(ctx, msg.AccountIndex, msg.MarketIndex, func(p *types.AccountPosition) error {
+			if p.AllocatedMargin.IsNil() {
+				p.AllocatedMargin = math.ZeroInt()
+			}
+			p.AllocatedMargin = p.AllocatedMargin.Sub(amount)
+			return nil
+		}); err != nil {
+			return nil, err
+		}
 		if err := m.AddCollateral(ctx, msg.AccountIndex, amount); err != nil {
 			return nil, err
 		}
-	}
-	if err := m.SetPosition(ctx, pos); err != nil {
-		return nil, err
 	}
 
 	if err := m.requireRiskOK(ctx, msg.AccountIndex); err != nil {
@@ -384,9 +392,7 @@ func (m msgServer) UpdateLeverage(ctx context.Context, msg *types.MsgUpdateLever
 	if !pos.Position.IsZero() {
 		return nil, types.ErrPositionNotEmpty.Wrap("must close position before updating leverage/margin mode")
 	}
-	pos.InitialMarginFraction = msg.NewInitialMarginFraction
-	pos.MarginMode = msg.NewMarginMode
-	if err := m.SetPosition(ctx, pos); err != nil {
+	if err := m.SetPositionLeverage(ctx, msg.AccountIndex, msg.MarketIndex, msg.NewMarginMode, msg.NewInitialMarginFraction); err != nil {
 		return nil, err
 	}
 	return &types.MsgUpdateLeverageResponse{}, nil

@@ -111,7 +111,29 @@ func (stubAccount) GetPosition(_ context.Context, acc uint64, mkt uint32) (accou
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}, nil
 }
-func (stubAccount) SetPosition(_ context.Context, _ accounttypes.AccountPosition) error { return nil }
+
+// UpdatePosition is a no-op closure runner; the funding keeper's
+// SettlePositionFunding now dispatches every write through this
+// surface, but the stub doesn't persist anything (the suite cares
+// only about the prefix-sum / mark-price computations on the market
+// side).
+func (s stubAccount) UpdatePosition(
+	ctx context.Context,
+	accIdx uint64,
+	marketIdx uint32,
+	mut func(*accounttypes.AccountPosition) error,
+) (accounttypes.AccountPosition, error) {
+	pos, err := s.GetPosition(ctx, accIdx, marketIdx)
+	if err != nil {
+		return accounttypes.AccountPosition{}, err
+	}
+	pos.AccountIndex = accIdx
+	pos.MarketIndex = marketIdx
+	if err := mut(&pos); err != nil {
+		return accounttypes.AccountPosition{}, err
+	}
+	return pos, nil
+}
 
 type statefulAccount struct {
 	positions map[[2]uint64]accounttypes.AccountPosition
@@ -133,10 +155,36 @@ func (s *statefulAccount) GetPosition(_ context.Context, acc uint64, mkt uint32)
 	}, nil
 }
 
+// SetPosition is the stub-only fixture helper used by the suite to
+// preload positions. The production AccountKeeper interface no longer
+// surfaces a generic position setter.
 func (s *statefulAccount) SetPosition(_ context.Context, p accounttypes.AccountPosition) error {
 	key := [2]uint64{p.AccountIndex, uint64(p.MarketIndex)}
 	s.positions[key] = p
 	return nil
+}
+
+// UpdatePosition mirrors the real keeper's RMW closure surface so
+// SettlePositionFunding's funding-payment write hits this stub.
+func (s *statefulAccount) UpdatePosition(
+	ctx context.Context,
+	accIdx uint64,
+	marketIdx uint32,
+	mut func(*accounttypes.AccountPosition) error,
+) (accounttypes.AccountPosition, error) {
+	pos, err := s.GetPosition(ctx, accIdx, marketIdx)
+	if err != nil {
+		return accounttypes.AccountPosition{}, err
+	}
+	pos.AccountIndex = accIdx
+	pos.MarketIndex = marketIdx
+	if err := mut(&pos); err != nil {
+		return accounttypes.AccountPosition{}, err
+	}
+	if err := s.SetPosition(ctx, pos); err != nil {
+		return accounttypes.AccountPosition{}, err
+	}
+	return pos, nil
 }
 
 func newFundingKeeper(t *testing.T, mk *stubMarket, ok stubOracle, bk stubBook) (fundingkeeper.Keeper, sdk.Context) {

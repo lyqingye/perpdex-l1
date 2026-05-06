@@ -31,5 +31,14 @@ type OrderbookKeeper interface {
 
 type AccountKeeper interface {
 	GetPosition(ctx context.Context, accIdx uint64, marketIdx uint32) (accounttypes.AccountPosition, error)
-	SetPosition(ctx context.Context, p accounttypes.AccountPosition) error
+	// UpdatePosition is the canonical RMW entrypoint for position
+	// state. Funding keeper uses it from SettlePositionFunding so the
+	// snapshot bookkeeping + (future) event emission stay on the
+	// account side.
+	UpdatePosition(
+		ctx context.Context,
+		accIdx uint64,
+		marketIdx uint32,
+		mut func(*accounttypes.AccountPosition) error,
+	) (accounttypes.AccountPosition, error)
 }

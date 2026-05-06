@@ -11,12 +11,31 @@ import (
 
 type AccountKeeper interface {
 	GetAccount(ctx context.Context, idx uint64) (accounttypes.Account, error)
-	SetAccount(ctx context.Context, a accounttypes.Account) error
 	GetPosition(ctx context.Context, accIdx uint64, marketIdx uint32) (accounttypes.AccountPosition, error)
-	SetPosition(ctx context.Context, p accounttypes.AccountPosition) error
+	// UpdatePosition is the canonical RMW entrypoint for position
+	// state. Trade keeper uses it for applyPositionChange /
+	// applyPositionFinancials / applyIsolatedMargin so the post-state
+	// invariants (bounds check, future events) live exclusively on
+	// the account side.
+	UpdatePosition(
+		ctx context.Context,
+		accIdx uint64,
+		marketIdx uint32,
+		mut func(*accounttypes.AccountPosition) error,
+	) (accounttypes.AccountPosition, error)
 	AddCollateral(ctx context.Context, idx uint64, delta math.Int) error
 	GetAccountAsset(ctx context.Context, accIdx uint64, assetIdx uint32) (accounttypes.AccountAsset, error)
-	SetAccountAsset(ctx context.Context, aa accounttypes.AccountAsset) error
+	// TransferAccountAssetBalance is the cohesive spot-balance move:
+	// `drainLockedFirst=true` matches the maker / lock-on-place
+	// semantics, `false` is the taker / fee path. Replaces direct
+	// SetAccountAsset access from the trade keeper.
+	TransferAccountAssetBalance(
+		ctx context.Context,
+		from, to uint64,
+		assetIdx uint32,
+		amount math.Int,
+		drainLockedFirst bool,
+	) error
 }
 
 type MarketKeeper interface {

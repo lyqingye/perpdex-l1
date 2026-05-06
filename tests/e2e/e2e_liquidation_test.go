@@ -6,6 +6,7 @@ import (
 	"cosmossdk.io/math"
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
+	accountkeepertest "github.com/perpdex/perpdex-l1/x/account/keeper/keepertest"
 	liquidationtypes "github.com/perpdex/perpdex-l1/x/liquidation/types"
 
 	"github.com/perpdex/perpdex-l1/tests/e2e"
@@ -290,7 +291,7 @@ func (s *LiquidationSuite) freezeInsuranceFund() {
 	s.Require().NotNil(insf.PublicPoolInfo,
 		"genesis must wire PublicPoolInfo on the IF account")
 	insf.PublicPoolInfo.Status = perptypes.PublicPoolStatusFrozen
-	s.Require().NoError(s.App.PerpAccountKeeper.SetAccount(s.Ctx, insf))
+	s.Require().NoError(accountkeepertest.SetAccountForTest(s.Ctx, s.App.PerpAccountKeeper, insf))
 }
 
 // TestADLRejectsSameSide verifies the Lighter-style ADL invariant: a
