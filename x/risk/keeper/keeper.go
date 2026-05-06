@@ -317,6 +317,115 @@ func (k Keeper) GetAvailableCollateral(ctx context.Context, accountIdx uint64) (
 	return cur.TotalAccountValue.Sub(cur.InitialMarginRequirement), nil
 }
 
+// ComputePositionInitialMargin returns the initial margin requirement
+// for a HYPOTHETICAL position of |posAbs| in `marketIdx`, evaluated at
+// the live mark price and the market's `default_initial_margin_fraction`.
+//
+// This is the in-Go equivalent of lighter's
+// `position_requirement = position_abs * mark * quote_multiplier
+// * margin_fraction_multiplier * IMF`. The trade keeper uses it to
+// compute `margin_delta` for isolated positions during `ApplyPerpsMatching`
+// without having to take a direct dependency on the oracle.
+//
+// `posAbs` MUST be non-negative — callers pre-compute |position|.
+// Returns the IM in collateral units (math.Int).
+func (k Keeper) ComputePositionInitialMargin(ctx context.Context, marketIdx uint32, posAbs math.Int) (math.Int, error) {
+	if posAbs.IsNil() || posAbs.IsZero() {
+		return math.ZeroInt(), nil
+	}
+	if posAbs.IsNegative() {
+		posAbs = posAbs.Abs()
+	}
+	px, err := k.oracleKeeper.GetPrice(ctx, marketIdx)
+	if err != nil {
+		return math.ZeroInt(), types.ErrMissingPrice.Wrapf(
+			"market=%d: %s", marketIdx, err.Error(),
+		)
+	}
+	if px.MarkPrice == 0 {
+		return math.ZeroInt(), types.ErrZeroMarkPrice.Wrapf("market=%d", marketIdx)
+	}
+	md, err := k.marketKeeper.GetMarketDetails(ctx, marketIdx)
+	if err != nil {
+		return math.ZeroInt(), err
+	}
+	notional := posAbs.Mul(math.NewIntFromUint64(uint64(px.MarkPrice)))
+	im := notional.Mul(math.NewIntFromUint64(uint64(md.DefaultInitialMarginFraction))).Quo(math.NewInt(int64(perptypes.MarginTick)))
+	return im, nil
+}
+
+// ComputeUnrealizedPnLAt returns the unrealized PnL for a HYPOTHETICAL
+// position whose `position` (signed) and `entryQuote` are supplied
+// directly, evaluated at the current mark price:
+//
+//	uPnL = position * mark - entry_quote
+//
+// This sister of `GetPositionUnrealizedPnL` operates on caller-supplied
+// values so the trade keeper can reason about the pre/post-state of a
+// position WITHIN the same fill (where the on-chain stored position has
+// already been mutated to the post-state).
+func (k Keeper) ComputeUnrealizedPnLAt(ctx context.Context, marketIdx uint32, position, entryQuote math.Int) (math.Int, error) {
+	if position.IsNil() || position.IsZero() {
+		return math.ZeroInt(), nil
+	}
+	px, err := k.oracleKeeper.GetPrice(ctx, marketIdx)
+	if err != nil {
+		return math.ZeroInt(), types.ErrMissingPrice.Wrapf(
+			"market=%d: %s", marketIdx, err.Error(),
+		)
+	}
+	if px.MarkPrice == 0 {
+		return math.ZeroInt(), types.ErrZeroMarkPrice.Wrapf("market=%d", marketIdx)
+	}
+	if entryQuote.IsNil() {
+		entryQuote = math.ZeroInt()
+	}
+	return position.Mul(math.NewIntFromUint64(uint64(px.MarkPrice))).Sub(entryQuote), nil
+}
+
+// GetAvailableUsdcCollateral returns the amount of cross USDC collateral
+// that can be safely consumed by a new isolated margin allocation
+// without pushing the cross account out of HEALTHY. Mirrors lighter
+// `get_available_usdc_collateral`:
+//
+//   - account must currently be HEALTHY (otherwise zero — no headroom)
+//   - collateral_with_funding must be non-negative (otherwise zero)
+//   - take min(TAV - IMR, collateral_with_funding) clamped to zero
+//
+// Used by trade keeper's isolated margin auto-allocation so a maker /
+// taker can be evicted (`ErrMakerInsufficientCollateral` /
+// `ErrTakerInsufficientCollateral`) when a prospective fill would
+// otherwise drain more cross collateral than the account currently has
+// to spare.
+func (k Keeper) GetAvailableUsdcCollateral(ctx context.Context, accountIdx uint64) (math.Int, error) {
+	ri, err := k.ComputeRiskInfo(ctx, accountIdx)
+	if err != nil {
+		return math.ZeroInt(), err
+	}
+	cur := ri.CurrentRiskParameters
+	if cur == nil {
+		return math.ZeroInt(), nil
+	}
+	if classifyHealth(*cur) != perptypes.HealthHealthy {
+		return math.ZeroInt(), nil
+	}
+	collateral := cur.CollateralWithFunding
+	if collateral.IsNil() {
+		collateral = cur.Collateral
+	}
+	if collateral.IsNil() || collateral.IsNegative() {
+		return math.ZeroInt(), nil
+	}
+	avail := cur.TotalAccountValue.Sub(cur.InitialMarginRequirement)
+	if avail.IsNegative() {
+		return math.ZeroInt(), nil
+	}
+	if avail.GT(collateral) {
+		return collateral, nil
+	}
+	return avail, nil
+}
+
 // IsValidRiskChange enforces the post-state vs pre-state risk
 // invariants. It walks both the cross account and each isolated
 // position the account holds; if either side regresses the change is

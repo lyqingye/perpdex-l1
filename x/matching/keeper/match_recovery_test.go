@@ -284,6 +284,125 @@ func TestCreateOrder_IOCBypassesCap(t *testing.T) {
 	require.NoError(t, err, "IOC should bypass cap")
 }
 
+// TestMatchOrder_BadMakerInvalidPositionEvictedAndContinues confirms
+// the lighter `is_new_maker_position_invalid` parity (case 1 of
+// `is_valid_perps_trade`): when a maker's post-trade position would
+// overflow the bit-width bound, the maker is evicted on the outer
+// ctx and the taker continues.
+func TestMatchOrder_BadMakerInvalidPositionEvictedAndContinues(t *testing.T) {
+	e, _ := withInjectingTrade(t,
+		sdkerrors.Wrap(tradetypes.ErrMakerInvalidPosition, "first maker overflow"),
+	)
+
+	makerA := makeMaker(1, 10, 1000, 5, true, 1)
+	makerB := makeMaker(2, 11, 1000, 5, true, 2)
+	e.rest(t, makerA, true)
+	e.rest(t, makerB, true)
+
+	taker := makeTaker(3, 20, 1000, 5, false)
+	filled, status, err := e.k.matchOrder(e.ctx, taker, 16)
+	require.NoError(t, err, "soft maker error must not propagate")
+	require.EqualValues(t, 5, filled)
+	require.Equal(t, perptypes.OrderStatusFilled, status)
+
+	a, err := e.bk.GetOrder(e.ctx, 1)
+	require.NoError(t, err)
+	require.Equal(t, perptypes.OrderStatusCancelled, a.Status,
+		"maker with invalid post-trade position must be evicted")
+
+	b, err := e.bk.GetOrder(e.ctx, 2)
+	require.NoError(t, err)
+	require.Equal(t, perptypes.OrderStatusFilled, b.Status,
+		"next maker should fully fill")
+}
+
+// TestMatchOrder_BadMakerInsufficientCollateralEvictedAndContinues
+// confirms the lighter `is_maker_has_enough_cross_collateral` parity
+// (case 3): a maker whose isolated margin auto-allocation cannot be
+// funded from cross collateral is evicted and the loop continues.
+func TestMatchOrder_BadMakerInsufficientCollateralEvictedAndContinues(t *testing.T) {
+	e, _ := withInjectingTrade(t,
+		sdkerrors.Wrap(tradetypes.ErrMakerInsufficientCollateral, "first maker poor"),
+	)
+
+	makerA := makeMaker(1, 10, 1000, 5, true, 1)
+	makerB := makeMaker(2, 11, 1000, 5, true, 2)
+	e.rest(t, makerA, true)
+	e.rest(t, makerB, true)
+
+	taker := makeTaker(3, 20, 1000, 5, false)
+	filled, status, err := e.k.matchOrder(e.ctx, taker, 16)
+	require.NoError(t, err, "soft maker error must not propagate")
+	require.EqualValues(t, 5, filled)
+	require.Equal(t, perptypes.OrderStatusFilled, status)
+
+	a, err := e.bk.GetOrder(e.ctx, 1)
+	require.NoError(t, err)
+	require.Equal(t, perptypes.OrderStatusCancelled, a.Status,
+		"maker without cross collateral must be evicted")
+
+	b, err := e.bk.GetOrder(e.ctx, 2)
+	require.NoError(t, err)
+	require.Equal(t, perptypes.OrderStatusFilled, b.Status,
+		"next maker should fully fill")
+}
+
+// TestMatchOrder_BadTakerInvalidPositionStops confirms the symmetric
+// case-1 taker variant: the taker's post-trade position overflowing
+// stops further fills but preserves prior fills.
+func TestMatchOrder_BadTakerInvalidPositionStops(t *testing.T) {
+	e, _ := withInjectingTrade(t,
+		nil, // first fill ok
+		sdkerrors.Wrap(tradetypes.ErrTakerInvalidPosition, "taker overflow"),
+	)
+
+	m1 := makeMaker(1, 10, 1000, 5, true, 1)
+	m2 := makeMaker(2, 11, 1000, 5, true, 2)
+	e.rest(t, m1, true)
+	e.rest(t, m2, true)
+
+	taker := makeTaker(3, 20, 1000, 10, false)
+	filled, status, err := e.k.matchOrder(e.ctx, taker, 16)
+	require.NoError(t, err)
+	require.EqualValues(t, 5, filled, "first fill should survive")
+	require.Equal(t, perptypes.OrderStatusCancelled, status,
+		"taker residue is force-cancelled on a recoverable taker error")
+
+	m1Now, err := e.bk.GetOrder(e.ctx, 1)
+	require.NoError(t, err)
+	require.Equal(t, perptypes.OrderStatusFilled, m1Now.Status)
+
+	m2Now, err := e.bk.GetOrder(e.ctx, 2)
+	require.NoError(t, err)
+	require.Equal(t, perptypes.OrderStatusOpen, m2Now.Status,
+		"unrelated maker must be untouched")
+}
+
+// TestMatchOrder_BadTakerInsufficientCollateralStops mirrors the
+// previous test for the case-3 taker variant.
+func TestMatchOrder_BadTakerInsufficientCollateralStops(t *testing.T) {
+	e, _ := withInjectingTrade(t,
+		nil,
+		sdkerrors.Wrap(tradetypes.ErrTakerInsufficientCollateral, "taker poor"),
+	)
+
+	m1 := makeMaker(1, 10, 1000, 5, true, 1)
+	m2 := makeMaker(2, 11, 1000, 5, true, 2)
+	e.rest(t, m1, true)
+	e.rest(t, m2, true)
+
+	taker := makeTaker(3, 20, 1000, 10, false)
+	filled, status, err := e.k.matchOrder(e.ctx, taker, 16)
+	require.NoError(t, err)
+	require.EqualValues(t, 5, filled, "first fill should survive")
+	require.Equal(t, perptypes.OrderStatusCancelled, status)
+
+	m2Now, err := e.bk.GetOrder(e.ctx, 2)
+	require.NoError(t, err)
+	require.Equal(t, perptypes.OrderStatusOpen, m2Now.Status,
+		"unrelated maker must be untouched")
+}
+
 // TestMatchOrder_BadMakerCachePreservesUnfailedFills makes sure that the
 // fills committed before a bad maker (writeCache calls) are not rolled
 // back when a subsequent iteration fails with a soft error: the loop is

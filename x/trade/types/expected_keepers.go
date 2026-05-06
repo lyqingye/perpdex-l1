@@ -35,4 +35,22 @@ type RiskKeeper interface {
 	// IsValidRiskChange can require strict improvement on unhealthy
 	// post-states.
 	SnapshotPreRisk(ctx context.Context, accountIndex uint64) error
+	// GetAvailableUsdcCollateral returns the amount of cross USDC
+	// collateral free to fund an isolated margin allocation. Returns
+	// zero when the account is not HEALTHY or `collateral_with_funding`
+	// is negative. Used by ApplyPerpsMatching to refuse a fill whose
+	// auto-allocated `margin_delta` would push the cross account out
+	// of HEALTHY.
+	GetAvailableUsdcCollateral(ctx context.Context, accountIndex uint64) (math.Int, error)
+	// ComputePositionInitialMargin returns the IM requirement for a
+	// hypothetical |posAbs| in `marketIdx` at the live mark price. The
+	// trade keeper feeds this with old / new / OI-delta sizes when
+	// computing the lighter `calculate_isolated_margin_change` deltas.
+	ComputePositionInitialMargin(ctx context.Context, marketIdx uint32, posAbs math.Int) (math.Int, error)
+	// ComputeUnrealizedPnLAt returns uPnL = position * mark -
+	// entry_quote for caller-supplied position/entry values. Sister to
+	// risk's `GetPositionUnrealizedPnL` that operates on a hypothetical
+	// position (rather than the stored one) so the trade keeper can
+	// reason about pre / post fill state cleanly.
+	ComputeUnrealizedPnLAt(ctx context.Context, marketIdx uint32, position, entryQuote math.Int) (math.Int, error)
 }

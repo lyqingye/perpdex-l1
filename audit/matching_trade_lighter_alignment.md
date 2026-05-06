@@ -7,15 +7,19 @@
 
 ## 1. 错误分类（`x/trade/types/errors.go`）
 
-| Sentinel | 触发条件 | 撮合循环动作 |
-| --- | --- | --- |
-| `ErrMakerRiskRegression` | maker post-trade `IsValidRiskChange` 失败 | evict maker + continue |
-| `ErrMakerInsufficientBalance` | spot maker 没有足够 balance | evict maker + continue |
-| `ErrTakerRiskRegression` | taker post-trade 风险失败 | 终止 taker（保留已 fill） |
-| `ErrTakerInsufficientBalance` | spot taker available 不足 | 终止 taker（保留已 fill） |
-| 其它 (`fmt.Errorf` / funding / bank / collections) | 不可恢复 | 整笔 Msg revert |
+| Sentinel | 触发条件 | 撮合循环动作 | Lighter parity |
+| --- | --- | --- | --- |
+| `ErrMakerRiskRegression` | maker post-trade `IsValidRiskChange` 失败 | evict maker + continue | `is_valid_risk_change` 失败 |
+| `ErrMakerInsufficientBalance` | spot maker 没有足够 balance | evict maker + continue | spot 无对应字段 |
+| `ErrMakerInvalidPosition` | maker post-trade `\|position\|` 或 `\|entry_quote\|` 超 `POSITION_SIZE_BITS` / `ENTRY_QUOTE_BITS` 限 | evict maker + continue | `is_new_maker_position_invalid` |
+| `ErrMakerInsufficientCollateral` | maker isolated 自动调拨 `margin_delta > 0` 且 cross USDC headroom 不足 | evict maker + continue | `is_maker_has_enough_cross_collateral` |
+| `ErrTakerRiskRegression` | taker post-trade 风险失败 | 终止 taker（保留已 fill） | `is_valid_risk_change` 失败 |
+| `ErrTakerInsufficientBalance` | spot taker available 不足 | 终止 taker（保留已 fill） | spot 无对应字段 |
+| `ErrTakerInvalidPosition` | taker post-trade 位宽超限 | 终止 taker（保留已 fill） | `is_new_taker_position_invalid` |
+| `ErrTakerInsufficientCollateral` | taker isolated 自动调拨 cross 不足 | 终止 taker（保留已 fill） | `is_taker_has_enough_cross_collateral` |
+| 其它 (`fmt.Errorf` / funding / bank / collections) | 不可恢复 | 整笔 Msg revert | – |
 
-辅助函数：`IsRecoverableMakerError(err)`、`IsRecoverableTakerError(err)`，`matchOrder` 用 `errors.Is` 一并匹配。
+辅助函数：`IsRecoverableMakerError(err)`、`IsRecoverableTakerError(err)`，`matchOrder` 用 `errors.Is` 一并匹配。后 4 个 sentinel 与前 4 个一并被 helper 识别，因此对撮合层完全透明：现有的 `cacheCtx` evict / stop 路径自动覆盖位宽与 cross-collateral 失败。
 
 ## 2. cacheCtx 局部回滚（`x/matching/keeper/match.go`）
 
@@ -102,14 +106,16 @@ Trigger / 非 IOC 限价 (`willConsumeOpenSlot`) 在撮合前检查 `count < cap
 - `MaxFillsPerMsg` 达到上限的剩量按 PartiallyFilled 挂回 book，lighter 把 register 留下让下一笔 tx 继续。语义等价。
 - spot taker 不锁仓（IOC 路径），与 lighter 一致。
 - perp 仍未引入「per-order reserved margin」，仅做计数限制；如未来需要更严格 risk 控制可再加。
+- ~~`IsRecoverableMakerError` 只覆盖现货 balance 与 risk regression~~（已对齐 lighter `is_valid_perps_trade` 三 case，见 §1 + §10）。
+- ~~isolated 持仓的 `allocated_margin` 在交易过程中不会自动 rebalance~~（已对齐 lighter `calculate_isolated_margin_change`，见 §10）。
 
 ## 8. 测试覆盖
 
 | 模块 | 文件 | 关键场景 |
 | --- | --- | --- |
-| matching | [`x/matching/keeper/match_recovery_test.go`](../x/matching/keeper/match_recovery_test.go) | 单/多坏 maker evict + continue；坏 taker 保留已 fill；hard error revert；perp cap；IOC 绕过 cap |
+| matching | [`x/matching/keeper/match_recovery_test.go`](../x/matching/keeper/match_recovery_test.go) | 单/多坏 maker evict + continue；坏 taker 保留已 fill；hard error revert；perp cap；IOC 绕过 cap；perp invalid_position / insufficient_collateral 双路径 |
 | orderbook | [`x/orderbook/keeper/spot_lock_test.go`](../x/orderbook/keeper/spot_lock_test.go) | spot ask/bid lock；partial fill 后 cancel 释放残量；locker 拒绝阻止挂单；count lifecycle |
-| trade | [`x/trade/keeper/sentinel_test.go`](../x/trade/keeper/sentinel_test.go) | 4 个 sentinel 各自 `errors.Is` 命中；spot debit 优先扣 lock；hard error 分类正确 |
+| trade | [`x/trade/keeper/sentinel_test.go`](../x/trade/keeper/sentinel_test.go) | 8 个 sentinel 各自 `errors.Is` 命中；spot debit 优先扣 lock；hard error 分类正确；isolated margin delta 4 分支（open / close / decrease / flip） |
 
 全量 `go test ./...` PASS。
 
@@ -136,3 +142,99 @@ flowchart TD
     Spot -->|no| Cancel[order.Status = Cancelled]
     Spot -->|yes| OpenOrder[OpenOrder rest residue + lock]
 ```
+
+## 10. Isolated margin auto-allocation 与 lighter 三 case 对齐
+
+`ApplyPerpsMatching` 现在完整复刻 lighter `is_valid_perps_trade` 的 3 个 cancel 触发条件以及 `calculate_isolated_margin_change` 的 4 分支自动调拨。
+
+### 10.1 流程
+
+```mermaid
+flowchart TD
+    Apply[ApplyPerpsMatching] --> Settle[settle funding both sides]
+    Settle --> Snap[SnapshotPreRisk both sides]
+    Snap --> PosChange[applyPositionChange maker, taker]
+    PosChange --> Bound{|position| <= MaxPositionSize 且 |entry_quote| <= MaxEntryQuote?}
+    Bound -->|no| InvalidPos["wrap ErrMaker/TakerInvalidPosition"]
+    Bound -->|yes| Fin[applyPositionFinancials route realized_pnl - fee]
+    Fin --> IsoCheck{margin_mode == Isolated?}
+    IsoCheck -->|no| OI[update OI]
+    IsoCheck -->|yes| MarginDelta[calculateIsolatedMarginDelta]
+    MarginDelta --> Sign{margin_delta > 0?}
+    Sign -->|yes| Avail[GetAvailableUsdcCollateral]
+    Avail -->|不足| InsufC["wrap ErrMaker/TakerInsufficientCollateral"]
+    Avail -->|够| Apply2[apply margin_delta]
+    Sign -->|no| Apply2
+    Apply2 --> OI
+    OI --> Risk[IsValidRiskChange]
+    Risk -->|fail| Regression["wrap ErrMaker/TakerRiskRegression"]
+    Risk -->|ok| Done[ok]
+```
+
+### 10.2 4 分支公式（与 lighter 一致）
+
+设：
+
+- `allocated`：`applyPositionFinancials` 之后的 `pos.AllocatedMargin`（已含 `realized_pnl - fee`）
+- `posReq`：以 mark price 估的 `|new| * mark * IMF / MarginTick`
+- `oiReq`：同公式但 `|new|` 换成 `oiAbs = ||new|-|old||`
+- `uPnL_old/new`：`position * mark - entry_quote`
+- `tradePnL`：`uPnL_new - uPnL_old - fee`
+
+| 分支 | 触发条件 | margin_delta |
+| --- | --- | --- |
+| 1. closed | `new.position == 0` | `-max(allocated, 0)` |
+| 2. flipped | 持仓方向反转 | `posReq - (allocated + uPnL_new)` |
+| 3. OI grew | 同方向且 `OIDelta > 0` | `max(0, oiReq - tradePnL)` |
+| 4. OI shrank | 同方向且 `OIDelta < 0` | `-min( max(0, MV_new - target), max(allocated, 0) )` 其中 `target = max(ceil(MV_old * |new| / |old|), posReq)` |
+
+应用后：
+
+- `pos.AllocatedMargin += margin_delta`
+- `account.Collateral -= margin_delta`
+
+cross 仓位（`MarginMode == CrossMargin`）走原路径，realized PnL / fee 直接进 `account.Collateral`，`margin_delta` 短路为 0。
+
+### 10.3 cross collateral 充足性预检
+
+`x/risk/keeper.GetAvailableUsdcCollateral` 完整复刻 lighter `get_available_usdc_collateral`：
+
+```
+if classifyHealth(cur) != HEALTHY: 0
+if collateral_with_funding < 0:    0
+return min(TAV - IMR, collateral_with_funding) clamped to 0
+```
+
+`applyIsolatedMargin` 在 `margin_delta > 0` 时调用，若 `available < margin_delta` 抛 `ErrMaker/TakerInsufficientCollateral`，被 §1 / §2 sentinel 路径接住，evict 该 maker / 终止该 taker。
+
+`Fill.NoRiskCheck` 与 maker 端 `Fill.SkipMakerRiskCheck` 同时跳过这一充足性预检（清算路径维持原行为）。
+
+### 10.4 位宽常量（`types/constants.go`）
+
+```go
+const (
+    PositionSizeBits = uint8(56)
+    EntryQuoteBits   = uint8(56)
+    MaxPositionSize  = uint64(1<<56 - 1)
+    MaxEntryQuote    = uint64(1<<56 - 1)
+)
+```
+
+与 lighter `circuit/src/types/constants.rs` 中 `POSITION_SIZE_BITS = 56`、`ENTRY_QUOTE_BITS = 56` 一致。`applyPositionChange` 在 `SetPosition` 之前以这两个上限校验 `|new.Position|` 与 `|new.EntryQuote|`，超限返回内部 `errPositionOutOfBounds`，由 `ApplyPerpsMatching` 包装成 `ErrMaker/TakerInvalidPosition`。
+
+### 10.5 PnL 路由（lighter `taker_collateral_delta`）
+
+`applyPositionFinancials` 根据 OLD 仓位的 `MarginMode` 决定 `realized_pnl - fee` 的去向：
+
+- isolated：进 `pos.AllocatedMargin`，与 lighter `is_taker_position_isolated_and_enabled` 分支一致。
+- cross：进 `account.Collateral`（默认行为）。
+
+由此保证 isolated 仓位在调用 `calculateIsolatedMarginDelta` 前 `allocated_margin` 已经吸收了本笔 fill 的 PnL 与费用，等价于 lighter circuit 中 `taker_collateral_delta` 先合到 `taker_new_position.allocated_margin` 再进入 `calculate_isolated_margin_change`。
+
+### 10.6 顺带修复：flip 实现的 PnL 符号 bug
+
+原 `applyPositionChange` flip 分支对 `closeNotional` 用了 `MulRaw(-sign)`，与 decrease 分支的符号约定不一致，会让 flip 的 realized PnL 多出 `2 × closeNotional`。修正为 `MulRaw(sign)` 后：
+
+- 长 5 平 5 至同价：realized = 0（之前 = `2 × closeNotional`）
+- flip 时 `applyPositionFinancials` 给 `allocated_margin` 加的 PnL 才与 lighter 一致
+- 修复后 `calculateIsolatedMarginDelta` 的 case 2 才能稳定收敛到 `posReq - (allocated + uPnL_new)`
