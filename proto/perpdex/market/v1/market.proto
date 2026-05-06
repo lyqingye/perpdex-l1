@@ -22,6 +22,12 @@ message Market {
   int64 order_quote_limit = 13;
   int64 expiry_timestamp = 14;
   int64 created_at = 15;
+  // max_open_orders_per_account caps the number of resting + trigger
+  // orders a single account may hold in this market simultaneously.
+  // Zero means "no limit". Lighter parity: per-market open_order_count
+  // bounded by market configuration so a malicious user cannot exhaust
+  // the orderbook by spamming free post-only orders.
+  uint32 max_open_orders_per_account = 16;
 }
 
 // MarketDetails carries the runtime (per-block mutable) state of a market.

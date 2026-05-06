@@ -188,6 +188,91 @@ func (k Keeper) AddAccountAssetBalance(ctx context.Context, accIdx uint64, asset
 	return k.SetAccountAsset(ctx, aa)
 }
 
+// AvailableBalance returns Balance - LockedBalance for an account asset
+// (clamped to zero on the very rare nil-state row). Lock-on-place spot
+// orders consume Available at place time and release it on cancel /
+// evict / fill.
+func (k Keeper) AvailableBalance(ctx context.Context, accIdx uint64, assetIdx uint32) (math.Int, error) {
+	aa, err := k.GetAccountAsset(ctx, accIdx, assetIdx)
+	if err != nil {
+		return math.ZeroInt(), err
+	}
+	bal := aa.Balance
+	if bal.IsNil() {
+		bal = math.ZeroInt()
+	}
+	locked := aa.LockedBalance
+	if locked.IsNil() {
+		locked = math.ZeroInt()
+	}
+	avail := bal.Sub(locked)
+	if avail.IsNegative() {
+		return math.ZeroInt(), nil
+	}
+	return avail, nil
+}
+
+// IncreaseLockedBalance reserves `amount` of (account, asset) so the
+// matching engine can guarantee a resting spot order has the resources
+// to settle. Fails with ErrInsufficientFunds when Available < amount —
+// the caller is expected to surface this as an order placement
+// rejection rather than continuing.
+func (k Keeper) IncreaseLockedBalance(ctx context.Context, accIdx uint64, assetIdx uint32, amount math.Int) error {
+	if amount.IsNil() || amount.IsZero() {
+		return nil
+	}
+	if amount.IsNegative() {
+		return types.ErrInsufficientFunds.Wrapf("lock amount must be non-negative")
+	}
+	aa, err := k.GetAccountAsset(ctx, accIdx, assetIdx)
+	if err != nil {
+		return err
+	}
+	if aa.Balance.IsNil() {
+		aa.Balance = math.ZeroInt()
+	}
+	if aa.LockedBalance.IsNil() {
+		aa.LockedBalance = math.ZeroInt()
+	}
+	available := aa.Balance.Sub(aa.LockedBalance)
+	if available.LT(amount) {
+		return types.ErrInsufficientFunds.Wrapf(
+			"asset_index=%d available=%s need=%s",
+			assetIdx, available.String(), amount.String(),
+		)
+	}
+	aa.LockedBalance = aa.LockedBalance.Add(amount)
+	return k.SetAccountAsset(ctx, aa)
+}
+
+// DecreaseLockedBalance releases `amount` of previously locked
+// (account, asset). Used by orderbook on cancel / evict / fully-filled
+// transitions, and by the spot trade application path when a fill
+// drains the lock alongside the balance debit. Released amount is
+// clamped to the current locked balance so over-release rounds down to
+// zero rather than producing a negative lock.
+func (k Keeper) DecreaseLockedBalance(ctx context.Context, accIdx uint64, assetIdx uint32, amount math.Int) error {
+	if amount.IsNil() || amount.IsZero() {
+		return nil
+	}
+	if amount.IsNegative() {
+		return types.ErrInsufficientFunds.Wrapf("release amount must be non-negative")
+	}
+	aa, err := k.GetAccountAsset(ctx, accIdx, assetIdx)
+	if err != nil {
+		return err
+	}
+	if aa.LockedBalance.IsNil() {
+		aa.LockedBalance = math.ZeroInt()
+	}
+	release := amount
+	if release.GT(aa.LockedBalance) {
+		release = aa.LockedBalance
+	}
+	aa.LockedBalance = aa.LockedBalance.Sub(release)
+	return k.SetAccountAsset(ctx, aa)
+}
+
 // IsAuthorized returns true if signer can act on account `idx` (matches owner
 // of master, or owner of master for sub-accounts).
 func (k Keeper) IsAuthorized(ctx context.Context, signer string, idx uint64) (bool, error) {

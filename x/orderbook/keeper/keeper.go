@@ -20,6 +20,7 @@ type Keeper struct {
 	authority    string
 
 	marketKeeper types.MarketKeeper
+	spotLocker   types.SpotLocker
 
 	Schema collections.Schema
 	Params collections.Item[types.Params]
@@ -53,15 +54,24 @@ type Keeper struct {
 	// partially_filled / triggered_pending). Independent of
 	// client_order_index so cancel-all can find every resting order.
 	AccountOpenOrders collections.KeySet[collections.Pair[uint64, uint64]]
+
+	// AccountOpenOrderCount[(account, market)]: number of open orders
+	// (resting + trigger-pending) the account currently holds in this
+	// market. Used to enforce Market.MaxOpenOrdersPerAccount and to
+	// prevent unlimited free placement of post-only / non-funded perp
+	// orders. Maintained in lock-step with AccountOpenOrders by
+	// indexAccountOpenOrder / unindexAccountOpenOrder.
+	AccountOpenOrderCount collections.Map[collections.Pair[uint64, uint32], uint32]
 }
 
-func NewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, authority string, mk types.MarketKeeper) Keeper {
+func NewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, authority string, mk types.MarketKeeper, sl types.SpotLocker) Keeper {
 	sb := collections.NewSchemaBuilder(storeService)
 	k := Keeper{
 		cdc:          cdc,
 		storeService: storeService,
 		authority:    authority,
 		marketKeeper: mk,
+		spotLocker:   sl,
 
 		Params:         collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
 		Orders:         collections.NewMap(sb, types.OrderKey, "orders", collections.Uint64Key, codec.CollValue[types.Order](cdc)),
@@ -88,6 +98,10 @@ func NewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, authori
 
 		AccountOpenOrders: collections.NewKeySet(sb, types.AccountOpenOrdersKey, "account_open_orders",
 			collections.PairKeyCodec(collections.Uint64Key, collections.Uint64Key)),
+
+		AccountOpenOrderCount: collections.NewMap(sb, types.AccountOpenOrderCountKey, "account_open_order_count",
+			collections.PairKeyCodec(collections.Uint64Key, collections.Uint32Key),
+			collections.Uint32Value),
 	}
 	schema, err := sb.Build()
 	if err != nil {

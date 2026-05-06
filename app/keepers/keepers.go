@@ -340,6 +340,7 @@ func NewAppKeeper(
 		runtime.NewKVStoreService(appKeepers.keys[orderbooktypes.StoreKey]),
 		govModuleAddr,
 		appKeepers.MarketKeeper,
+		appKeepers.PerpAccountKeeper,
 	)
 	appKeepers.FundingKeeper = fundingkeeper.NewKeeper(
 		appCodec,

@@ -3,6 +3,8 @@ package types
 import (
 	"context"
 
+	"cosmossdk.io/math"
+
 	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
 	markettypes "github.com/perpdex/perpdex-l1/x/market/types"
 	oracletypes "github.com/perpdex/perpdex-l1/x/oracle/types"
@@ -14,6 +16,10 @@ type AccountKeeper interface {
 	GetAccount(ctx context.Context, idx uint64) (accounttypes.Account, error)
 	GetPosition(ctx context.Context, accIdx uint64, marketIdx uint32) (accounttypes.AccountPosition, error)
 	IsAuthorized(ctx context.Context, signer string, idx uint64) (bool, error)
+	// AvailableBalance is used by the spot CreateOrder pre-check so a
+	// taker that under-funds its residue is force-cancelled without
+	// reverting the whole Msg (preserving any prior fills).
+	AvailableBalance(ctx context.Context, accIdx uint64, assetIdx uint32) (math.Int, error)
 }
 
 type MarketKeeper interface {
@@ -80,6 +86,12 @@ type OrderbookKeeper interface {
 	// status to remove either the orderbook entry or the trigger
 	// registration, sets status to Cancelled, and clears indexes.
 	CancelOrder(ctx context.Context, orderIndex uint64) (orderbooktypes.Order, error)
+
+	// GetAccountOpenOrderCount returns the current number of open
+	// (resting + trigger-pending) orders held by `account` in
+	// `market`. Used by CreateOrder to enforce the per-market cap
+	// from Market.MaxOpenOrdersPerAccount.
+	GetAccountOpenOrderCount(ctx context.Context, accIdx uint64, marketIdx uint32) (uint32, error)
 }
 
 type TradeKeeper interface {

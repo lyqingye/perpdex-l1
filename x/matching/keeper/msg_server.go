@@ -8,8 +8,21 @@ import (
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
 	"github.com/perpdex/perpdex-l1/x/matching/types"
+	markettypes "github.com/perpdex/perpdex-l1/x/market/types"
 	orderbooktypes "github.com/perpdex/perpdex-l1/x/orderbook/types"
 )
+
+// spotResidueLock mirrors x/orderbook computeSpotLock: it returns the
+// (asset_id, amount) the spot residue would need to lock once it rests
+// on the book.
+func spotResidueLock(o orderbooktypes.Order, m markettypes.Market) (uint32, math.Int) {
+	if o.IsAsk {
+		return m.BaseAssetId, math.NewIntFromUint64(o.RemainingBaseAmount)
+	}
+	notional := math.NewIntFromUint64(o.RemainingBaseAmount).
+		Mul(math.NewIntFromUint64(uint64(o.Price)))
+	return m.QuoteAssetId, notional
+}
 
 type msgServer struct{ Keeper }
 
@@ -36,6 +49,18 @@ func quoteExceedsLimit(base uint64, price uint32, limit int64) bool {
 	}
 	prod := math.NewIntFromUint64(base).Mul(math.NewIntFromUint64(uint64(price)))
 	return prod.GT(math.NewInt(limit))
+}
+
+// willConsumeOpenSlot reports whether `msg` could plausibly leave a
+// resting / trigger-pending order on the book once handled. IOC orders
+// never consume an open slot (they are cancelled if they cannot fully
+// match), but every other variant either rests on the book or registers
+// a trigger, so they must respect the per-account cap.
+func willConsumeOpenSlot(msg *types.MsgCreateOrder) bool {
+	if isTriggerOrder(msg.OrderType) {
+		return true
+	}
+	return msg.TimeInForce != perptypes.IOC
 }
 
 func (m msgServer) CreateOrder(ctx context.Context, msg *types.MsgCreateOrder) (*types.MsgCreateOrderResponse, error) {
@@ -97,6 +122,29 @@ func (m msgServer) CreateOrder(ctx context.Context, msg *types.MsgCreateOrder) (
 		}
 		if has {
 			return nil, types.ErrDuplicateClientOrder
+		}
+	}
+
+	// Per-market open-order cap. Lighter parity: bound the number of
+	// resting + trigger-pending orders per account so an adversary
+	// cannot exhaust the orderbook with free post-only orders. The
+	// cap is enforced ahead of the matching pass so an order that
+	// would clearly violate the cap (e.g. plain non-IOC limit, or any
+	// trigger order which immediately reserves a slot) is rejected
+	// up front. Pure IOC and POST_ONLY-that-fully-matches orders that
+	// happen to consume zero slots are still allowed even when the
+	// account is at the cap; we re-check once the residual is known
+	// before resting.
+	if market.MaxOpenOrdersPerAccount > 0 && willConsumeOpenSlot(msg) {
+		count, err := m.bookKeeper.GetAccountOpenOrderCount(ctx, msg.AccountIndex, msg.MarketIndex)
+		if err != nil {
+			return nil, err
+		}
+		if count >= market.MaxOpenOrdersPerAccount {
+			return nil, types.ErrTooManyOpenOrders.Wrapf(
+				"account=%d market=%d count=%d cap=%d",
+				msg.AccountIndex, msg.MarketIndex, count, market.MaxOpenOrdersPerAccount,
+			)
 		}
 	}
 
@@ -181,6 +229,34 @@ func (m msgServer) CreateOrder(ctx context.Context, msg *types.MsgCreateOrder) (
 	// atomic step.
 	if msg.TimeInForce == perptypes.IOC && order.RemainingBaseAmount > 0 {
 		order.Status = perptypes.OrderStatusCancelled
+	}
+	// Spot pre-rest balance gate: if the residue cannot be locked in
+	// full (Available < required), force-cancel the residue rather
+	// than letting OpenOrder fail with ErrInsufficientFunds (which
+	// would revert the whole Msg and lose already-committed fills).
+	// Lighter parity: l2_create_order verify rejects the order, but
+	// any already-applied trades from the matching pass survive
+	// because they live in earlier transactions; here, fills already
+	// landed via writeCache, so only the residue must be cancelled.
+	if (order.Status == perptypes.OrderStatusOpen || order.Status == perptypes.OrderStatusPartiallyFilled) &&
+		market.MarketType == perptypes.MarketTypeSpot &&
+		order.RemainingBaseAmount > 0 {
+		assetID, lockAmt := spotResidueLock(order, market)
+		avail, err := m.accountKeeper.AvailableBalance(ctx, order.OwnerAccountIndex, assetID)
+		if err != nil {
+			return nil, err
+		}
+		if avail.LT(lockAmt) {
+			order.Status = perptypes.OrderStatusCancelled
+			sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
+				"order_residue_unlockable",
+				sdk.NewAttribute("market_index", uintToStr(uint64(order.MarketIndex))),
+				sdk.NewAttribute("order_index", uintToStr(order.OrderIndex)),
+				sdk.NewAttribute("asset_id", uintToStr(uint64(assetID))),
+				sdk.NewAttribute("available", avail.String()),
+				sdk.NewAttribute("required", lockAmt.String()),
+			))
+		}
 	}
 	if err := m.bookKeeper.OpenOrder(ctx, order, msg.TimeInForce == perptypes.PostOnly); err != nil {
 		return nil, err
