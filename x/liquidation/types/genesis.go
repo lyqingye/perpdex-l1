@@ -15,5 +15,18 @@ func DefaultParams() Params {
 	}
 }
 
-func DefaultGenesis() *GenesisState   { return &GenesisState{Params: DefaultParams()} }
-func (gs GenesisState) Validate() error { return nil }
+func DefaultGenesis() *GenesisState {
+	return &GenesisState{Params: DefaultParams(), Flags: []LiquidationFlag{}}
+}
+
+func (gs GenesisState) Validate() error {
+	seen := map[[2]uint64]bool{}
+	for _, f := range gs.Flags {
+		key := [2]uint64{f.AccountIndex, uint64(f.MarketIndex)}
+		if seen[key] {
+			return ErrInvalidParams.Wrapf("duplicate liquidation flag (%d,%d)", f.AccountIndex, f.MarketIndex)
+		}
+		seen[key] = true
+	}
+	return nil
+}

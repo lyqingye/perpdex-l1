@@ -3,16 +3,39 @@ package keeper
 import (
 	"context"
 
+	"cosmossdk.io/collections"
+
 	"github.com/perpdex/perpdex-l1/x/liquidation/types"
 )
 
 func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
-	return k.Params.Set(ctx, gs.Params)
+	if err := k.Params.Set(ctx, gs.Params); err != nil {
+		return err
+	}
+	for _, f := range gs.Flags {
+		if err := k.Flags.Set(ctx, collections.Join(f.AccountIndex, f.MarketIndex), f); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) {
 	p, err := k.Params.Get(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return &types.GenesisState{Params: p}, nil
+	flags := []types.LiquidationFlag{}
+	iter, err := k.Flags.Iterate(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer iter.Close()
+	for ; iter.Valid(); iter.Next() {
+		v, err := iter.Value()
+		if err != nil {
+			return nil, err
+		}
+		flags = append(flags, v)
+	}
+	return &types.GenesisState{Params: p, Flags: flags}, nil
 }
