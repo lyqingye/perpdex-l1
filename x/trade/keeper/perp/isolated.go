@@ -7,7 +7,6 @@ import (
 
 	sdkerrors "cosmossdk.io/errors"
 
-	perptypes "github.com/perpdex/perpdex-l1/types"
 	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
 	"github.com/perpdex/perpdex-l1/x/trade/types"
 )
@@ -16,7 +15,7 @@ import (
 // `allocated_margin` pool. PnL, fees and liquidation improvement fees
 // flow into / out of that pool first; only at position open / close
 // boundaries is the difference reconciled with the account's cross
-// collateral via `applyIsolatedMargin`.
+// collateral via `rebalanceIsolatedMargin`.
 //
 // Kept in a dedicated file so the dispatcher in `engine.go` can route
 // per-side routing decisions in a uniform way, and a future
@@ -25,8 +24,8 @@ import (
 
 // isolatedAddAllocatedMargin folds `delta` (which may be the realized
 // PnL net of fees, or any other isolated-margin credit) into the
-// position's `allocated_margin` and re-persists. Used by the engine's
-// `applyPositionFinancials` dispatcher when the trade-side is
+// position's `allocated_margin` and re-persists. Used by
+// `applyIsolatedAccount` step 1 (cash flow) when the trade-side is
 // isolated-margined.
 func (e Engine) isolatedAddAllocatedMargin(ctx context.Context, res *positionChangeResult, delta math.Int) error {
 	if delta.IsZero() {
@@ -68,7 +67,43 @@ func (e Engine) isolatedDebit(ctx context.Context, res *positionChangeResult, am
 	return nil
 }
 
-// applyIsolatedMargin computes the lighter
+// applyIsolatedAccount applies one side's full post-trade effect to
+// an isolated-margined account, in three sequential steps:
+//
+//  1. cash flow: route (realized_pnl - fee) into the position's
+//     `allocated_margin` pool (lighter parity:
+//     `taker_collateral_delta` flows into allocated_margin first for
+//     isolated positions).
+//  2. maker only: debit the liquidation improvement fee from the
+//     same `allocated_margin` pool so the victim's cross account is
+//     not arbitrarily disturbed.
+//  3. rebalance: run `rebalanceIsolatedMargin` to reconcile the
+//     post-trade `allocated_margin` against the new position's IM /
+//     market value (lighter `calculate_isolated_margin_change`).
+//
+// Caller guarantees liqFee is non-negative and only non-zero on the
+// maker side (the trade improvement fee victim). `applyAccount`
+// dispatches here from `engine.go` when
+// `res.Old.MarginMode == IsolatedMargin`.
+func (e Engine) applyIsolatedAccount(ctx context.Context, res *positionChangeResult, fee math.Int, isMaker bool, liqFee math.Int, f Fill) error {
+	delta := res.RealizedPnL
+	if !fee.IsZero() {
+		delta = delta.Sub(fee)
+	}
+	if !delta.IsZero() {
+		if err := e.isolatedAddAllocatedMargin(ctx, res, delta); err != nil {
+			return err
+		}
+	}
+	if isMaker && liqFee.IsPositive() {
+		if err := e.isolatedDebit(ctx, res, liqFee); err != nil {
+			return err
+		}
+	}
+	return e.rebalanceIsolatedMargin(ctx, res, fee, isMaker, f)
+}
+
+// rebalanceIsolatedMargin computes the lighter
 // `calculate_isolated_margin_change` delta for an isolated position
 // and applies it: `allocated_margin += margin_delta`,
 // `cross_collateral -= margin_delta`. When the delta is positive (the
@@ -77,17 +112,18 @@ func (e Engine) isolatedDebit(ctx context.Context, res *positionChangeResult, am
 // `ErrMakerInsufficientCollateral` / `ErrTakerInsufficientCollateral`
 // for the matching loop to evict the maker / stop the taker.
 //
-// Cross-margined positions are no-ops here.
+// Only called from `applyIsolatedAccount` after step 1 (cash flow)
+// and step 2 (maker liquidation-fee debit) have already updated
+// `res.New.AllocatedMargin`, so the routine can assume the margin
+// mode is isolated and the allocated_margin reflects post-cashflow
+// state.
 //
 // `SkipMakerRiskCheck` (and `NoRiskCheck`) skip the cross-collateral
 // availability check on the maker side so the partial-liquidation
 // path can still close out an isolated underwater victim. The margin
 // delta itself is still applied so allocated_margin / cross collateral
 // reflect the close-out's accounting cleanly.
-func (e Engine) applyIsolatedMargin(ctx context.Context, res *positionChangeResult, fee math.Int, isMaker bool, f Fill) error {
-	if res.Old.MarginMode != perptypes.IsolatedMargin {
-		return nil
-	}
+func (e Engine) rebalanceIsolatedMargin(ctx context.Context, res *positionChangeResult, fee math.Int, isMaker bool, f Fill) error {
 	delta, err := e.calculateIsolatedMarginDelta(ctx, res, fee)
 	if err != nil {
 		return err
@@ -148,9 +184,10 @@ func (e Engine) applyIsolatedMargin(ctx context.Context, res *positionChangeResu
 //     position's IM)
 //
 // `fee` is the per-side debit (in collateral units) the trade just
-// paid. `res.New.AllocatedMargin` MUST already include the
-// (realized_pnl - fee) credit produced by `applyPositionFinancials`,
-// matching lighter's ordering where the
+// paid. `res.New.AllocatedMargin` MUST already include both the
+// (realized_pnl - fee) credit produced by `applyIsolatedAccount`
+// step 1 AND the maker liquidation-improvement-fee debit from step
+// 2, matching lighter's ordering where the
 // `taker_collateral_delta`-adjusted allocated_margin feeds into
 // `calculate_isolated_margin_change`.
 func (e Engine) calculateIsolatedMarginDelta(ctx context.Context, res *positionChangeResult, fee math.Int) (math.Int, error) {

@@ -33,3 +33,32 @@ func (e Engine) crossDebit(ctx context.Context, accountIdx uint64, amount math.I
 	}
 	return e.accountKeeper.AddCollateral(ctx, accountIdx, amount.Neg())
 }
+
+// applyCrossAccount applies one side's full post-trade effect to a
+// cross-margined account: route (realized_pnl - fee) into cross
+// collateral, then (maker only) debit the liquidation improvement fee
+// from the same cross pool. Cross has no per-position margin pool to
+// rebalance, so the function is intentionally short — `applyAccount`
+// dispatches here from `engine.go` when `res.Old.MarginMode != IsolatedMargin`.
+//
+// Behaviour matches the prior two-stage pipeline exactly:
+//   - cash flow: PnL.Sub(fee) → cross collateral (via crossAddCollateral)
+//   - improvement fee: liqFee debited from cross collateral (via crossDebit)
+//
+// Caller guarantees liqFee is non-negative and only non-zero on the
+// maker side (the trade improvement fee victim).
+func (e Engine) applyCrossAccount(ctx context.Context, res *positionChangeResult, fee math.Int, isMaker bool, liqFee math.Int) error {
+	delta := res.RealizedPnL
+	if !fee.IsZero() {
+		delta = delta.Sub(fee)
+	}
+	if !delta.IsZero() {
+		if err := e.crossAddCollateral(ctx, res.AccountIdx, delta); err != nil {
+			return err
+		}
+	}
+	if isMaker && liqFee.IsPositive() {
+		return e.crossDebit(ctx, res.AccountIdx, liqFee)
+	}
+	return nil
+}

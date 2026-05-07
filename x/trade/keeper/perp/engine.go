@@ -174,21 +174,40 @@ func (e Engine) Apply(ctx context.Context, f Fill) error {
 		makerFee = notional.Mul(math.NewIntFromUint64(uint64(f.MakerFee))).Quo(math.NewInt(int64(perptypes.FeeTick)))
 	}
 
-	// Route realized PnL + fee to the right pool (allocated_margin
-	// for isolated positions, cross collateral for cross). This
-	// mirrors lighter's `taker_collateral_delta` flowing into
-	// `allocated_margin` for isolated and into cross collateral for
-	// cross before the margin_delta auto-allocation step.
-	if err := e.applyPositionFinancials(ctx, &takerRes, takerFee); err != nil {
+	// Liquidation improvement fee (lighter "improvement-over-zero-
+	// price"): pre-compute once so we can hand the maker side a
+	// single fee value AND know whether to credit the LLP / insurance
+	// fund recipient at the end. Only chargeable when the fee is
+	// configured AND fees are enabled on this fill.
+	liqFee := math.ZeroInt()
+	if !f.NoFee && f.LiquidationFeeBps > 0 {
+		liqFee = liquidationImprovementFee(f, notional)
+	}
+
+	// Per-account dispatch: for each side, fold (PnL - fee) into the
+	// right margin pool, debit the maker's improvement fee from the
+	// same pool, and (isolated only) rebalance allocated_margin
+	// against the new position's IM / market value. The dispatcher
+	// in `applyAccount` routes to `applyIsolatedAccount` /
+	// `applyCrossAccount` based on `res.Old.MarginMode`, keeping each
+	// margin mode's full per-side pipeline cohesive in one file.
+	//
+	// The taker is never the improvement-fee victim, so it is
+	// dispatched with `liqFee = 0`; the maker side carries the full
+	// `liqFee` (still gated on `isMaker && liqFee > 0` inside the
+	// per-mode handler).
+	if err := e.applyAccount(ctx, &takerRes, takerFee, false /*isMaker*/, math.ZeroInt(), f); err != nil {
 		return err
 	}
-	if err := e.applyPositionFinancials(ctx, &makerRes, makerFee); err != nil {
+	if err := e.applyAccount(ctx, &makerRes, makerFee, true /*isMaker*/, liqFee, f); err != nil {
 		return err
 	}
 
-	// Treasury fee credit (sum of both sides). Treasury is the
-	// `TreasuryAccountIndex` cross account regardless of whether
-	// either side is isolated — the fee flows to a global pool.
+	// Global fee credits: treasury (taker + maker fees) and the
+	// liquidation improvement fee recipient (LLP / insurance fund).
+	// Both are credited to dedicated cross accounts that are disjoint
+	// from the maker / taker, so it is safe to defer them until both
+	// sides' per-account pipelines have completed.
 	if !f.NoFee {
 		treasuryFee := takerFee.Add(makerFee)
 		if !treasuryFee.IsZero() {
@@ -196,45 +215,15 @@ func (e Engine) Apply(ctx context.Context, f Fill) error {
 				return err
 			}
 		}
-		if f.LiquidationFeeBps > 0 {
-			liqFee := liquidationImprovementFee(f, notional)
-			if liqFee.IsPositive() {
-				// The improvement fee is debited from the
-				// victim (maker). For an isolated victim
-				// position, take it out of the position's
-				// allocated_margin so the cross account is not
-				// disturbed; for cross take it out of cross
-				// collateral. Either way, credit the LLP /
-				// insurance fund recipient (always cross).
-				if err := e.debitFromMarginPool(ctx, &makerRes, liqFee); err != nil {
-					return err
-				}
-				recipient := f.LiquidationFeeRecipient
-				if recipient == 0 {
-					recipient = perptypes.InsuranceFundOperatorAccountIdx
-				}
-				if err := e.accountKeeper.AddCollateral(ctx, recipient, liqFee); err != nil {
-					return err
-				}
+		if liqFee.IsPositive() {
+			recipient := f.LiquidationFeeRecipient
+			if recipient == 0 {
+				recipient = perptypes.InsuranceFundOperatorAccountIdx
+			}
+			if err := e.accountKeeper.AddCollateral(ctx, recipient, liqFee); err != nil {
+				return err
 			}
 		}
-	}
-
-	// Auto-allocate isolated margin (lighter
-	// `calculate_isolated_margin_change`). For isolated positions,
-	// compute `margin_delta` from old/new sizes + realized trade
-	// PnL/fee, then move that much from cross collateral into
-	// `allocated_margin`. Refuse the fill when the delta is positive
-	// and available cross collateral is short (lighter parity:
-	// `is_*_has_enough_cross_collateral`). The auto-allocation
-	// honours the same skip-flags as the post-state risk check below
-	// so the partial-liquidation path can still close out an isolated
-	// underwater victim without the cross-collateral safety check.
-	if err := e.applyIsolatedMargin(ctx, &takerRes, takerFee, false /*isMaker*/, f); err != nil {
-		return err
-	}
-	if err := e.applyIsolatedMargin(ctx, &makerRes, makerFee, true /*isMaker*/, f); err != nil {
-		return err
 	}
 
 	// Open interest = sum over accounts of |position|, divided by 2 since
@@ -285,55 +274,30 @@ func (e Engine) Apply(ctx context.Context, f Fill) error {
 	return nil
 }
 
-// applyPositionFinancials routes (`realized_pnl - fee`) to the right
-// pool: into `allocated_margin` for an isolated position (lighter:
-// `is_*_position_isolated` branch), or into cross collateral
-// otherwise. The mode-specific writes live in `isolated.go` /
-// `cross.go`; this dispatcher keeps the routing decision in one
-// place, ready for a future `unified.go` to plug in a third branch.
+// applyAccount is the per-side dispatcher: it routes one side of a
+// fill into the margin-mode-specific pipeline that will (a) fold the
+// realized PnL net of fees into the right pool, (b) debit the maker
+// liquidation improvement fee from the same pool when applicable, and
+// (c) for isolated positions, rebalance `allocated_margin` against
+// the new position's IM / market value (lighter
+// `calculate_isolated_margin_change`).
 //
-// `fee` is the per-side debit owed to the treasury (already non-
-// negative in the caller). When the position closes (`new size == 0`
-// for an isolated position) the realized PnL still flows through
-// allocated_margin first; the subsequent `applyIsolatedMargin` step
-// then releases everything back to cross via a negative margin_delta.
-func (e Engine) applyPositionFinancials(ctx context.Context, res *positionChangeResult, fee math.Int) error {
-	delta := res.RealizedPnL
-	if !fee.IsZero() {
-		delta = delta.Sub(fee)
-	}
-	if delta.IsZero() {
-		return nil
-	}
-	// Route based on the OLD position's margin mode. The lighter
-	// circuit uses the `old_position.margin_mode` precisely because
-	// it represents what bucket the account thought it was operating
-	// in coming into the trade; flipping the routing on a position
-	// that just opened mid-fill would be inconsistent.
+// The dispatch is on `res.Old.MarginMode` — lighter parity: the
+// pre-trade margin mode dictates how the trade flows. A position
+// that opens fresh in this fill carries `Old.MarginMode == 0`
+// (default cross) so cross routing applies, matching lighter's
+// `is_*_position_isolated` short-circuit.
+//
+// Future `UnifiedMargin` mode plugs in here as a third case without
+// disturbing either the cross or the isolated leg.
+func (e Engine) applyAccount(ctx context.Context, res *positionChangeResult, fee math.Int, isMaker bool, liqFee math.Int, f Fill) error {
 	switch res.Old.MarginMode {
 	case perptypes.IsolatedMargin:
-		return e.isolatedAddAllocatedMargin(ctx, res, delta)
+		return e.applyIsolatedAccount(ctx, res, fee, isMaker, liqFee, f)
+	// case perptypes.UnifiedMargin:
+	//     return e.applyUnifiedAccount(ctx, res, fee, isMaker, liqFee, f)
 	default:
-		// Cross (and any future unified mode falling back to cross
-		// behaviour) lands here.
-		return e.crossAddCollateral(ctx, res.AccountIdx, delta)
-	}
-}
-
-// debitFromMarginPool subtracts `amount` from the side's effective
-// margin pool: `allocated_margin` for an isolated position, cross
-// collateral otherwise. Used by the liquidation improvement-fee path
-// so an isolated victim's cross account is not arbitrarily disturbed.
-// Mirrors the same dispatcher shape as `applyPositionFinancials`.
-func (e Engine) debitFromMarginPool(ctx context.Context, res *positionChangeResult, amount math.Int) error {
-	if amount.IsZero() {
-		return nil
-	}
-	switch res.Old.MarginMode {
-	case perptypes.IsolatedMargin:
-		return e.isolatedDebit(ctx, res, amount)
-	default:
-		return e.crossDebit(ctx, res.AccountIdx, amount)
+		return e.applyCrossAccount(ctx, res, fee, isMaker, liqFee)
 	}
 }
 
