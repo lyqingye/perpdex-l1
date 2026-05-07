@@ -65,8 +65,7 @@ func (k Keeper) BuildADLQueue(
 		// ranked ADL queue.
 		if a.AccountIndex == perptypes.TreasuryAccountIndex ||
 			a.AccountIndex == perptypes.InsuranceFundOperatorAccountIdx ||
-			a.AccountType == perptypes.PublicPoolAccountType ||
-			a.AccountType == perptypes.InsuranceFundAccountType {
+			a.IsPoolType() {
 			return false
 		}
 		pos, err := k.accountKeeper.GetPosition(ctx, a.AccountIndex, marketIdx)

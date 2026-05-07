@@ -3,7 +3,6 @@ package keeper
 import (
 	"context"
 
-	perptypes "github.com/perpdex/perpdex-l1/types"
 	"github.com/perpdex/perpdex-l1/x/liquidation/types"
 )
 
@@ -57,8 +56,7 @@ func (m msgServer) Deleverage(ctx context.Context, msg *types.MsgDeleverage) (*t
 	if err != nil {
 		return nil, err
 	}
-	isPool := deleverager.AccountType == perptypes.PublicPoolAccountType ||
-		deleverager.AccountType == perptypes.InsuranceFundAccountType
+	isPool := deleverager.IsPoolType()
 	if isPool {
 		if msg.Sender != m.authority {
 			return nil, types.ErrUnauthorized.Wrapf(

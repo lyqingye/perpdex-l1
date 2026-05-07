@@ -32,16 +32,13 @@ func (e Engine) isolatedAddAllocatedMargin(ctx context.Context, res *positionCha
 		return nil
 	}
 	updated, err := e.accountKeeper.UpdatePosition(ctx, res.AccountIdx, res.MarketIdx, func(p *accounttypes.AccountPosition) error {
-		if p.AllocatedMargin.IsNil() {
-			p.AllocatedMargin = math.ZeroInt()
-		}
 		p.AllocatedMargin = p.AllocatedMargin.Add(delta)
 		return nil
 	})
 	if err != nil {
 		return err
 	}
-	res.New = clonePosition(updated)
+	res.New = updated
 	return nil
 }
 
@@ -54,16 +51,13 @@ func (e Engine) isolatedDebit(ctx context.Context, res *positionChangeResult, am
 		return nil
 	}
 	updated, err := e.accountKeeper.UpdatePosition(ctx, res.AccountIdx, res.MarketIdx, func(p *accounttypes.AccountPosition) error {
-		if p.AllocatedMargin.IsNil() {
-			p.AllocatedMargin = math.ZeroInt()
-		}
 		p.AllocatedMargin = p.AllocatedMargin.Sub(amount)
 		return nil
 	})
 	if err != nil {
 		return err
 	}
-	res.New = clonePosition(updated)
+	res.New = updated
 	return nil
 }
 
@@ -151,16 +145,13 @@ func (e Engine) rebalanceIsolatedMargin(ctx context.Context, res *positionChange
 		}
 	}
 	updated, err := e.accountKeeper.UpdatePosition(ctx, res.AccountIdx, res.MarketIdx, func(p *accounttypes.AccountPosition) error {
-		if p.AllocatedMargin.IsNil() {
-			p.AllocatedMargin = math.ZeroInt()
-		}
 		p.AllocatedMargin = p.AllocatedMargin.Add(delta)
 		return nil
 	})
 	if err != nil {
 		return err
 	}
-	res.New = clonePosition(updated)
+	res.New = updated
 	return e.accountKeeper.AddCollateral(ctx, res.AccountIdx, delta.Neg())
 }
 

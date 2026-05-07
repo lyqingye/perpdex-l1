@@ -68,8 +68,8 @@ func (k Keeper) ApplySpotMatching(ctx context.Context, f SpotFill, baseAssetID, 
 	}
 
 	if !f.NoFee {
-		takerFee := notional.Mul(math.NewIntFromUint64(uint64(f.TakerFee))).Quo(math.NewInt(int64(perptypes.FeeTick)))
-		makerFee := notional.Mul(math.NewIntFromUint64(uint64(f.MakerFee))).Quo(math.NewInt(int64(perptypes.FeeTick)))
+		takerFee := types.FeeOf(notional, f.TakerFee)
+		makerFee := types.FeeOf(notional, f.MakerFee)
 		if takerFee.IsPositive() {
 			if err := k.spotTakerDebit(ctx, f.TakerAccountIndex, perptypes.TreasuryAccountIndex, quoteAssetID, takerFee); err != nil {
 				return err

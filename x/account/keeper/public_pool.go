@@ -149,27 +149,13 @@ func CheckMinOperatorShareRate(info types.PublicPoolInfo) bool {
 	return lhs.LTE(rhs)
 }
 
-// EnsureNotFrozen rejects state transitions on a frozen pool.
-func EnsureNotFrozen(info *types.PublicPoolInfo) error {
-	if info == nil {
-		return types.ErrInvalidPoolAccount
-	}
-	if info.Status == perptypes.PublicPoolStatusFrozen {
-		return types.ErrPoolFrozen
-	}
-	return nil
-}
-
-// EnsureActive rejects state transitions when status != ACTIVE.
-func EnsureActive(info *types.PublicPoolInfo) error {
-	if info == nil {
-		return types.ErrInvalidPoolAccount
-	}
-	if info.Status != perptypes.PublicPoolStatusActive {
-		return types.ErrPoolNotActive.Wrapf("status=%d", info.Status)
-	}
-	return nil
-}
+// EnsureNotFrozen / EnsureActive are kept as thin pass-throughs to the
+// canonical types-level guards so existing callers in this package keep
+// compiling unchanged. New callers (e.g. liquidation / matching) should
+// prefer the types-level helpers directly to avoid pulling the account
+// keeper into their import graph.
+func EnsureNotFrozen(info *types.PublicPoolInfo) error { return types.EnsureNotFrozen(info) }
+func EnsureActive(info *types.PublicPoolInfo) error    { return types.EnsureActive(info) }
 
 // FindShareEntry locates a (user, pool) PublicPoolShare in user.PublicPoolShares.
 // Returns the index in the slice + true if present, -1 + false otherwise.
@@ -184,10 +170,9 @@ func FindShareEntry(user types.Account, poolIdx uint64) (int, bool) {
 
 // IsPoolAccount reports whether the account holds a Public Pool /
 // Insurance Fund role (i.e. has a PublicPoolInfo and the right type).
+// Stronger than IsPoolType: pool-specific invariants (TotalShares /
+// Status / NAV) only live on PublicPoolInfo, so callers operating on
+// those must require it to be non-nil.
 func IsPoolAccount(a types.Account) bool {
-	if a.PublicPoolInfo == nil {
-		return false
-	}
-	return a.AccountType == perptypes.PublicPoolAccountType ||
-		a.AccountType == perptypes.InsuranceFundAccountType
+	return a.PublicPoolInfo != nil && a.IsPoolType()
 }

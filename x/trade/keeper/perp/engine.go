@@ -170,8 +170,8 @@ func (e Engine) Apply(ctx context.Context, f Fill) error {
 		takerFee = math.ZeroInt()
 		makerFee = math.ZeroInt()
 	} else {
-		takerFee = notional.Mul(math.NewIntFromUint64(uint64(f.TakerFee))).Quo(math.NewInt(int64(perptypes.FeeTick)))
-		makerFee = notional.Mul(math.NewIntFromUint64(uint64(f.MakerFee))).Quo(math.NewInt(int64(perptypes.FeeTick)))
+		takerFee = types.FeeOf(notional, f.TakerFee)
+		makerFee = types.FeeOf(notional, f.MakerFee)
 	}
 
 	// Liquidation improvement fee (lighter "improvement-over-zero-
@@ -334,7 +334,7 @@ func liquidationImprovementFee(f Fill, notional math.Int) math.Int {
 		return math.ZeroInt()
 	}
 	improvement := improvementPerUnit.Mul(math.NewIntFromUint64(f.BaseAmount))
-	rawFee := improvement.Mul(math.NewIntFromUint64(uint64(f.LiquidationFeeBps))).Quo(math.NewInt(int64(perptypes.FeeTick)))
+	rawFee := types.FeeOf(improvement, f.LiquidationFeeBps)
 	cap1pct := notional.Quo(math.NewInt(100))
 	if rawFee.GT(cap1pct) {
 		rawFee = cap1pct

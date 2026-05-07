@@ -2,34 +2,22 @@ package perp
 
 import (
 	"cosmossdk.io/math"
-
-	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
 )
-
-// clonePosition returns a value copy with all math.Int fields
-// guaranteed non-nil so downstream arithmetic doesn't blow up on a
-// freshly-defaulted record.
-func clonePosition(p accounttypes.AccountPosition) accounttypes.AccountPosition {
-	out := p
-	if out.Position.IsNil() {
-		out.Position = math.ZeroInt()
-	}
-	if out.EntryQuote.IsNil() {
-		out.EntryQuote = math.ZeroInt()
-	}
-	if out.LastFundingRatePrefixSum.IsNil() {
-		out.LastFundingRatePrefixSum = math.ZeroInt()
-	}
-	if out.AllocatedMargin.IsNil() {
-		out.AllocatedMargin = math.ZeroInt()
-	}
-	return out
-}
 
 // ceilDivPositive returns ⌈num/den⌉ for non-negative `num` and
 // strictly positive `den`. Mirrors lighter `ceil_div_biguint` on the
 // non-negative branch (the negative-numerator branch is handled in
 // `calculateIsolatedMarginDelta` via the `oldMV <= 0` short-circuit).
+//
+// `clonePosition` and `sameSign` formerly lived here; both were
+// retired during the position-math cohesion pass:
+//
+//   - GetPosition / IterateAccountPositions in x/account/keeper now
+//     normalise math.Int fields at every read entry, so a defensive
+//     clone-with-nil-guard is redundant.
+//   - sameSign was a duplicate of x/risk/keeper sameSignInt; the pair
+//     is now expressed by accounttypes.IsSameSide so trade and risk
+//     share one definition.
 func ceilDivPositive(num, den math.Int) math.Int {
 	if den.IsZero() {
 		return math.ZeroInt()
@@ -40,11 +28,4 @@ func ceilDivPositive(num, den math.Int) math.Int {
 		return q
 	}
 	return q.Add(math.OneInt())
-}
-
-func sameSign(a, b math.Int) bool {
-	if a.IsZero() || b.IsZero() {
-		return false
-	}
-	return a.IsNegative() == b.IsNegative()
 }

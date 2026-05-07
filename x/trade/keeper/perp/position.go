@@ -44,9 +44,10 @@ var errPositionOutOfBounds = errors.New("trade: post-trade position out of bound
 // route the realized PnL anywhere — `applyPositionFinancials` does
 // that based on the position's margin mode (lighter parity).
 //
-// The returned `positionChangeResult` carries enough context for the
-// caller to drive the rest of the lighter `apply_perps_trade` pipeline
-// (fee routing, isolated margin auto-allocation, risk check).
+// The four-quadrant arithmetic itself lives in
+// `accounttypes.AccountPosition.ApplyFill`, shared with x/risk's
+// `SimulateRiskAfterTakeover`. This wrapper is responsible only for
+// driving the persisted RMW + bounds-check + OI delta around it.
 //
 // `errPositionOutOfBounds` is returned when the new size or entry
 // quote would overflow the bit-width bounds enforced by the prover
@@ -58,58 +59,27 @@ func (e Engine) applyPositionChange(ctx context.Context, accountIdx uint64, mark
 		curSize     math.Int
 		newSize     math.Int
 		realizedPnL = math.ZeroInt()
+		sideFlipped bool
 	)
 
 	updated, err := e.accountKeeper.UpdatePosition(ctx, accountIdx, marketIdx, func(pos *accounttypes.AccountPosition) error {
-		old = clonePosition(*pos)
+		// `pos` is already nil-normalised by GetPosition (the RMW
+		// helper auto-vivifies a zero-valued record). Capture the
+		// pre-state by value so res.Old reflects the position as it
+		// was before this fill.
+		old = *pos
 		curSize = pos.Position
 		delta := math.NewIntFromUint64(baseAmount).MulRaw(sign)
-		newSize = curSize.Add(delta)
 
-		curEntryQuote := pos.EntryQuote
-		if curEntryQuote.IsNil() {
-			curEntryQuote = math.ZeroInt()
-		}
-		notional := math.NewIntFromUint64(baseAmount).Mul(math.NewIntFromUint64(uint64(price))).MulRaw(sign)
-
-		switch {
-		case curSize.IsZero():
-			// open new position
-			pos.EntryQuote = notional
-		case sameSign(curSize, delta):
-			// increase
-			pos.EntryQuote = curEntryQuote.Add(notional)
-		case newSize.IsZero() || sameSign(curSize, newSize):
-			// pure decrease (or close): realize partial PnL
-			realizedPnL = notional.Add(curEntryQuote.Mul(delta).Quo(curSize.Neg()))
-			// scale entry_quote proportionally to remaining size
-			if curSize.IsZero() {
-				pos.EntryQuote = math.ZeroInt()
-			} else {
-				pos.EntryQuote = curEntryQuote.Mul(newSize).Quo(curSize)
-			}
-		default:
-			// flip: close existing then open in opposite direction.
-			//
-			// Of the `baseAmount` units traded, `|curSize|` units close
-			// the existing position and the remainder opens the new one
-			// on the opposite side. The trade-side notional for the
-			// closing portion is `closeBase * price * sign` (signed by
-			// the trade direction, NOT the position direction): if the
-			// trade is a sell, the closing leg also sells, so the
-			// notional carries `sign = -1`. Using `-sign` here would
-			// produce a +/- mismatch between `closeNotional` and
-			// `curEntryQuote` and inflate `realized_pnl` by 2× the
-			// closing leg's notional — corrupting PnL realization on
-			// every flip.
-			closeBase := curSize.Abs()
-			closeNotional := closeBase.Mul(math.NewIntFromUint64(uint64(price))).MulRaw(sign)
-			realizedPnL = closeNotional.Add(curEntryQuote)
-			residual := delta.Add(curSize) // residual same sign as delta
-			residualNotional := residual.Mul(math.NewIntFromUint64(uint64(price)))
-			pos.EntryQuote = residualNotional
-		}
-		pos.Position = newSize
+		fill := pos.ApplyFill(delta, price)
+		// ApplyFill is a pure function; we still need to mirror its
+		// new size / entry_quote into the persisted record before
+		// setPosition runs.
+		pos.Position = fill.Position.Position
+		pos.EntryQuote = fill.Position.EntryQuote
+		newSize = pos.Position
+		realizedPnL = fill.RealizedPnL
+		sideFlipped = fill.SideFlipped
 
 		// Bounds check ahead of persistence so we never store a
 		// position the prover circuit would reject.
@@ -129,9 +99,9 @@ func (e Engine) applyPositionChange(ctx context.Context, accountIdx uint64, mark
 		AccountIdx:  accountIdx,
 		MarketIdx:   marketIdx,
 		Old:         old,
-		New:         clonePosition(updated),
+		New:         updated,
 		OIDelta:     oiDelta.Int64(),
-		SideFlipped: !curSize.IsZero() && !newSize.IsZero() && !sameSign(curSize, newSize),
+		SideFlipped: sideFlipped,
 		RealizedPnL: realizedPnL,
 	}, nil
 }
