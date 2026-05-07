@@ -8,3 +8,8 @@ perpd
 .vscode/
 
 gaia-ref/
+.claude/
+.cursor/
+
+todo/
+plans/
