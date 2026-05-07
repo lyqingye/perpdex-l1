@@ -321,7 +321,7 @@ func TestApplyPerpsMatching_OIRoundTrip(t *testing.T) {
 		AccountIndex: 20, Collateral: math.NewInt(1_000_000),
 	}))
 
-	require.NoError(t, k.ApplyPerpsMatching(ctx, tradekeeper.Fill{
+	require.NoError(t, k.ApplyPerpsMatching(ctx, tradekeeper.PerpFill{
 		MakerAccountIndex: 10, TakerAccountIndex: 20,
 		MarketIndex: 1, Price: 100, BaseAmount: 7,
 		IsTakerAsk: false, NoFee: true,
@@ -329,7 +329,7 @@ func TestApplyPerpsMatching_OIRoundTrip(t *testing.T) {
 	require.Equal(t, int64(7), mk.oi[1])
 
 	// Taker now closes against the same maker; OI must return to zero.
-	require.NoError(t, k.ApplyPerpsMatching(ctx, tradekeeper.Fill{
+	require.NoError(t, k.ApplyPerpsMatching(ctx, tradekeeper.PerpFill{
 		MakerAccountIndex: 10, TakerAccountIndex: 20,
 		MarketIndex: 1, Price: 100, BaseAmount: 7,
 		IsTakerAsk: true, NoFee: true,
@@ -346,7 +346,7 @@ func TestApplyPerpsMatching_RejectsMakerRisk(t *testing.T) {
 	require.NoError(t, ak.SetAccount(ctx, accounttypes.Account{AccountIndex: 10, Collateral: math.NewInt(1)}))
 	require.NoError(t, ak.SetAccount(ctx, accounttypes.Account{AccountIndex: 20, Collateral: math.NewInt(1)}))
 
-	err := k.ApplyPerpsMatching(ctx, tradekeeper.Fill{
+	err := k.ApplyPerpsMatching(ctx, tradekeeper.PerpFill{
 		MakerAccountIndex: 10, TakerAccountIndex: 20,
 		MarketIndex: 1, Price: 10, BaseAmount: 1,
 		IsTakerAsk: false, NoFee: true,
@@ -383,7 +383,7 @@ func TestApplyPerpsMatching_LiquidationFeeRoutesToLLP(t *testing.T) {
 	// improvement = (Price - ZeroPrice) * BaseAmount = (110-100)*1000 = 10_000.
 	// liq_fee_bps = 10_000 / FeeTick = 1% on improvement = 100.
 	// 1% notional cap = 110*1000/100 = 1100. raw_fee=100 < 1100 ⇒ fee=100.
-	require.NoError(t, k.ApplyPerpsMatching(ctx, tradekeeper.Fill{
+	require.NoError(t, k.ApplyPerpsMatching(ctx, tradekeeper.PerpFill{
 		MakerAccountIndex:       victimIdx,
 		TakerAccountIndex:       takerIdx,
 		MarketIndex:             1,
@@ -422,7 +422,7 @@ func TestApplyPerpsMatching_LiquidationFeeNoneAtZeroPrice(t *testing.T) {
 	require.NoError(t, ak.SetAccount(ctx, accounttypes.Account{
 		AccountIndex: llpIdx, Collateral: math.NewInt(0),
 	}))
-	require.NoError(t, k.ApplyPerpsMatching(ctx, tradekeeper.Fill{
+	require.NoError(t, k.ApplyPerpsMatching(ctx, tradekeeper.PerpFill{
 		MakerAccountIndex:       100,
 		TakerAccountIndex:       200,
 		MarketIndex:             1,
@@ -448,7 +448,7 @@ func TestApplySpotMatching_RejectsNegativeBalance(t *testing.T) {
 	ctx, _, _, _, k := newSdkCtx(t)
 
 	// Taker buys from maker, but maker has no base balance.
-	err := k.ApplySpotMatching(ctx, tradekeeper.Fill{
+	err := k.ApplySpotMatching(ctx, tradekeeper.SpotFill{
 		MakerAccountIndex: 100, TakerAccountIndex: 200,
 		MarketIndex: 2, Price: 5, BaseAmount: 10,
 		IsTakerAsk: false, NoFee: true,

@@ -95,8 +95,8 @@ type OrderbookKeeper interface {
 }
 
 type TradeKeeper interface {
-	ApplyPerpsMatching(ctx context.Context, f tradekeeper.Fill) error
-	ApplySpotMatching(ctx context.Context, f tradekeeper.Fill, baseAssetID, quoteAssetID uint32) error
+	ApplyPerpsMatching(ctx context.Context, f tradekeeper.PerpFill) error
+	ApplySpotMatching(ctx context.Context, f tradekeeper.SpotFill, baseAssetID, quoteAssetID uint32) error
 }
 
 // OracleKeeper provides the mark price used by the matching EndBlocker to

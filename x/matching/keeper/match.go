@@ -157,17 +157,6 @@ func (k Keeper) matchOrder(ctx context.Context, taker *orderbooktypes.Order, max
 			break
 		}
 
-		fill := tradekeeper.Fill{
-			MakerAccountIndex: best.OwnerAccountIndex,
-			TakerAccountIndex: taker.OwnerAccountIndex,
-			MarketIndex:       taker.MarketIndex,
-			Price:             best.Price,
-			BaseAmount:        tradeBase,
-			IsTakerAsk:        taker.IsAsk,
-			TakerFee:          market.TakerFee,
-			MakerFee:          market.MakerFee,
-		}
-
 		// Each (maker, fill) iteration runs inside an isolated cache
 		// context so a recoverable failure (maker risk regression,
 		// maker insufficient balance, ...) discards the partial
@@ -182,9 +171,27 @@ func (k Keeper) matchOrder(ctx context.Context, taker *orderbooktypes.Order, max
 		cacheCtx, writeCache := sdkCtx.CacheContext()
 		var applyErr error
 		if isPerp {
-			applyErr = k.tradeKeeper.ApplyPerpsMatching(cacheCtx, fill)
+			applyErr = k.tradeKeeper.ApplyPerpsMatching(cacheCtx, tradekeeper.PerpFill{
+				MakerAccountIndex: best.OwnerAccountIndex,
+				TakerAccountIndex: taker.OwnerAccountIndex,
+				MarketIndex:       taker.MarketIndex,
+				Price:             best.Price,
+				BaseAmount:        tradeBase,
+				IsTakerAsk:        taker.IsAsk,
+				TakerFee:          market.TakerFee,
+				MakerFee:          market.MakerFee,
+			})
 		} else {
-			applyErr = k.tradeKeeper.ApplySpotMatching(cacheCtx, fill, market.BaseAssetId, market.QuoteAssetId)
+			applyErr = k.tradeKeeper.ApplySpotMatching(cacheCtx, tradekeeper.SpotFill{
+				MakerAccountIndex: best.OwnerAccountIndex,
+				TakerAccountIndex: taker.OwnerAccountIndex,
+				MarketIndex:       taker.MarketIndex,
+				Price:             best.Price,
+				BaseAmount:        tradeBase,
+				IsTakerAsk:        taker.IsAsk,
+				TakerFee:          market.TakerFee,
+				MakerFee:          market.MakerFee,
+			}, market.BaseAssetId, market.QuoteAssetId)
 		}
 		if applyErr == nil {
 			// FillMakerOrder also runs inside the cache so a

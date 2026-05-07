@@ -26,7 +26,7 @@ func TestSentinel_ApplyPerpsMatching_TakerRiskRegression(t *testing.T) {
 	require.NoError(t, ak.SetAccount(ctx, accounttypes.Account{AccountIndex: 10, Collateral: math.NewInt(1)}))
 	require.NoError(t, ak.SetAccount(ctx, accounttypes.Account{AccountIndex: 20, Collateral: math.NewInt(1)}))
 
-	err := k.ApplyPerpsMatching(ctx, tradekeeper.Fill{
+	err := k.ApplyPerpsMatching(ctx, tradekeeper.PerpFill{
 		MakerAccountIndex: 10, TakerAccountIndex: 20,
 		MarketIndex: 1, Price: 10, BaseAmount: 1,
 		IsTakerAsk: false, NoFee: true,
@@ -48,7 +48,7 @@ func TestSentinel_ApplyPerpsMatching_MakerRiskRegression(t *testing.T) {
 	require.NoError(t, ak.SetAccount(ctx, accounttypes.Account{AccountIndex: 10, Collateral: math.NewInt(1)}))
 	require.NoError(t, ak.SetAccount(ctx, accounttypes.Account{AccountIndex: 20, Collateral: math.NewInt(1)}))
 
-	err := k.ApplyPerpsMatching(ctx, tradekeeper.Fill{
+	err := k.ApplyPerpsMatching(ctx, tradekeeper.PerpFill{
 		MakerAccountIndex: 10, TakerAccountIndex: 20,
 		MarketIndex: 1, Price: 10, BaseAmount: 1,
 		IsTakerAsk: false, NoFee: true,
@@ -82,7 +82,7 @@ func TestSentinel_ApplySpotMatching_TakerInsufficient(t *testing.T) {
 	}))
 	// Taker holds 0 quote.
 
-	err := k.ApplySpotMatching(ctx, tradekeeper.Fill{
+	err := k.ApplySpotMatching(ctx, tradekeeper.SpotFill{
 		MakerAccountIndex: makerIdx, TakerAccountIndex: takerIdx,
 		MarketIndex: 1, Price: 5, BaseAmount: 10,
 		IsTakerAsk: false, NoFee: true,
@@ -112,7 +112,7 @@ func TestSentinel_ApplySpotMatching_MakerInsufficient(t *testing.T) {
 	}))
 	// Maker holds 0 base.
 
-	err := k.ApplySpotMatching(ctx, tradekeeper.Fill{
+	err := k.ApplySpotMatching(ctx, tradekeeper.SpotFill{
 		MakerAccountIndex: makerIdx, TakerAccountIndex: takerIdx,
 		MarketIndex: 1, Price: 5, BaseAmount: 10,
 		IsTakerAsk: false, NoFee: true,
@@ -145,7 +145,7 @@ func TestSentinel_ApplySpotMatching_DrainsLockedBalanceFirst(t *testing.T) {
 		Balance: math.NewInt(10_000),
 	}))
 
-	require.NoError(t, k.ApplySpotMatching(ctx, tradekeeper.Fill{
+	require.NoError(t, k.ApplySpotMatching(ctx, tradekeeper.SpotFill{
 		MakerAccountIndex: makerIdx, TakerAccountIndex: takerIdx,
 		MarketIndex: 1, Price: 1, BaseAmount: 30,
 		IsTakerAsk: false, NoFee: true,
@@ -202,7 +202,7 @@ func TestSentinel_ApplyPerpsMatching_MakerInvalidPosition(t *testing.T) {
 		MarginMode:               perptypes.CrossMargin,
 	}))
 
-	err := k.ApplyPerpsMatching(ctx, tradekeeper.Fill{
+	err := k.ApplyPerpsMatching(ctx, tradekeeper.PerpFill{
 		MakerAccountIndex: makerIdx, TakerAccountIndex: takerIdx,
 		MarketIndex: 1, Price: 1, BaseAmount: 1,
 		IsTakerAsk: true, NoFee: true,
@@ -249,7 +249,7 @@ func TestSentinel_ApplyPerpsMatching_TakerInvalidPosition(t *testing.T) {
 		MarginMode:               perptypes.CrossMargin,
 	}))
 
-	err := k.ApplyPerpsMatching(ctx, tradekeeper.Fill{
+	err := k.ApplyPerpsMatching(ctx, tradekeeper.PerpFill{
 		MakerAccountIndex: makerIdx, TakerAccountIndex: takerIdx,
 		MarketIndex: 1, Price: 1, BaseAmount: 1,
 		IsTakerAsk: false, NoFee: true,
@@ -291,7 +291,7 @@ func TestSentinel_ApplyPerpsMatching_MakerInsufficientCollateral(t *testing.T) {
 		MarginMode:               perptypes.IsolatedMargin,
 	}))
 
-	err := k.ApplyPerpsMatching(ctx, tradekeeper.Fill{
+	err := k.ApplyPerpsMatching(ctx, tradekeeper.PerpFill{
 		MakerAccountIndex: makerIdx, TakerAccountIndex: takerIdx,
 		MarketIndex: 1, Price: 100, BaseAmount: 10,
 		IsTakerAsk: false, NoFee: true,
@@ -328,7 +328,7 @@ func TestSentinel_ApplyPerpsMatching_TakerInsufficientCollateral(t *testing.T) {
 		MarginMode:               perptypes.IsolatedMargin,
 	}))
 
-	err := k.ApplyPerpsMatching(ctx, tradekeeper.Fill{
+	err := k.ApplyPerpsMatching(ctx, tradekeeper.PerpFill{
 		MakerAccountIndex: makerIdx, TakerAccountIndex: takerIdx,
 		MarketIndex: 1, Price: 100, BaseAmount: 10,
 		IsTakerAsk: false, NoFee: true,
@@ -368,7 +368,7 @@ func TestSentinel_IsolatedMarginDelta_OpenIncreasesAllocation(t *testing.T) {
 		MarginMode:               perptypes.IsolatedMargin,
 	}))
 
-	require.NoError(t, k.ApplyPerpsMatching(ctx, tradekeeper.Fill{
+	require.NoError(t, k.ApplyPerpsMatching(ctx, tradekeeper.PerpFill{
 		MakerAccountIndex: makerIdx, TakerAccountIndex: takerIdx,
 		MarketIndex: 1, Price: 100, BaseAmount: 10,
 		IsTakerAsk: false, NoFee: true,
@@ -411,7 +411,7 @@ func TestSentinel_IsolatedMarginDelta_CloseReleasesAllocation(t *testing.T) {
 	}))
 
 	// Taker sells 10 at the SAME price → no PnL.
-	require.NoError(t, k.ApplyPerpsMatching(ctx, tradekeeper.Fill{
+	require.NoError(t, k.ApplyPerpsMatching(ctx, tradekeeper.PerpFill{
 		MakerAccountIndex: makerIdx, TakerAccountIndex: takerIdx,
 		MarketIndex: 1, Price: 100, BaseAmount: 10,
 		IsTakerAsk: true, NoFee: true,
@@ -456,7 +456,7 @@ func TestSentinel_IsolatedMarginDelta_DecreaseProportional(t *testing.T) {
 		MarginMode:               perptypes.IsolatedMargin,
 	}))
 
-	require.NoError(t, k.ApplyPerpsMatching(ctx, tradekeeper.Fill{
+	require.NoError(t, k.ApplyPerpsMatching(ctx, tradekeeper.PerpFill{
 		MakerAccountIndex: makerIdx, TakerAccountIndex: takerIdx,
 		MarketIndex: 1, Price: 100, BaseAmount: 5,
 		IsTakerAsk: true, NoFee: true,
@@ -502,7 +502,7 @@ func TestSentinel_IsolatedMarginDelta_FlipReMarginsToPositionRequirement(t *test
 		MarginMode:               perptypes.IsolatedMargin,
 	}))
 
-	require.NoError(t, k.ApplyPerpsMatching(ctx, tradekeeper.Fill{
+	require.NoError(t, k.ApplyPerpsMatching(ctx, tradekeeper.PerpFill{
 		MakerAccountIndex: makerIdx, TakerAccountIndex: takerIdx,
 		MarketIndex: 1, Price: 100, BaseAmount: 10,
 		IsTakerAsk: true, NoFee: true,

@@ -144,7 +144,7 @@ func (k Keeper) Liquidate(ctx context.Context, victim uint64, marketIdx uint32, 
 	// positive → IsTakerAsk=true. That is `pos.Position.IsNegative()`.
 	takerIsAsk := pos.Position.IsNegative()
 
-	fill := tradekeeper.Fill{
+	fill := tradekeeper.PerpFill{
 		MakerAccountIndex:       victim,
 		TakerAccountIndex:       liquidatorAccount,
 		MarketIndex:             marketIdx,
@@ -263,7 +263,7 @@ func (k Keeper) Deleverage(ctx context.Context, victim uint64, marketIdx uint32,
 	}
 
 	takerIsAsk := pos.Position.IsNegative()
-	if err := k.tradeKeeper.ApplyPerpsMatching(ctx, tradekeeper.Fill{
+	if err := k.tradeKeeper.ApplyPerpsMatching(ctx, tradekeeper.PerpFill{
 		MakerAccountIndex: victim,
 		TakerAccountIndex: deleverager,
 		MarketIndex:       marketIdx,
@@ -349,7 +349,7 @@ func (k Keeper) ApplyExitPosition(ctx context.Context, marketIdx uint32) error {
 			return false
 		}
 		takerIsAsk := pos.Position.IsNegative()
-		if err := k.tradeKeeper.ApplyPerpsMatching(ctx, tradekeeper.Fill{
+		if err := k.tradeKeeper.ApplyPerpsMatching(ctx, tradekeeper.PerpFill{
 			MakerAccountIndex: a.AccountIndex,
 			TakerAccountIndex: perptypes.InsuranceFundOperatorAccountIdx,
 			MarketIndex:       marketIdx,

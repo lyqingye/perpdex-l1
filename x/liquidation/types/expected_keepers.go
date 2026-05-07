@@ -68,5 +68,5 @@ type MatchingKeeper interface {
 }
 
 type TradeKeeper interface {
-	ApplyPerpsMatching(ctx context.Context, f tradekeeper.Fill) error
+	ApplyPerpsMatching(ctx context.Context, f tradekeeper.PerpFill) error
 }

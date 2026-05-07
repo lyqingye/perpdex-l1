@@ -34,14 +34,14 @@ func (s *injectingTrade) next() error {
 	return err
 }
 
-func (s *injectingTrade) ApplyPerpsMatching(ctx context.Context, f tradekeeper.Fill) error {
+func (s *injectingTrade) ApplyPerpsMatching(ctx context.Context, f tradekeeper.PerpFill) error {
 	if err := s.next(); err != nil {
 		return err
 	}
 	return s.stubTrade.ApplyPerpsMatching(ctx, f)
 }
 
-func (s *injectingTrade) ApplySpotMatching(ctx context.Context, f tradekeeper.Fill, b, q uint32) error {
+func (s *injectingTrade) ApplySpotMatching(ctx context.Context, f tradekeeper.SpotFill, b, q uint32) error {
 	if err := s.next(); err != nil {
 		return err
 	}

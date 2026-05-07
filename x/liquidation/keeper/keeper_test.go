@@ -239,10 +239,10 @@ func (s *stubRisk) ComputeIsolatedRisk(_ context.Context, acc uint64, mkt uint32
 }
 
 type stubTrade struct {
-	calls []tradekeeper.Fill
+	calls []tradekeeper.PerpFill
 }
 
-func (s *stubTrade) ApplyPerpsMatching(_ context.Context, f tradekeeper.Fill) error {
+func (s *stubTrade) ApplyPerpsMatching(_ context.Context, f tradekeeper.PerpFill) error {
 	s.calls = append(s.calls, f)
 	return nil
 }
