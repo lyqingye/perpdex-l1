@@ -8,8 +8,10 @@ import (
 )
 
 // IsSameSide returns true iff `a` and `b` are both non-zero and share the
-// same sign. perp 域用来判断 Position 与 Delta 是否同向（增仓 vs 减仓 vs 翻仓）；
-// 因此 zero 输入返回 false 而不是 true（"无方向" 不算同向）。
+// same sign. The perp domain uses it to classify whether `Position` and
+// `Delta` point the same way (increase vs decrease vs flip), so a zero
+// input returns false rather than true — "no direction" is not "same
+// direction".
 //
 // Centralised here to retire the duplicate sameSign / sameSignInt helpers
 // that previously lived inside x/trade/keeper/perp and x/risk/keeper.
@@ -35,8 +37,9 @@ func (p AccountPosition) Notional(markPrice uint32) math.Int {
 // CloseOutMarginFraction}; the helper exists so callers can plug in any of
 // the three without re-deriving the multiplication.
 //
-// 调用方负责保证 fractionBps <= MarginTick；不超过该上限是 x/market 的入参检查
-// 责任，本函数不再 clamp。
+// Callers are responsible for ensuring `fractionBps <= MarginTick`. That
+// invariant is enforced by x/market's parameter validation, not re-clamped
+// here.
 func (p AccountPosition) MarginRequirement(markPrice uint32, fractionBps uint32) math.Int {
 	if fractionBps == 0 {
 		return math.ZeroInt()
@@ -50,8 +53,8 @@ func (p AccountPosition) MarginRequirement(markPrice uint32, fractionBps uint32)
 }
 
 // InitialMargin returns the position's IM at `markPrice` using the market's
-// `default_initial_margin_fraction`. 仅对 perp 市场有意义；spot market 应直接
-// 走 spot keeper，不会调到这里。
+// `default_initial_margin_fraction`. Only meaningful for perp markets; spot
+// markets are settled by the spot keeper and never reach here.
 func (p AccountPosition) InitialMargin(markPrice uint32, md markettypes.MarketDetails) math.Int {
 	return p.MarginRequirement(markPrice, md.DefaultInitialMarginFraction)
 }
@@ -85,13 +88,16 @@ func (p AccountPosition) UnrealizedPnL(markPrice uint32) math.Int {
 // FillResult describes the post-trade snapshot produced by ApplyFill. Pure
 // value type:
 //
-//   - Position 是成交后的新仓位（含 Position size 与 EntryQuote），其它字段
-//     从原仓位透传（AccountIndex / MarketIndex / MarginMode / AllocatedMargin / …）。
-//   - RealizedPnL 是本次成交实现的 PnL；非零仅出现在 decrease|close|flip 场景。
-//   - SideFlipped 当 Position 穿越零点反向时为 true（用于上层路由 IM 重算）。
+//   - Position is the post-trade position (updated Position size and
+//     EntryQuote); all other fields (AccountIndex / MarketIndex /
+//     MarginMode / AllocatedMargin / …) are carried over from the input.
+//   - RealizedPnL is the PnL realised by this fill; non-zero only in the
+//     decrease | close | flip scenarios.
+//   - SideFlipped is true iff the position crossed zero and reversed
+//     direction, signalling callers to re-evaluate IM on the residual leg.
 //
-// 调用方自行负责持久化（SetPosition / UpdatePosition）和 bounds 检查
-// （POSITION_SIZE_BITS / ENTRY_QUOTE_BITS）。
+// Persistence (SetPosition / UpdatePosition) and bounds checks
+// (POSITION_SIZE_BITS / ENTRY_QUOTE_BITS) remain the caller's responsibility.
 type FillResult struct {
 	Position    AccountPosition
 	RealizedPnL math.Int

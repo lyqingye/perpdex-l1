@@ -170,8 +170,9 @@ func FindShareEntry(user types.Account, poolIdx uint64) (int, bool) {
 
 // IsPoolAccount reports whether the account holds a Public Pool /
 // Insurance Fund role (i.e. has a PublicPoolInfo and the right type).
-// 在 IsPoolType 之上额外要求 PublicPoolInfo != nil 是因为 pool 不变量
-// （TotalShares / Status / NAV 等）只挂在该子结构上。
+// Stronger than IsPoolType: pool-specific invariants (TotalShares /
+// Status / NAV) only live on PublicPoolInfo, so callers operating on
+// those must require it to be non-nil.
 func IsPoolAccount(a types.Account) bool {
 	return a.PublicPoolInfo != nil && a.IsPoolType()
 }

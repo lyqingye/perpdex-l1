@@ -3,6 +3,7 @@ package keeper_test
 import (
 	"context"
 	"os"
+	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -127,16 +128,26 @@ func (s *stubAccount) IterateAccounts(_ context.Context, cb func(accounttypes.Ac
 // row in the in-memory map, mirroring the real keeper's prefix-iter
 // semantics. processAccount / rankVictimPositionsByUPnL use this in
 // place of the legacy MaxPerpsMarketIndex full-scan loops.
+//
+// The production iterator walks rows in ascending (account, market)
+// order; we sort the stub's map output the same way so order-sensitive
+// behaviour (attemptsLeft consumption ordering, ranking ties) stays
+// reproducible across Go's randomised map iteration.
 func (s *stubAccount) IterateAccountPositions(
 	_ context.Context,
 	accountIdx uint64,
 	cb func(accounttypes.AccountPosition) bool,
 ) error {
-	for k, p := range s.pos {
+	keys := make([][2]uint64, 0, len(s.pos))
+	for k := range s.pos {
 		if k[0] != accountIdx {
 			continue
 		}
-		if cb(p) {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i][1] < keys[j][1] })
+	for _, k := range keys {
+		if cb(s.pos[k]) {
 			return nil
 		}
 	}
