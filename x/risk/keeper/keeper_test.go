@@ -55,6 +55,25 @@ func (s *stubAccountKeeper) IterateAccounts(_ context.Context, _ func(accounttyp
 	return nil
 }
 
+// IterateAccountPositions yields s.pos when the seeded account matches.
+// Skips empty positions (Position == 0) so behaviour matches the real
+// keeper closely enough for the slice of tests that exercise the
+// MaxPerpsMarketIndex full-scan code paths after the iterator refactor.
+func (s *stubAccountKeeper) IterateAccountPositions(
+	_ context.Context,
+	accountIdx uint64,
+	cb func(accounttypes.AccountPosition) bool,
+) error {
+	if s.pos.AccountIndex != accountIdx {
+		return nil
+	}
+	if s.pos.Position.IsNil() || s.pos.Position.IsZero() {
+		return nil
+	}
+	cb(s.pos)
+	return nil
+}
+
 type stubMarketKeeper struct{ md markettypes.MarketDetails }
 
 func (s stubMarketKeeper) GetMarket(_ context.Context, idx uint32) (markettypes.Market, error) {

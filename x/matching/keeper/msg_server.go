@@ -75,8 +75,7 @@ func (m msgServer) CreateOrder(ctx context.Context, msg *types.MsgCreateOrder) (
 	// (lighter parity: l2_create_order rejects PUBLIC_POOL_ACCOUNT_TYPE
 	// and INSURANCE_FUND_ACCOUNT_TYPE up front).
 	if acc, err := m.accountKeeper.GetAccount(ctx, msg.AccountIndex); err == nil {
-		if acc.AccountType == perptypes.PublicPoolAccountType ||
-			acc.AccountType == perptypes.InsuranceFundAccountType {
+		if acc.IsPoolType() {
 			return nil, types.ErrPoolCannotPlaceOrder
 		}
 	}

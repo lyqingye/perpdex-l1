@@ -15,6 +15,10 @@ type AccountKeeper interface {
 	GetPosition(ctx context.Context, accIdx uint64, marketIdx uint32) (accounttypes.AccountPosition, error)
 	GetAccountAsset(ctx context.Context, accIdx uint64, assetIdx uint32) (accounttypes.AccountAsset, error)
 	IterateAccounts(ctx context.Context, cb func(accounttypes.Account) bool) error
+	// IterateAccountPositions walks every persisted position row owned by
+	// `accountIdx`. Callback returns true to stop. Replaces the old
+	// MaxPerpsMarketIndex full-scan loops in risk / liquidation.
+	IterateAccountPositions(ctx context.Context, accountIdx uint64, cb func(accounttypes.AccountPosition) bool) error
 }
 
 type MarketKeeper interface {

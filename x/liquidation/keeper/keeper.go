@@ -227,11 +227,9 @@ func (k Keeper) Deleverage(ctx context.Context, victim uint64, marketIdx uint32,
 	if err != nil {
 		return err
 	}
-	isPoolDeleverager := dAcc.AccountType == perptypes.PublicPoolAccountType ||
-		dAcc.AccountType == perptypes.InsuranceFundAccountType
+	isPoolDeleverager := dAcc.IsPoolType()
 	if isPoolDeleverager {
-		if dAcc.PublicPoolInfo == nil ||
-			dAcc.PublicPoolInfo.Status != perptypes.PublicPoolStatusActive {
+		if err := accounttypes.EnsureActive(dAcc.PublicPoolInfo); err != nil {
 			return accounttypes.ErrPoolFrozen.Wrapf(
 				"deleverager pool %d is not ACTIVE", deleverager,
 			)
@@ -445,20 +443,21 @@ func (k Keeper) processAccount(
 	// positions.
 	healthyCross := crossStatus == perptypes.HealthHealthy || crossStatus == perptypes.HealthPreLiquidation
 
-	for marketIdx := uint32(0); marketIdx <= perptypes.MaxPerpsMarketIndex; marketIdx++ {
-		pos, err := k.accountKeeper.GetPosition(ctx, a.AccountIndex, marketIdx)
-		if err != nil {
-			return err
-		}
+	// Walk only persisted position rows; the legacy 0..MaxPerpsMarketIndex
+	// scan generated up to 256 GetPosition reads per liquidation pass.
+	var iterErr error
+	if err := k.accountKeeper.IterateAccountPositions(ctx, a.AccountIndex, func(pos accounttypes.AccountPosition) bool {
 		if pos.Position.IsZero() {
-			continue
+			return false
 		}
+		marketIdx := pos.MarketIndex
 		// Determine the relevant status (cross vs isolated).
 		var posStatus uint32
 		if pos.MarginMode == perptypes.IsolatedMargin {
 			s, err := k.riskKeeper.GetIsolatedHealthStatus(ctx, a.AccountIndex, marketIdx)
 			if err != nil {
-				return err
+				iterErr = err
+				return true
 			}
 			posStatus = s
 		} else {
@@ -467,7 +466,7 @@ func (k Keeper) processAccount(
 
 		if posStatus == perptypes.HealthHealthy || posStatus == perptypes.HealthPreLiquidation {
 			_ = k.Flags.Remove(ctx, collections.Join(a.AccountIndex, marketIdx))
-			continue
+			return false
 		}
 
 		// Flag for keeper bots.
@@ -488,7 +487,7 @@ func (k Keeper) processAccount(
 		// the LLP never breaches its IMR. Anything the LLP refuses
 		// falls through to ADL.
 		if attemptsLeft == nil || *attemptsLeft == 0 {
-			continue
+			return false
 		}
 		if posStatus == perptypes.HealthFullLiquidation || posStatus == perptypes.HealthBankruptcy {
 			absorbed, err := k.tryLLPAbsorb(ctx, a.AccountIndex, marketIdx, attemptsLeft)
@@ -504,6 +503,12 @@ func (k Keeper) processAccount(
 			}
 		}
 		_ = k.absorbNegativeCollateral(ctx, a.AccountIndex)
+		return false
+	}); err != nil {
+		return err
+	}
+	if iterErr != nil {
+		return iterErr
 	}
 
 	if healthyCross {
@@ -545,8 +550,9 @@ func (k Keeper) tryLLPAbsorb(
 	if err != nil {
 		return false, nil // IF not provisioned: silently skip.
 	}
-	if llp.PublicPoolInfo == nil ||
-		llp.PublicPoolInfo.Status != perptypes.PublicPoolStatusActive {
+	if err := accounttypes.EnsureActive(llp.PublicPoolInfo); err != nil {
+		// LLP not active (frozen / wind-down / missing info): silently
+		// skip; absorbing falls back to the next stage in the waterfall.
 		return false, nil
 	}
 
@@ -619,21 +625,20 @@ type rankedPosition struct {
 // spec requires for LLP takeover.
 func (k Keeper) rankVictimPositionsByUPnL(ctx context.Context, victim uint64) ([]rankedPosition, error) {
 	out := []rankedPosition{}
-	for marketIdx := uint32(0); marketIdx <= perptypes.MaxPerpsMarketIndex; marketIdx++ {
-		pos, err := k.accountKeeper.GetPosition(ctx, victim, marketIdx)
-		if err != nil {
-			return nil, err
-		}
+	if err := k.accountKeeper.IterateAccountPositions(ctx, victim, func(pos accounttypes.AccountPosition) bool {
 		if pos.Position.IsZero() {
-			continue
+			return false
 		}
-		uPnL, err := k.riskKeeper.GetPositionUnrealizedPnL(ctx, victim, marketIdx)
+		uPnL, err := k.riskKeeper.GetPositionUnrealizedPnL(ctx, victim, pos.MarketIndex)
 		if err != nil {
 			// Stale oracle: skip this market in the ranking, the
 			// outer EndBlocker will surface the error separately.
-			continue
+			return false
 		}
-		out = append(out, rankedPosition{MarketIndex: marketIdx, UnrealizedPnL: uPnL})
+		out = append(out, rankedPosition{MarketIndex: pos.MarketIndex, UnrealizedPnL: uPnL})
+		return false
+	}); err != nil {
+		return nil, err
 	}
 	sort.Slice(out, func(i, j int) bool {
 		// Ascending uPnL (most negative first); deterministic

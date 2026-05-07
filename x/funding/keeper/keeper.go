@@ -85,16 +85,12 @@ func (k Keeper) SettlePositionFunding(ctx context.Context, accountIndex uint64, 
 	if d.FundingRatePrefixSum.IsNil() {
 		d.FundingRatePrefixSum = math.ZeroInt()
 	}
+	// `pos` is read through accountKeeper.UpdatePosition which routes
+	// every load via GetPosition; that helper already normalises Position
+	// / EntryQuote / LastFundingRatePrefixSum / AllocatedMargin to
+	// math.ZeroInt() when missing, so we can drop the per-field IsNil
+	// guards that used to live inline here.
 	_, err = k.accountKeeper.UpdatePosition(ctx, accountIndex, marketIndex, func(pos *accounttypes.AccountPosition) error {
-		if pos.LastFundingRatePrefixSum.IsNil() {
-			pos.LastFundingRatePrefixSum = math.ZeroInt()
-		}
-		if pos.Position.IsNil() {
-			pos.Position = math.ZeroInt()
-		}
-		if pos.EntryQuote.IsNil() {
-			pos.EntryQuote = math.ZeroInt()
-		}
 		if pos.Position.IsZero() {
 			pos.LastFundingRatePrefixSum = d.FundingRatePrefixSum
 			return nil

@@ -82,8 +82,7 @@ func (gs GenesisState) Validate() error {
 			return ErrInvalidParams.Wrapf("negative collateral on account_index=%d", a.AccountIndex)
 		}
 		// Pool accounts must carry PublicPoolInfo; regular accounts must not.
-		if a.AccountType == perptypes.PublicPoolAccountType ||
-			a.AccountType == perptypes.InsuranceFundAccountType {
+		if a.IsPoolType() {
 			if a.PublicPoolInfo == nil {
 				return ErrInvalidPoolAccount.Wrapf("account_index=%d missing PublicPoolInfo", a.AccountIndex)
 			}

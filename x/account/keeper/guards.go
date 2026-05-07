@@ -3,7 +3,6 @@ package keeper
 import (
 	"context"
 
-	perptypes "github.com/perpdex/perpdex-l1/types"
 	"github.com/perpdex/perpdex-l1/x/account/types"
 )
 
@@ -17,8 +16,7 @@ func (k Keeper) rejectPoolAccount(ctx context.Context, idx uint64) error {
 	if err != nil {
 		return err
 	}
-	if a.AccountType == perptypes.PublicPoolAccountType ||
-		a.AccountType == perptypes.InsuranceFundAccountType {
+	if a.IsPoolType() {
 		return types.ErrPoolGenericMsg.Wrapf("account %d is a pool account", idx)
 	}
 	return nil
@@ -28,20 +26,27 @@ func (k Keeper) rejectPoolAccount(ctx context.Context, idx uint64) error {
 // position held by `accountIdx`. Called before Withdraw/Transfer/UpdateMargin
 // so the subsequent risk check sees the post-funding EntryQuote and not a
 // stale snapshot.
+//
+// Walks only persisted position rows via IterateAccountPositions; the
+// previous implementation iterated 0..MaxPerpsMarketIndex (255 reads per
+// call) which scaled with MaxPerpsMarketIndex regardless of how many
+// markets the account actually held a position in.
 func (k Keeper) settleAllPositionFunding(ctx context.Context, accountIdx uint64) error {
-	for marketIdx := uint32(0); marketIdx <= perptypes.MaxPerpsMarketIndex; marketIdx++ {
-		pos, err := k.GetPosition(ctx, accountIdx, marketIdx)
-		if err != nil {
-			return err
-		}
+	var settleErr error
+	err := k.IterateAccountPositions(ctx, accountIdx, func(pos types.AccountPosition) bool {
 		if pos.Position.IsZero() {
-			continue
+			return false
 		}
-		if err := k.fundingKeeper.SettlePositionFunding(ctx, accountIdx, marketIdx); err != nil {
-			return err
+		if err := k.fundingKeeper.SettlePositionFunding(ctx, accountIdx, pos.MarketIndex); err != nil {
+			settleErr = err
+			return true
 		}
+		return false
+	})
+	if err != nil {
+		return err
 	}
-	return nil
+	return settleErr
 }
 
 // requireRiskOK enforces a post-state risk check. The risk keeper is wired

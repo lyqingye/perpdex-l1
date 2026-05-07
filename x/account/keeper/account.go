@@ -689,3 +689,54 @@ func (k Keeper) GetPosition(ctx context.Context, accIdx uint64, marketIdx uint32
 	}
 	return p, nil
 }
+
+// IterateAccountPositions walks every persisted AccountPosition row owned
+// by `accountIdx`. The callback returns `true` to stop early. Each row is
+// normalised the same way `GetPosition` would (math.Int fields are
+// non-nil), so callers can do arithmetic without re-checking IsNil.
+//
+// Replaces the old MaxPerpsMarketIndex-wide loops in
+// risk.ComputeRiskInfo / IsValidRiskChange / SnapshotPreRisk /
+// IterateIsolatedPositions / liquidation.processAccount /
+// rankVictimPositionsByUPnL / account.settleAllPositionFunding which each
+// did up to 256 GetPosition reads per call. With this iterator we only
+// touch persisted rows.
+//
+// Callers may still see Position == 0 rows (the keeper does not delete
+// positions when they net to zero, only when funding is settled and the
+// position is closed); skip them with `pos.Position.IsZero()` if the
+// caller cares about non-empty positions only.
+func (k Keeper) IterateAccountPositions(
+	ctx context.Context,
+	accountIdx uint64,
+	cb func(types.AccountPosition) bool,
+) error {
+	rng := collections.NewPrefixedPairRange[uint64, uint32](accountIdx)
+	iter, err := k.AccountPositions.Iterate(ctx, rng)
+	if err != nil {
+		return err
+	}
+	defer iter.Close()
+	for ; iter.Valid(); iter.Next() {
+		p, err := iter.Value()
+		if err != nil {
+			return err
+		}
+		if p.Position.IsNil() {
+			p.Position = math.ZeroInt()
+		}
+		if p.EntryQuote.IsNil() {
+			p.EntryQuote = math.ZeroInt()
+		}
+		if p.LastFundingRatePrefixSum.IsNil() {
+			p.LastFundingRatePrefixSum = math.ZeroInt()
+		}
+		if p.AllocatedMargin.IsNil() {
+			p.AllocatedMargin = math.ZeroInt()
+		}
+		if cb(p) {
+			return nil
+		}
+	}
+	return nil
+}

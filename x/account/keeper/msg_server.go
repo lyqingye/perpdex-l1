@@ -196,8 +196,7 @@ func (m msgServer) UpdateAccountConfig(ctx context.Context, msg *types.MsgUpdate
 	if a.OwnerAddress != msg.Sender {
 		return nil, types.ErrUnauthorized
 	}
-	if a.AccountType == perptypes.PublicPoolAccountType ||
-		a.AccountType == perptypes.InsuranceFundAccountType {
+	if a.IsPoolType() {
 		return nil, types.ErrPoolGenericMsg.Wrapf("account %d is a pool account", a.AccountIndex)
 	}
 	if err := m.UpdateAccountTradingMode(ctx, a.AccountIndex, msg.NewTradingMode); err != nil {
@@ -218,8 +217,7 @@ func (m msgServer) UpdateAccountAssetConfig(ctx context.Context, msg *types.MsgU
 	if a.OwnerAddress != msg.Sender {
 		return nil, types.ErrUnauthorized
 	}
-	if a.AccountType == perptypes.PublicPoolAccountType ||
-		a.AccountType == perptypes.InsuranceFundAccountType {
+	if a.IsPoolType() {
 		return nil, types.ErrPoolGenericMsg.Wrapf("account %d is a pool account", a.AccountIndex)
 	}
 	if err := m.SetAccountAssetMarginMode(ctx, msg.AccountIndex, msg.AssetIndex, msg.NewMarginMode); err != nil {
@@ -317,12 +315,12 @@ func (m msgServer) UpdateMargin(ctx context.Context, msg *types.MsgUpdateMargin)
 	}
 	amount := msg.Amount
 
+	// AllocatedMargin is already normalised to ZeroInt() by
+	// GetPosition / UpdatePosition's auto-vivified default, so the
+	// inline IsNil-guards used to live here are redundant.
 	switch msg.Action {
 	case perptypes.AddMargin:
 		if _, err := m.UpdatePosition(ctx, msg.AccountIndex, msg.MarketIndex, func(p *types.AccountPosition) error {
-			if p.AllocatedMargin.IsNil() {
-				p.AllocatedMargin = math.ZeroInt()
-			}
 			p.AllocatedMargin = p.AllocatedMargin.Add(amount)
 			return nil
 		}); err != nil {
@@ -336,9 +334,6 @@ func (m msgServer) UpdateMargin(ctx context.Context, msg *types.MsgUpdateMargin)
 			return nil, types.ErrInsufficientFunds
 		}
 		if _, err := m.UpdatePosition(ctx, msg.AccountIndex, msg.MarketIndex, func(p *types.AccountPosition) error {
-			if p.AllocatedMargin.IsNil() {
-				p.AllocatedMargin = math.ZeroInt()
-			}
 			p.AllocatedMargin = p.AllocatedMargin.Sub(amount)
 			return nil
 		}); err != nil {

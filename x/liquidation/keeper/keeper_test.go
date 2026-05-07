@@ -122,6 +122,26 @@ func (s *stubAccount) IterateAccounts(_ context.Context, cb func(accounttypes.Ac
 	}
 	return nil
 }
+
+// IterateAccountPositions yields every persisted (acc, mkt) → position
+// row in the in-memory map, mirroring the real keeper's prefix-iter
+// semantics. processAccount / rankVictimPositionsByUPnL use this in
+// place of the legacy MaxPerpsMarketIndex full-scan loops.
+func (s *stubAccount) IterateAccountPositions(
+	_ context.Context,
+	accountIdx uint64,
+	cb func(accounttypes.AccountPosition) bool,
+) error {
+	for k, p := range s.pos {
+		if k[0] != accountIdx {
+			continue
+		}
+		if cb(p) {
+			return nil
+		}
+	}
+	return nil
+}
 func (s *stubAccount) IsAuthorized(_ context.Context, signer string, idx uint64) (bool, error) {
 	if a, ok := s.accounts[idx]; ok {
 		return a.OwnerAddress == signer, nil
