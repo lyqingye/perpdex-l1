@@ -22,7 +22,7 @@ grep -A5 '\[oracle\]' ~/.perpd/config/app.toml
 # does not register gRPC reflection, so grpcurl must be pointed at the
 # bundled .proto file.)
 grpcurl -plaintext \
-  -import-path oracle-sidecar/service/proto -proto oracle.proto \
+  -import-path services/oracle/service/proto -proto oracle.proto \
   localhost:8080 perpdex.oracle.sidecar.v1.Oracle/Prices
 # Are vote extensions enabled at consensus level?
 perpd query consensus params abci

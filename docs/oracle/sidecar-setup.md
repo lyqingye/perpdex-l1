@@ -1,13 +1,13 @@
 # Oracle sidecar setup
 
-The sidecar is a single Go binary built from `./oracle-sidecar`. It reads a
+The sidecar is a single Go binary built from `./services/oracle`. It reads a
 JSON config and exposes both gRPC (price API consumed by the chain
 daemon) and HTTP (Prometheus / health endpoints).
 
 ## Build
 
 ```sh
-cd oracle-sidecar
+cd services/oracle
 make build         # writes ./build/oracle-sidecar
 make test          # unit tests + bufconn-based gRPC e2e
 make run           # local dev run with the bundled oracle.json

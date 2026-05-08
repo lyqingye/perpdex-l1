@@ -137,7 +137,7 @@ func (c *Config) Validate() error {
 // Default returns an opinionated config sufficient to run a dev sidecar
 // against public endpoints with no credentials. The pair set, intervals
 // and CoinGecko slug map are kept in lock-step with the bundled
-// `oracle-sidecar/oracle.json` so `--config ""` and `--config
+// `services/oracle/oracle.json` so `--config ""` and `--config
 // oracle.json` produce equivalent behaviour.
 func Default() *Config {
 	c := &Config{

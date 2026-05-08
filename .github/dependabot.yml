@@ -11,6 +11,6 @@ updates:
       interval: "weekly"
 
   - package-ecosystem: "gomod"
-    directory: "/oracle-sidecar"
+    directory: "/services/oracle"
     schedule:
       interval: "weekly"
