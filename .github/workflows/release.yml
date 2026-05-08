@@ -23,9 +23,14 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+          cache-dependency-path: |
+            go.sum
+            services/oracle/go.sum
 
       - name: Run tests
-        run: make test
+        run: |
+          make test
+          make test-sidecar
 
   build:
     name: Build ${{ matrix.goos }} ${{ matrix.goarch }}
@@ -51,6 +56,9 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+          cache-dependency-path: |
+            go.sum
+            services/oracle/go.sum
 
       - name: Build archive
         env:
