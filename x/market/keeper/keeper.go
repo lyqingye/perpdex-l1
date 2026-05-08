@@ -7,7 +7,6 @@ import (
 
 	"cosmossdk.io/collections"
 	"cosmossdk.io/core/store"
-	"cosmossdk.io/math"
 
 	"github.com/cosmos/cosmos-sdk/codec"
 
@@ -68,6 +67,9 @@ func (k Keeper) GetMarket(ctx context.Context, idx uint32) (types.Market, error)
 }
 
 // GetMarketDetails returns a MarketDetails or ErrMarketNotFound.
+//
+// The persisted row is funnelled through `MarketDetails.NormalizeIntFields()`
+// so callers can read `FundingRatePrefixSum` without re-checking IsNil.
 func (k Keeper) GetMarketDetails(ctx context.Context, idx uint32) (types.MarketDetails, error) {
 	d, err := k.MarketDetails.Get(ctx, idx)
 	if err != nil {
@@ -76,9 +78,7 @@ func (k Keeper) GetMarketDetails(ctx context.Context, idx uint32) (types.MarketD
 		}
 		return types.MarketDetails{}, err
 	}
-	if d.FundingRatePrefixSum.IsNil() {
-		d.FundingRatePrefixSum = math.ZeroInt()
-	}
+	d.NormalizeIntFields()
 	return d, nil
 }
 

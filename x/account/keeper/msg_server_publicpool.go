@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strconv"
 
-	"cosmossdk.io/collections"
 	"cosmossdk.io/math"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -69,10 +68,9 @@ func (m msgServer) CreatePublicPool(ctx context.Context, msg *types.MsgCreatePub
 		Mul(math.NewIntFromUint64(perptypes.InitialPoolShareValue))
 	seedCollat := seedUSDC.Mul(math.NewIntFromUint64(perptypes.USDCToCollateralMultiplier))
 
-	// Pre-flight: master must have enough collateral.
-	if master.Collateral.IsNil() {
-		master.Collateral = math.ZeroInt()
-	}
+	// Pre-flight: master must have enough collateral. `master` came
+	// from GetAccount, which normalises Collateral, so no IsNil guard
+	// is needed here.
 	if master.Collateral.LT(seedCollat) {
 		return nil, types.ErrInsufficientFunds.Wrapf(
 			"need %s, have %s", seedCollat.String(), master.Collateral.String(),
@@ -214,23 +212,23 @@ func (m msgServer) assertPoolEmpty(ctx context.Context, pool types.Account) erro
 			"pool has %d open order(s)", pool.TotalOrderCount,
 		)
 	}
-	// Walk positions for this pool index.
-	pref := collections.NewPrefixedPairRange[uint64, uint32](pool.AccountIndex)
-	iter, err := m.AccountPositions.Iterate(ctx, pref)
-	if err != nil {
+	// Walk positions for this pool index. IterateAccountPositions
+	// normalises every row, so a plain IsZero check is enough.
+	var firstNonZero *types.AccountPosition
+	if err := m.IterateAccountPositions(ctx, pool.AccountIndex, func(p types.AccountPosition) bool {
+		if !p.Position.IsZero() {
+			pos := p
+			firstNonZero = &pos
+			return true
+		}
+		return false
+	}); err != nil {
 		return err
 	}
-	defer iter.Close()
-	for ; iter.Valid(); iter.Next() {
-		p, err := iter.Value()
-		if err != nil {
-			return err
-		}
-		if !p.Position.IsNil() && !p.Position.IsZero() {
-			return types.ErrPoolMustBeEmpty.Wrapf(
-				"pool has non-zero position in market %d", p.MarketIndex,
-			)
-		}
+	if firstNonZero != nil {
+		return types.ErrPoolMustBeEmpty.Wrapf(
+			"pool has non-zero position in market %d", firstNonZero.MarketIndex,
+		)
 	}
 	return nil
 }
@@ -318,9 +316,6 @@ func (m msgServer) MintShares(ctx context.Context, msg *types.MsgMintShares) (*t
 	usdc := math.NewIntFromUint64(msg.PrincipalAmount)
 	collatDelta := usdc.Mul(math.NewIntFromUint64(perptypes.USDCToCollateralMultiplier))
 
-	if master.Collateral.IsNil() {
-		master.Collateral = math.ZeroInt()
-	}
 	if master.Collateral.LT(collatDelta) {
 		return nil, types.ErrInsufficientFunds.Wrapf(
 			"need %s, have %s", collatDelta.String(), master.Collateral.String(),
@@ -636,10 +631,10 @@ func (m msgServer) StrategyTransfer(ctx context.Context, msg *types.MsgStrategyT
 			copy(fixed, info.Strategies)
 			info.Strategies = fixed
 		}
+		// Strategies entries are normalised by Account.NormalizeIntFields
+		// on read (and the slot rebuild above seeds new entries with
+		// math.ZeroInt), so direct arithmetic is safe.
 		from := info.Strategies[msg.FromStrategy]
-		if from.IsNil() {
-			from = math.ZeroInt()
-		}
 		if from.LT(msg.Amount) {
 			return types.ErrInsufficientFunds.Wrapf(
 				"strategy[%d] has %s, need %s",
@@ -647,9 +642,6 @@ func (m msgServer) StrategyTransfer(ctx context.Context, msg *types.MsgStrategyT
 			)
 		}
 		to := info.Strategies[msg.ToStrategy]
-		if to.IsNil() {
-			to = math.ZeroInt()
-		}
 		info.Strategies[msg.FromStrategy] = from.Sub(msg.Amount)
 		info.Strategies[msg.ToStrategy] = to.Add(msg.Amount)
 		return nil

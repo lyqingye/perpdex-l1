@@ -184,10 +184,11 @@ func (e Engine) rebalanceIsolatedMargin(ctx context.Context, res *positionChange
 func (e Engine) calculateIsolatedMarginDelta(ctx context.Context, res *positionChangeResult, fee math.Int) (math.Int, error) {
 	newPos := res.New
 	oldPos := res.Old
+	// `res.New` / `res.Old` come from accountKeeper.UpdatePosition /
+	// GetPosition, which both run NormalizeIntFields on the way out, so
+	// AllocatedMargin (and the rest of the math.Int fields) is always
+	// non-nil here.
 	allocated := newPos.AllocatedMargin
-	if allocated.IsNil() {
-		allocated = math.ZeroInt()
-	}
 
 	// case 1: new position closed → release positive allocated_margin
 	if newPos.Position.IsZero() {
@@ -223,9 +224,6 @@ func (e Engine) calculateIsolatedMarginDelta(ctx context.Context, res *positionC
 			return math.ZeroInt(), err
 		}
 		oldAllocated := oldPos.AllocatedMargin
-		if oldAllocated.IsNil() {
-			oldAllocated = math.ZeroInt()
-		}
 		oldMV := oldAllocated.Add(oldUPnL)
 		newMV := allocated.Add(newUPnL)
 

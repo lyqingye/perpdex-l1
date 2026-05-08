@@ -108,14 +108,10 @@ func (e Engine) applyPositionChange(ctx context.Context, accountIdx uint64, mark
 
 // isWithinPositionBounds enforces the prover circuit's hard limits
 // `|position| < 2^POSITION_SIZE_BITS` and `|entry_quote| < 2^ENTRY_QUOTE_BITS`.
-// Lighter `position.is_valid` checks the same envelope.
+// Lighter `position.is_valid` checks the same envelope. Inputs come
+// from `applyPositionChange`, where they are post-`ApplyFill` values
+// derived from a normalised position, so they are always non-nil.
 func isWithinPositionBounds(position, entryQuote math.Int) bool {
-	if position.IsNil() {
-		position = math.ZeroInt()
-	}
-	if entryQuote.IsNil() {
-		entryQuote = math.ZeroInt()
-	}
 	maxPos := math.NewIntFromUint64(perptypes.MaxPositionSize)
 	maxEntryQuote := math.NewIntFromUint64(perptypes.MaxEntryQuote)
 	if position.Abs().GT(maxPos) {

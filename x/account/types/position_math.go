@@ -7,6 +7,29 @@ import (
 	markettypes "github.com/perpdex/perpdex-l1/x/market/types"
 )
 
+// NormalizeIntFields rewrites every nil math.Int on the position to
+// math.ZeroInt() so subsequent arithmetic never panics on a freshly
+// deserialised default-valued row. The keeper's GetPosition /
+// IterateAccountPositions / UpdatePosition helpers funnel through this
+// method so downstream code can drop the per-field IsNil guards that
+// used to be inlined at every read site. The pure-math methods on
+// AccountPosition (Notional, UnrealizedPnL, ApplyFill, MarginRequirement)
+// rely on this contract being upheld by callers.
+func (p *AccountPosition) NormalizeIntFields() {
+	if p.Position.IsNil() {
+		p.Position = math.ZeroInt()
+	}
+	if p.EntryQuote.IsNil() {
+		p.EntryQuote = math.ZeroInt()
+	}
+	if p.LastFundingRatePrefixSum.IsNil() {
+		p.LastFundingRatePrefixSum = math.ZeroInt()
+	}
+	if p.AllocatedMargin.IsNil() {
+		p.AllocatedMargin = math.ZeroInt()
+	}
+}
+
 // IsSameSide returns true iff `a` and `b` are both non-zero and share the
 // same sign. The perp domain uses it to classify whether `Position` and
 // `Delta` point the same way (increase vs decrease vs flip), so a zero
@@ -23,10 +46,12 @@ func IsSameSide(a, b math.Int) bool {
 }
 
 // Notional returns |position| * mark. Returns ZeroInt when either the
-// position size is nil/zero or `markPrice` is zero. Pure value receiver,
-// no I/O.
+// position size is zero or `markPrice` is zero. Pure value receiver,
+// no I/O. Caller MUST hand in a position whose math.Int fields have
+// been normalised (use `NormalizeIntFields()`); the keeper getter /
+// iterator helpers already do this.
 func (p AccountPosition) Notional(markPrice uint32) math.Int {
-	if p.Position.IsNil() || p.Position.IsZero() || markPrice == 0 {
+	if p.Position.IsZero() || markPrice == 0 {
 		return math.ZeroInt()
 	}
 	return p.Position.Abs().Mul(math.NewIntFromUint64(uint64(markPrice)))
@@ -73,16 +98,13 @@ func (p AccountPosition) CloseOutMargin(markPrice uint32, md markettypes.MarketD
 
 // UnrealizedPnL returns position * mark - entry_quote at `markPrice`. Sign is
 // positive when the position is in profit. Returns ZeroInt for empty positions
-// or when the mark is zero.
+// or when the mark is zero. Caller MUST hand in a normalised position (see
+// `NormalizeIntFields`).
 func (p AccountPosition) UnrealizedPnL(markPrice uint32) math.Int {
-	if p.Position.IsNil() || p.Position.IsZero() || markPrice == 0 {
+	if p.Position.IsZero() || markPrice == 0 {
 		return math.ZeroInt()
 	}
-	entryQuote := p.EntryQuote
-	if entryQuote.IsNil() {
-		entryQuote = math.ZeroInt()
-	}
-	return p.Position.Mul(math.NewIntFromUint64(uint64(markPrice))).Sub(entryQuote)
+	return p.Position.Mul(math.NewIntFromUint64(uint64(markPrice))).Sub(p.EntryQuote)
 }
 
 // FillResult describes the post-trade snapshot produced by ApplyFill. Pure
@@ -128,18 +150,15 @@ type FillResult struct {
 // UpdatePosition) and x/risk `SimulateRiskAfterTakeover` (which inspects
 // the post-state for IM/MM/CM aggregation) consume this single source of
 // truth, retiring the duplicate switch that previously lived in both.
+//
+// Caller MUST hand in a normalised position (see `NormalizeIntFields`)
+// and a non-nil `delta`. Both call sites build `delta` from
+// `math.NewIntFromUint64(...)` so it is always non-nil; the position
+// flows through `accountKeeper.GetPosition`/`UpdatePosition`, which
+// normalise the row before returning.
 func (p AccountPosition) ApplyFill(delta math.Int, price uint32) FillResult {
 	curSize := p.Position
-	if curSize.IsNil() {
-		curSize = math.ZeroInt()
-	}
 	curEntryQuote := p.EntryQuote
-	if curEntryQuote.IsNil() {
-		curEntryQuote = math.ZeroInt()
-	}
-	if delta.IsNil() {
-		delta = math.ZeroInt()
-	}
 
 	priceInt := math.NewIntFromUint64(uint64(price))
 	// notional carries the trade-direction sign by construction:

@@ -1,8 +1,46 @@
 package types
 
 import (
+	"cosmossdk.io/math"
+
 	perptypes "github.com/perpdex/perpdex-l1/types"
 )
+
+// NormalizeIntFields rewrites every nil math.Int on the account (and on
+// its embedded PublicPoolInfo, when present) to math.ZeroInt() so
+// downstream callers can treat the row as if it were freshly minted.
+// The keeper's GetAccount funnel-point invokes this so consumers don't
+// have to repeat per-field IsNil() guards.
+func (a *Account) NormalizeIntFields() {
+	if a.Collateral.IsNil() {
+		a.Collateral = math.ZeroInt()
+	}
+	if a.PublicPoolInfo != nil {
+		if a.PublicPoolInfo.TotalShares.IsNil() {
+			a.PublicPoolInfo.TotalShares = math.ZeroInt()
+		}
+		if a.PublicPoolInfo.OperatorShares.IsNil() {
+			a.PublicPoolInfo.OperatorShares = math.ZeroInt()
+		}
+		for i, s := range a.PublicPoolInfo.Strategies {
+			if s.IsNil() {
+				a.PublicPoolInfo.Strategies[i] = math.ZeroInt()
+			}
+		}
+	}
+}
+
+// NormalizeIntFields rewrites every nil math.Int on the spot-asset row
+// to math.ZeroInt(). The keeper's GetAccountAsset funnel-point invokes
+// this so callers can treat Balance / LockedBalance as always non-nil.
+func (a *AccountAsset) NormalizeIntFields() {
+	if a.Balance.IsNil() {
+		a.Balance = math.ZeroInt()
+	}
+	if a.LockedBalance.IsNil() {
+		a.LockedBalance = math.ZeroInt()
+	}
+}
 
 // IsPoolType reports whether the account's `AccountType` is one of the
 // public-pool / insurance-fund roles. This is the lightweight type-only
