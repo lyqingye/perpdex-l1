@@ -72,8 +72,14 @@ func (p AccountPosition) MarginRequirement(markPrice uint32, fractionBps uint32)
 // InitialMargin returns the position's IM at `markPrice` using the market's
 // `default_initial_margin_fraction`. Only meaningful for perp markets; spot
 // markets are settled by the spot keeper and never reach here.
+//
+// Thin wrapper around `MarketDetails.InitialMargin(p.Position.Abs(), markPrice)`
+// — the formula owner is `MarketDetails` because the IMF multiplier lives
+// on the market row. Keeping this convenience method preserves the
+// `pos.InitialMargin(mark, md)` call style used by risk keeper's bulk
+// aggregation paths (cross / isolated / takeover-simulation).
 func (p AccountPosition) InitialMargin(markPrice uint32, md markettypes.MarketDetails) math.Int {
-	return p.MarginRequirement(markPrice, md.DefaultInitialMarginFraction)
+	return md.InitialMargin(p.Position.Abs(), markPrice)
 }
 
 // MaintenanceMargin returns the position's MM at `markPrice` using the market's
@@ -96,6 +102,21 @@ func (p AccountPosition) UnrealizedPnL(markPrice uint32) math.Int {
 		return math.ZeroInt()
 	}
 	return p.Position.Mul(math.NewIntFromUint64(uint64(markPrice))).Sub(p.EntryQuote)
+}
+
+// MarketValue returns AllocatedMargin + UnrealizedPnL(markPrice) — the
+// lighter "market_value" fed into `calculate_isolated_margin_change` case 4
+// (same-side, OI-shrank proportional release). Pure value receiver so the
+// trade keeper's isolated-margin delta routine can express
+// `oldMV` / `newMV` as a single method call instead of inlining
+// `AllocatedMargin.Add(uPnL)` twice. Returns just `AllocatedMargin` when
+// the position is empty or the mark is zero (uPnL collapses to zero).
+func (p AccountPosition) MarketValue(markPrice uint32) math.Int {
+	allocated := p.AllocatedMargin
+	if allocated.IsNil() {
+		allocated = math.ZeroInt()
+	}
+	return allocated.Add(p.UnrealizedPnL(markPrice))
 }
 
 // FillResult describes the post-trade snapshot produced by ApplyFill. Pure
