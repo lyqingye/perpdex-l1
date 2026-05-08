@@ -34,8 +34,17 @@ import (
 //     routed to the LLP / Insurance Fund. The matching loop also
 //     short-circuits the moment the victim is no longer in
 //     liquidation.
-//  5. Top up any residual negative collateral from the Insurance Fund
-//     so a single MsgLiquidate cannot leave residual debt on the chain.
+//
+// There is intentionally no post-trade "top up negative collateral
+// from the Insurance Fund" step. Lighter's partial-liquidation IOC
+// trades at maker prices >= zero_price, and the liquidation fee is
+// taxed only on the improvement above zero_price (`matching_engine.rs`
+// `min(liquidation_fee, price_diff_rate)`); by construction the
+// victim's collateral cannot become negative through this path. IF
+// "absorption" only happens in the FULL/BANKRUPTCY tiers, where the
+// IF participates as the deleverage trade counterparty (gated by
+// `tryLLPAbsorb` IMR simulation), not via a silent collateral
+// transfer.
 func (k Keeper) Liquidate(ctx context.Context, victim uint64, marketIdx uint32, baseAmount uint64) error {
 	pos, err := k.accountKeeper.GetPosition(ctx, victim, marketIdx)
 	if err != nil {
@@ -108,9 +117,6 @@ func (k Keeper) Liquidate(ctx context.Context, victim uint64, marketIdx uint32, 
 		}
 	}
 
-	if err := k.absorbNegativeCollateral(ctx, victim); err != nil {
-		return err
-	}
 	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
 		types.EventTypeLiquidate,
 		sdk.NewAttribute(types.AttributeKeyVictim, strconv.FormatUint(victim, 10)),
@@ -220,25 +226,15 @@ func (k Keeper) Deleverage(ctx context.Context, victim uint64, marketIdx uint32,
 	}); err != nil {
 		return err
 	}
-	return k.absorbNegativeCollateral(ctx, victim)
-}
-
-// absorbNegativeCollateral tops up a victim's negative cross-collateral
-// from the Insurance Fund operator account. Used by every close-out
-// path so a single MsgLiquidate cannot leave residual debt on the
-// chain.
-func (k Keeper) absorbNegativeCollateral(ctx context.Context, victim uint64) error {
-	a, err := k.accountKeeper.GetAccount(ctx, victim)
-	if err != nil {
-		return err
-	}
-	if !a.Collateral.IsNegative() {
-		return nil
-	}
-	if err := k.accountKeeper.AddCollateral(ctx, perptypes.InsuranceFundOperatorAccountIdx, a.Collateral); err != nil {
-		return err
-	}
-	return k.accountKeeper.AddCollateral(ctx, victim, a.Collateral.Neg())
+	// Intentionally no post-trade collateral top-up: Lighter's
+	// `InternalDeleverageTx` settles bankrupt and deleverager at
+	// `zero_quote`, which by construction zeroes out the bankrupt's
+	// proportional collateral. Any residual negative collateral
+	// (rounding, funding accruals between zero-price computation and
+	// trade application) is allowed to persist as an account-level
+	// debt on the victim ledger — exactly mirroring Lighter, which
+	// has no equivalent silent IF top-up.
+	return nil
 }
 
 // victimHealthForPosition picks the right health-status getter for the

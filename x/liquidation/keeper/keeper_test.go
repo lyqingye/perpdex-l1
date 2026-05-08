@@ -822,3 +822,178 @@ func TestEndBlocker_PreLiquidationClearsFlags(t *testing.T) {
 	// PRE → no fill, no flag.
 	require.Empty(t, tk.calls)
 }
+
+// ----------- Lighter parity: no silent IF top-up of negative collateral -----------
+
+// TestLiquidate_DoesNotTopUpFromIF is the positive assertion that the
+// partial-liquidation path NEVER pulls collateral from the Insurance
+// Fund as a post-trade safety net. Lighter's
+// `internal_liquidate_position.rs` only inserts a `LIQUIDATION_ORDER +
+// IOC + reduce_only` and lets the matching engine settle improvements
+// above zero_price; there is no analogue of a chain-level
+// "absorbNegativeCollateral" sweep, and the previous implementation's
+// silent transfer let the IF go arbitrarily negative without any
+// balance check (and bypassed the `tryLLPAbsorb` IMR gate).
+//
+// To make the assertion concrete we deliberately seed the victim with
+// a pre-existing negative collateral value: under the old code path
+// this would have moved the deficit straight to the IF account; under
+// the new code path both accounts must be left exactly as they were.
+func TestLiquidate_DoesNotTopUpFromIF(t *testing.T) {
+	ak := newStubAccount()
+	ak.accounts[perptypes.InsuranceFundOperatorAccountIdx] = accounttypes.Account{
+		AccountIndex: perptypes.InsuranceFundOperatorAccountIdx,
+		AccountType:  perptypes.InsuranceFundAccountType,
+		Collateral:   math.NewInt(1_000_000),
+	}
+	ak.accounts[100] = accounttypes.Account{
+		AccountIndex: 100, Collateral: math.NewInt(-50),
+	}
+	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
+		AccountIndex: 100, MarketIndex: 0,
+		Position: math.NewInt(10), EntryQuote: math.NewInt(-100),
+		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
+	}
+	rk := newStubRisk()
+	rk.status = perptypes.HealthPartialLiquidation
+	tk := &stubTrade{}
+	matchk := newStubMatching()
+	k, ctx := newKeeper(t, ak, rk, tk, matchk)
+
+	require.NoError(t, k.Liquidate(ctx, 100, 0, 5))
+
+	// Matching IOC must have been driven, but the IF account's
+	// collateral and the victim's pre-existing deficit must both be
+	// untouched: there is no post-trade collateral movement in
+	// Lighter's partial-liquidation path.
+	require.Len(t, matchk.liqCalls, 1, "partial liq must drive matching IOC exactly once")
+	require.True(t,
+		ak.accounts[perptypes.InsuranceFundOperatorAccountIdx].Collateral.Equal(math.NewInt(1_000_000)),
+		"IF collateral must not be debited as a post-trade top-up (got=%s)",
+		ak.accounts[perptypes.InsuranceFundOperatorAccountIdx].Collateral.String(),
+	)
+	require.True(t, ak.accounts[100].Collateral.Equal(math.NewInt(-50)),
+		"victim's pre-existing negative collateral must persist (got=%s)",
+		ak.accounts[100].Collateral.String(),
+	)
+}
+
+// TestDeleverage_LeavesResidualOnVictim covers the FULL/BANKRUPTCY
+// arm: even though the LLP / IF participates as the deleverage
+// counterparty, any residual negative collateral that may exist on
+// the victim's ledger after the trade settles must NOT be silently
+// transferred to the IF. Lighter's `internal_deleverage.rs` settles
+// at `zero_quote` and lets the bankrupt's ledger reflect the truth;
+// it has no equivalent of a post-block IF top-up sweep.
+func TestDeleverage_LeavesResidualOnVictim(t *testing.T) {
+	ak := newStubAccount()
+	ak.accounts[perptypes.InsuranceFundOperatorAccountIdx] = accounttypes.Account{
+		AccountIndex: perptypes.InsuranceFundOperatorAccountIdx,
+		AccountType:  perptypes.InsuranceFundAccountType,
+		Collateral:   math.NewInt(1_000_000),
+		PublicPoolInfo: &accounttypes.PublicPoolInfo{
+			Status:         perptypes.PublicPoolStatusActive,
+			TotalShares:    math.NewInt(1),
+			OperatorShares: math.NewInt(1),
+		},
+	}
+	ak.accounts[100] = accounttypes.Account{
+		AccountIndex: 100, Collateral: math.NewInt(-75),
+	}
+	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
+		AccountIndex: 100, MarketIndex: 0,
+		Position: math.NewInt(20), EntryQuote: math.NewInt(-2_000),
+		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
+	}
+	rk := newStubRisk()
+	rk.status = perptypes.HealthFullLiquidation
+	tk := &stubTrade{}
+	matchk := newStubMatching()
+	k, ctx := newKeeper(t, ak, rk, tk, matchk)
+
+	require.NoError(t, k.Deleverage(ctx, 100, 0, perptypes.InsuranceFundOperatorAccountIdx, 20))
+
+	// Exactly one fill (LLP as taker, victim as maker), and neither
+	// side's ledger value moves outside of what ApplyPerpsMatching
+	// itself would have done — the stub trade engine does not touch
+	// collateral, so any post-trade collateral mutation here would
+	// have come from a `absorbNegativeCollateral` sweep that no
+	// longer exists.
+	require.Len(t, tk.calls, 1)
+	require.Equal(t, perptypes.InsuranceFundOperatorAccountIdx, tk.calls[0].TakerAccountIndex)
+	require.True(t, ak.accounts[100].Collateral.Equal(math.NewInt(-75)),
+		"victim residual collateral must persist (got=%s)",
+		ak.accounts[100].Collateral.String(),
+	)
+	require.True(t,
+		ak.accounts[perptypes.InsuranceFundOperatorAccountIdx].Collateral.Equal(math.NewInt(1_000_000)),
+		"IF collateral must not be debited beyond the trade itself (got=%s)",
+		ak.accounts[perptypes.InsuranceFundOperatorAccountIdx].Collateral.String(),
+	)
+}
+
+// TestEndBlocker_BankruptResidueStaysWithVictim covers the worst-case
+// path: a bankrupt account whose LLP takeover would breach the IF's
+// IMR AND whose ADL queue is empty (no profitable opposite-side
+// counterparties). Under Lighter's design the position simply remains
+// open and is re-evaluated next block; there is no chain-level rescue
+// that drains the IF to make the bankrupt's collateral non-negative.
+//
+// Pre-fix behaviour: the EndBlocker would silently move the residual
+// negative collateral to the IF (which itself has no balance check)
+// regardless of the LLP IMR gate's verdict, completely defeating the
+// LLP→ADL waterfall. Post-fix: ledger values are untouched.
+func TestEndBlocker_BankruptResidueStaysWithVictim(t *testing.T) {
+	ak := newStubAccount()
+	// IF that would breach IMR if it took over the position.
+	ak.accounts[perptypes.InsuranceFundOperatorAccountIdx] = accounttypes.Account{
+		AccountIndex: perptypes.InsuranceFundOperatorAccountIdx,
+		AccountType:  perptypes.InsuranceFundAccountType,
+		Collateral:   math.NewInt(100),
+		PublicPoolInfo: &accounttypes.PublicPoolInfo{
+			Status: perptypes.PublicPoolStatusActive,
+		},
+	}
+	// Bankrupt victim with deeply negative collateral and no ADL
+	// counterparty at all — autoADL must walk an empty queue.
+	ak.accounts[100] = accounttypes.Account{
+		AccountIndex: 100, Collateral: math.NewInt(-200),
+	}
+	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
+		AccountIndex: 100, MarketIndex: 0,
+		Position: math.NewInt(50), EntryQuote: math.NewInt(-10_000),
+		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
+	}
+	rk := newStubRisk()
+	rk.status = perptypes.HealthBankruptcy
+	rk.zero[[2]uint64{100, 0}] = 100
+	rk.uPnL[[2]uint64{100, 0}] = math.NewInt(-300) // worst-uPnL so LLP is offered first
+	rk.postSim[perptypes.InsuranceFundOperatorAccountIdx] = risktypes.RiskParameters{
+		Collateral:                   math.NewInt(100),
+		TotalAccountValue:            math.NewInt(50),
+		InitialMarginRequirement:     math.NewInt(500), // breaches
+		MaintenanceMarginRequirement: math.NewInt(250),
+		CloseOutMarginRequirement:    math.NewInt(125),
+	}
+	tk := &stubTrade{}
+	matchk := newStubMatching()
+	k, ctx := newKeeper(t, ak, rk, tk, matchk)
+
+	require.NoError(t, k.EndBlocker(ctx))
+
+	// LLP refused (IMR breach) and ADL queue is empty: no fill
+	// should have been issued at all.
+	require.Empty(t, tk.calls,
+		"no fill expected when LLP rejects and ADL queue is empty")
+	// Both ledgers must be exactly as they started — Lighter does
+	// not silently top up bankruptcy losses out of the IF.
+	require.True(t, ak.accounts[100].Collateral.Equal(math.NewInt(-200)),
+		"victim residual debt must persist (got=%s)",
+		ak.accounts[100].Collateral.String(),
+	)
+	require.True(t,
+		ak.accounts[perptypes.InsuranceFundOperatorAccountIdx].Collateral.Equal(math.NewInt(100)),
+		"IF collateral must not be debited as a post-block sweep (got=%s)",
+		ak.accounts[perptypes.InsuranceFundOperatorAccountIdx].Collateral.String(),
+	)
+}

@@ -32,8 +32,14 @@ import (
 //     PARTIAL is the only state that MsgLiquidate services. FULL and
 //     BANKRUPTCY are end-block-only because they require the LLP IMR
 //     gate before the LLP can take over.
-//  4. BANKRUPTCY - skip the LLP path entirely; ADL only. The
-//     insurance fund tops up the residual negative collateral.
+//  4. BANKRUPTCY - skip the LLP path entirely; ADL only. Any
+//     residual negative collateral after a fully-deleveraged
+//     close-out remains as an account-level debt on the victim
+//     ledger; the chain does NOT silently move it to the IF.
+//     IF "absorption" is realised by IF taking the position via
+//     `Deleverage`, gated by `tryLLPAbsorb` IMR simulation — the
+//     same guard that already routes IMR-breaching takeovers to
+//     ADL.
 type Keeper struct {
 	cdc            codec.BinaryCodec
 	storeService   store.KVStoreService

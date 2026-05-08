@@ -135,7 +135,12 @@ func (k Keeper) processAccount(
 				}
 			}
 		}
-		_ = k.absorbNegativeCollateral(ctx, a.AccountIndex)
+		// No silent IF top-up of residual negative collateral.
+		// "Absorption" is the LLP/IF deleverage trade itself; if
+		// `tryLLPAbsorb` rejected (IMR breach) and `autoADL` could not
+		// find counterparties, the position simply remains and is re-
+		// evaluated next block — Lighter's design has no analogue of
+		// the previous `absorbNegativeCollateral` post-block sweep.
 		return false
 	}); err != nil {
 		return err
