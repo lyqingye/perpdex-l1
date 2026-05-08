@@ -13,7 +13,6 @@ import (
 
 type AccountKeeper interface {
 	GetAccount(ctx context.Context, idx uint64) (accounttypes.Account, error)
-	GetMasterAccountByOwner(ctx context.Context, owner string) (accounttypes.Account, error)
 	GetPosition(ctx context.Context, accIdx uint64, marketIdx uint32) (accounttypes.AccountPosition, error)
 	// UpdatePosition is the canonical RMW entrypoint for position
 	// state. The liquidation keeper currently does not write
@@ -69,6 +68,29 @@ type MatchingKeeper interface {
 	// checks are skipped because liquidation is the caller. Returns
 	// the number of orders cancelled.
 	CancelAllOpenOrdersForAccount(ctx context.Context, accountIdx uint64) (uint32, error)
+	// MatchLiquidationOrder synthesises a victim-owned
+	// LIQUIDATION_ORDER + IOC + reduce_only on the public orderbook
+	// at `zeroPrice` and consumes opposite makers up to `baseAmount`.
+	// Improvements above the zero-price floor are taxed at
+	// `liquidationFeeBps` and routed to `liquidationFeeRecipient`
+	// (LLP / Insurance Fund). Returns the filled base — IOC residue
+	// is silently discarded.
+	//
+	// The synthetic taker is never persisted to the orderbook and
+	// is not subject to authority / pool-account / pre-liquidation
+	// gates that user-driven CreateOrder enforces. The matching loop
+	// short-circuits the moment the victim is no longer in
+	// PARTIAL/FULL liquidation health (Lighter parity:
+	// `is_not_in_liquidation_and_is_liquidation_order`).
+	MatchLiquidationOrder(
+		ctx context.Context,
+		victim uint64,
+		marketIdx uint32,
+		zeroPrice uint32,
+		baseAmount uint64,
+		liquidationFeeBps uint32,
+		liquidationFeeRecipient uint64,
+	) (uint64, error)
 }
 
 type TradeKeeper interface {

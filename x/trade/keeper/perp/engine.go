@@ -67,34 +67,44 @@ type Fill struct {
 	// absorb residual size even when doing so worsens its own health.
 	NoRiskCheck bool
 	// SkipMakerRiskCheck only skips the post-trade risk check on the
-	// MAKER side. Used by the partial-liquidation path: the maker is
-	// the victim — the fill strictly closes part of an unhealthy
-	// position so it is guaranteed to improve health, but the
-	// IsValidRiskChange routine would still reject because post is
-	// not HEALTHY. The taker (liquidator) keeps its standard check.
+	// MAKER side. Retained for the legacy "victim is the maker"
+	// liquidation pattern (still used by Deleverage / market-expiry
+	// exits): the maker is the victim — the fill strictly closes
+	// part of an unhealthy position so it is guaranteed to improve
+	// health, but the IsValidRiskChange routine would still reject
+	// because post is not HEALTHY. The taker (counterparty / LLP)
+	// keeps its standard check.
+	//
+	// Note: the partial-liquidation orderbook IOC path (engine route
+	// for `LIQUIDATION_ORDER + IOC + reduce_only`) sets `NoRiskCheck`
+	// instead because in that flow the victim is the TAKER and the
+	// maker is a normal account whose post-trade health was already
+	// vetted at order placement.
 	SkipMakerRiskCheck bool
 	// ZeroPrice + LiquidationFeeBps + LiquidationFeeRecipient
 	// describe the Lighter "improvement-over-zero-price" liquidation
-	// fee. When LiquidationFeeBps > 0:
-	//   improvement = sign * (Price - ZeroPrice) * BaseAmount   (taker
-	//                                                            sign;
-	//                                                            positive
-	//                                                            when the
-	//                                                            fill is
-	//                                                            better
-	//                                                            than the
-	//                                                            zero price
-	//                                                            for the
-	//                                                            victim/maker)
-	//   raw_fee     = improvement * LiquidationFeeBps / FeeTick
-	//   fee         = min(raw_fee, BaseAmount * Price / 100)        (1% cap)
+	// fee. When LiquidationFeeBps > 0 and the fill price is strictly
+	// better than the zero-price floor:
 	//
-	// `fee` is debited from the victim (maker) collateral and credited
-	// to LiquidationFeeRecipient (the LLP / Insurance Fund). Standard
-	// MakerFee/TakerFee are NOT applied on the same fill (caller sets
-	// them to 0). Fee remains zero whenever Price == ZeroPrice — the
-	// expected case for keeper-driven IoC closes that fill exactly at
-	// the zero price.
+	//   price_diff_rate = (|Price - ZeroPrice| * FeeTick) / Price
+	//   effective_rate  = min(LiquidationFeeBps, price_diff_rate)
+	//   fee             = notional * effective_rate / FeeTick
+	//
+	// `notional = BaseAmount * Price`. The improvement direction is
+	// taker-side dependent: a sell-side close (taker ask, victim long)
+	// requires Price > ZeroPrice; a buy-side close (taker bid, victim
+	// short) requires Price < ZeroPrice. A non-improving or
+	// equal-to-floor fill produces fee=0, matching the keeper-driven
+	// IoC close-out that fills at exactly the zero price.
+	//
+	// Mirrors lighter `matching_engine.rs` `taker_fee` upper bound
+	// `min(market.liquidation_fee, (|maker - pending| * FEE_TICK) /
+	// maker_price)` while applying the resulting rate to the trade
+	// notional. Caller MUST set MakerFee/TakerFee to 0 — those are
+	// disjoint fee paths.
+	//
+	// `fee` is debited from the victim (the side being closed) and
+	// credited to LiquidationFeeRecipient (LLP / Insurance Fund).
 	ZeroPrice               uint32
 	LiquidationFeeBps       uint32
 	LiquidationFeeRecipient uint64
@@ -303,41 +313,66 @@ func (e Engine) applyAccount(ctx context.Context, res *positionChangeResult, fee
 
 // liquidationImprovementFee computes the Lighter liquidation fee:
 //
-//	improvement_per_unit = sign(takerSide) * (price - zeroPrice)
-//	improvement          = improvement_per_unit * BaseAmount
-//	raw_fee              = improvement * LiquidationFeeBps / FeeTick
-//	fee                  = clamp(raw_fee, 0, notional / 100)
+//	improvement     = sign(takerSide) * (price - zeroPrice)
+//	price_diff_rate = (|improvement| * FeeTick) / price
+//	effective_rate  = min(LiquidationFeeBps, price_diff_rate)
+//	fee             = notional * effective_rate / FeeTick
 //
-// `takerSide` flips the improvement sign so that a fill BETTER than the
-// victim's zero price yields a positive fee regardless of whether the
-// taker is selling (closing the victim's long) or buying (closing the
-// victim's short). When Price == ZeroPrice the improvement is zero and
-// no fee is charged — matching the keeper-driven IoC close-out path
-// where the engine fills exactly at the zero price.
+// where `price` is the actual fill price (the maker's resting price)
+// and `notional = BaseAmount * Price`.
+//
+// Lighter `matching_engine.rs` upper-bounds the per-trade taker fee at
+// `min(market.liquidation_fee, price_diff_rate)`, where `price_diff_rate
+// = (|maker_price - pending_price| * FEE_TICK) / maker_price`. We
+// match that exact ceiling and then turn the bound into an absolute
+// fee by scaling the notional with the same rate (`notional * rate /
+// FeeTick`), giving the fee the same "fraction of trade quote" shape
+// as the matching engine's enforcement.
+//
+// `takerSide` flips the improvement sign so that a fill BETTER than
+// the victim's zero price yields a positive fee regardless of whether
+// the taker is selling (closing the victim's long) or buying (closing
+// the victim's short). When Price == ZeroPrice the improvement is
+// zero, the rate is zero, and no fee is charged — matching the
+// keeper-driven IoC close-out path that fills exactly at the zero
+// price.
+//
+// Note: the previous `min(rawFee, notional/100)` 1% notional cap that
+// existed here has been removed. Lighter does not enforce a hardcoded
+// 1% cap; the upper bound comes from `market.LiquidationFee` (already
+// configured to a tick-fraction by governance) AND from
+// `price_diff_rate`. Both are now respected directly.
 func liquidationImprovementFee(f Fill, notional math.Int) math.Int {
-	if f.LiquidationFeeBps == 0 || f.BaseAmount == 0 {
+	if f.LiquidationFeeBps == 0 || f.BaseAmount == 0 || f.Price == 0 {
 		return math.ZeroInt()
 	}
 	priceInt := math.NewIntFromUint64(uint64(f.Price))
 	zpInt := math.NewIntFromUint64(uint64(f.ZeroPrice))
-	var improvementPerUnit math.Int
+	var improvement math.Int
 	if f.IsTakerAsk {
 		// Taker sells (maker/victim is being long-liquidated): a
 		// HIGHER fill price than zero price is "better" for victim.
-		improvementPerUnit = priceInt.Sub(zpInt)
+		improvement = priceInt.Sub(zpInt)
 	} else {
 		// Taker buys (maker/victim is being short-liquidated): a
 		// LOWER fill price than zero price is "better" for victim.
-		improvementPerUnit = zpInt.Sub(priceInt)
+		improvement = zpInt.Sub(priceInt)
 	}
-	if !improvementPerUnit.IsPositive() {
+	if !improvement.IsPositive() {
 		return math.ZeroInt()
 	}
-	improvement := improvementPerUnit.Mul(math.NewIntFromUint64(f.BaseAmount))
-	rawFee := types.FeeOf(improvement, f.LiquidationFeeBps)
-	cap1pct := notional.Quo(math.NewInt(100))
-	if rawFee.GT(cap1pct) {
-		rawFee = cap1pct
+	// price_diff_rate = (|improvement| * FeeTick) / price.
+	// Lighter parity: see matching_engine.rs `price_diff_rate` block.
+	feeTick := math.NewIntFromUint64(perptypes.FeeTick)
+	priceDiffRate := improvement.Mul(feeTick).Quo(priceInt)
+	feeBpsInt := math.NewIntFromUint64(uint64(f.LiquidationFeeBps))
+	effectiveRate := priceDiffRate
+	if feeBpsInt.LT(effectiveRate) {
+		effectiveRate = feeBpsInt
 	}
-	return rawFee
+	if !effectiveRate.IsPositive() {
+		return math.ZeroInt()
+	}
+	// fee = notional * effective_rate / FeeTick.
+	return notional.Mul(effectiveRate).Quo(feeTick)
 }

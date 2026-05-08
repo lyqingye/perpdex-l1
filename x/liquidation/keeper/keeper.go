@@ -16,14 +16,22 @@ import (
 //  1. PRE_LIQUIDATION  - flag-only; no engine action. The matching gate
 //     (x/matching) restricts the user to reduce-only orders.
 //  2. PARTIAL_LIQUIDATION - keeper-bot driven MsgLiquidate. The engine
-//     cancels the victim's open orders and books a single zero-price
-//     IoC close. Any improvement over the zero price (if the
-//     orderbook actually fills better in the future) is taxed up to
-//     1% and routed to the LLP / Insurance Fund.
+//     cancels the victim's open orders, then submits a victim-owned
+//     `LIQUIDATION_ORDER + IOC + reduce_only` at the zero price for
+//     matching against the open book. Improvements above the zero
+//     price are taxed at `min(market.LiquidationFee, price_diff_rate)`
+//     (Lighter parity) and routed to the LLP / Insurance Fund. The
+//     matching loop short-circuits the moment the victim is no
+//     longer in liquidation, mirroring Lighter's
+//     `is_not_in_liquidation_and_is_liquidation_order` guard.
 //  3. FULL_LIQUIDATION - EndBlocker hands the victim's positions to
 //     the LLP one at a time, ranked by ascending unrealized PnL,
 //     gated by "LLP TAV stays >= LLP IMR after takeover". Any
 //     positions the LLP cannot absorb fall through to ADL.
+//     MsgLiquidate is intentionally NOT a keeper-bot path here:
+//     PARTIAL is the only state that MsgLiquidate services. FULL and
+//     BANKRUPTCY are end-block-only because they require the LLP IMR
+//     gate before the LLP can take over.
 //  4. BANKRUPTCY - skip the LLP path entirely; ADL only. The
 //     insurance fund tops up the residual negative collateral.
 type Keeper struct {

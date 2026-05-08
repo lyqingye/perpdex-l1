@@ -13,30 +13,13 @@ func NewMsgServerImpl(k Keeper) types.MsgServer { return &msgServer{Keeper: k} }
 var _ types.MsgServer = msgServer{}
 
 func (m msgServer) Liquidate(ctx context.Context, msg *types.MsgLiquidate) (*types.MsgLiquidateResponse, error) {
-	// Resolve the absorbing liquidator account. Callers either set
-	// LiquidatorAccountIndex explicitly or let it default to 0, in which
-	// case we fall back to the sender's master account.
-	liquidator := msg.LiquidatorAccountIndex
-	if liquidator == 0 {
-		master, err := m.accountKeeper.GetMasterAccountByOwner(ctx, msg.Sender)
-		if err != nil {
-			return nil, err
-		}
-		liquidator = master.AccountIndex
-	} else {
-		// When a specific account is requested, the sender must be
-		// authorised to operate it (master / sub of the same owner).
-		acc, err := m.accountKeeper.GetAccount(ctx, liquidator)
-		if err != nil {
-			return nil, err
-		}
-		if acc.OwnerAddress != msg.Sender {
-			return nil, types.ErrUnauthorized.Wrapf(
-				"sender=%s cannot use liquidator_account_index=%d", msg.Sender, liquidator,
-			)
-		}
-	}
-	if err := m.Keeper.Liquidate(ctx, msg.VictimAccountIndex, msg.MarketIndex, msg.BaseAmount, liquidator); err != nil {
+	// Lighter parity: the partial-liquidation tx (`InternalLiquidatePositionTx`)
+	// has no counterparty — the victim's close-out fills against the
+	// public order book. There is no `liquidator_account_index` to
+	// resolve and no sender authorisation check beyond ValidateBasic
+	// (anyone can poke the engine to liquidate an underwater account;
+	// the LLP / Insurance Fund collects the improvement fee).
+	if err := m.Keeper.Liquidate(ctx, msg.VictimAccountIndex, msg.MarketIndex, msg.BaseAmount); err != nil {
 		return nil, err
 	}
 	return &types.MsgLiquidateResponse{}, nil

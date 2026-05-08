@@ -278,8 +278,31 @@ func (s *stubTrade) ApplyPerpsMatching(_ context.Context, f tradekeeper.PerpFill
 	return nil
 }
 
+// liqOrderCall captures every MatchLiquidationOrder argument for the
+// new orderbook-IOC partial-liquidation path.
+type liqOrderCall struct {
+	Victim                  uint64
+	MarketIdx               uint32
+	ZeroPrice               uint32
+	BaseAmount              uint64
+	LiquidationFeeBps       uint32
+	LiquidationFeeRecipient uint64
+}
+
 type stubMatching struct {
 	cancelled map[uint64]uint32
+	// liqCalls records every MatchLiquidationOrder invocation. Tests
+	// assert against the synthetic taker's parameters since the
+	// real matching engine + trade engine path is exercised in
+	// x/matching's internal tests.
+	liqCalls []liqOrderCall
+	// liqFilled is the filled-base value the stub reports back.
+	// Defaults to baseAmount (full fill); tests can override via
+	// `liqFilledOverride` to model partial fills.
+	liqFilledOverride *uint64
+	// liqErr lets a test inject an error from MatchLiquidationOrder
+	// without having to patch the stub.
+	liqErr error
 }
 
 func newStubMatching() *stubMatching { return &stubMatching{cancelled: map[uint64]uint32{}} }
@@ -287,6 +310,32 @@ func newStubMatching() *stubMatching { return &stubMatching{cancelled: map[uint6
 func (s *stubMatching) CancelAllOpenOrdersForAccount(_ context.Context, acc uint64) (uint32, error) {
 	s.cancelled[acc]++
 	return 0, nil
+}
+
+func (s *stubMatching) MatchLiquidationOrder(
+	_ context.Context,
+	victim uint64,
+	marketIdx uint32,
+	zeroPrice uint32,
+	baseAmount uint64,
+	liquidationFeeBps uint32,
+	liquidationFeeRecipient uint64,
+) (uint64, error) {
+	s.liqCalls = append(s.liqCalls, liqOrderCall{
+		Victim:                  victim,
+		MarketIdx:               marketIdx,
+		ZeroPrice:               zeroPrice,
+		BaseAmount:              baseAmount,
+		LiquidationFeeBps:       liquidationFeeBps,
+		LiquidationFeeRecipient: liquidationFeeRecipient,
+	})
+	if s.liqErr != nil {
+		return 0, s.liqErr
+	}
+	if s.liqFilledOverride != nil {
+		return *s.liqFilledOverride, nil
+	}
+	return baseAmount, nil
 }
 
 func newKeeper(
@@ -325,7 +374,6 @@ func newKeeper(
 func TestLiquidate_BaseAmountCappedByPosition(t *testing.T) {
 	ak := newStubAccount()
 	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.ZeroInt()}
-	ak.accounts[200] = accounttypes.Account{AccountIndex: 200, Collateral: math.ZeroInt()}
 	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 100, MarketIndex: 0,
 		Position: math.NewInt(5), EntryQuote: math.NewInt(-50),
@@ -337,10 +385,11 @@ func TestLiquidate_BaseAmountCappedByPosition(t *testing.T) {
 	matchk := newStubMatching()
 	k, ctx := newKeeper(t, ak, rk, tk, matchk)
 
-	err := k.Liquidate(ctx, 100, 0, 999 /* > victim size */, 200)
+	err := k.Liquidate(ctx, 100, 0, 999 /* > victim size */)
 	require.Error(t, err)
 	require.ErrorIs(t, err, liqtypes.ErrInvalidParams)
-	require.Empty(t, tk.calls)
+	require.Empty(t, matchk.liqCalls,
+		"oversized base must reject before MatchLiquidationOrder is invoked")
 }
 
 // TestLiquidate_ZeroBaseRejected checks the audit fix that rejects
@@ -354,13 +403,42 @@ func TestLiquidate_ZeroBaseRejected(t *testing.T) {
 		AllocatedMargin: math.ZeroInt(),
 	}
 	rk := newStubRisk()
+	rk.status = perptypes.HealthPartialLiquidation
+	tk := &stubTrade{}
+	matchk := newStubMatching()
+	k, ctx := newKeeper(t, ak, rk, tk, matchk)
+
+	err := k.Liquidate(ctx, 100, 0, 0)
+	require.ErrorIs(t, err, liqtypes.ErrInvalidParams)
+}
+
+// TestLiquidate_RejectsFullLiquidationStatus verifies that MsgLiquidate
+// only services PARTIAL_LIQUIDATION; FULL/BANKRUPTCY accounts must
+// fall through to the EndBlocker LLP→ADL waterfall (Lighter
+// `InternalDeleverageTx` path).
+func TestLiquidate_RejectsFullLiquidationStatus(t *testing.T) {
+	ak := newStubAccount()
+	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.ZeroInt()}
+	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
+		AccountIndex: 100, MarketIndex: 0, Position: math.NewInt(3),
+		EntryQuote: math.NewInt(-30), LastFundingRatePrefixSum: math.ZeroInt(),
+		AllocatedMargin: math.ZeroInt(),
+	}
+	rk := newStubRisk()
 	rk.status = perptypes.HealthFullLiquidation
 	tk := &stubTrade{}
 	matchk := newStubMatching()
 	k, ctx := newKeeper(t, ak, rk, tk, matchk)
 
-	err := k.Liquidate(ctx, 100, 0, 0, 200)
-	require.ErrorIs(t, err, liqtypes.ErrInvalidParams)
+	err := k.Liquidate(ctx, 100, 0, 1)
+	require.ErrorIs(t, err, liqtypes.ErrNotLiquidatable)
+	require.Empty(t, matchk.liqCalls,
+		"FULL victim must not enter the matching path")
+
+	rk.status = perptypes.HealthBankruptcy
+	err = k.Liquidate(ctx, 100, 0, 1)
+	require.ErrorIs(t, err, liqtypes.ErrNotLiquidatable,
+		"BANKRUPTCY must also reject the partial-liquidation route")
 }
 
 // TestDeleverage_RejectsUnauthorizedUserSender verifies that an ADL sender
@@ -396,11 +474,12 @@ func TestDeleverage_RejectsUnauthorizedUserSender(t *testing.T) {
 // ----------- new Lighter-parity tests -----------
 
 // TestLiquidate_CancelsVictimOpenOrders verifies the spec rule "first
-// cancel all open orders of the user" before booking the close-out.
+// cancel all open orders of the user" before submitting the
+// liquidation IOC to the matching keeper. Lighter parity:
+// `InternalCancelAllOrdersTx → InternalLiquidatePositionTx`.
 func TestLiquidate_CancelsVictimOpenOrders(t *testing.T) {
 	ak := newStubAccount()
 	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.ZeroInt()}
-	ak.accounts[200] = accounttypes.Account{AccountIndex: 200, Collateral: math.ZeroInt()}
 	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 100, MarketIndex: 0,
 		Position: math.NewInt(10), EntryQuote: math.NewInt(-100),
@@ -412,20 +491,21 @@ func TestLiquidate_CancelsVictimOpenOrders(t *testing.T) {
 	matchk := newStubMatching()
 	k, ctx := newKeeper(t, ak, rk, tk, matchk)
 
-	err := k.Liquidate(ctx, 100, 0, 5, 200)
+	err := k.Liquidate(ctx, 100, 0, 5)
 	require.NoError(t, err)
 	require.Equal(t, uint32(1), matchk.cancelled[100],
 		"victim must have orders cancelled before close-out")
-	require.Len(t, tk.calls, 1)
+	require.Len(t, matchk.liqCalls, 1,
+		"matching keeper must receive exactly one liquidation IOC")
 }
 
-// TestLiquidate_FillCarriesLLPAsLiquidationFeeRecipient verifies that
-// the close-out fill routes the improvement fee (capped at 1%) to the
-// Insurance Fund operator account, NOT the treasury.
-func TestLiquidate_FillCarriesLLPAsLiquidationFeeRecipient(t *testing.T) {
+// TestLiquidate_DelegatesToMatchingKeeperWithLLPRecipient verifies
+// that Keeper.Liquidate forwards the close-out to the matching keeper
+// with the right victim / market / zero price / fee bps and routes the
+// improvement fee to the LLP / Insurance Fund operator account.
+func TestLiquidate_DelegatesToMatchingKeeperWithLLPRecipient(t *testing.T) {
 	ak := newStubAccount()
 	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.ZeroInt()}
-	ak.accounts[200] = accounttypes.Account{AccountIndex: 200, Collateral: math.ZeroInt()}
 	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 100, MarketIndex: 0,
 		Position: math.NewInt(10), EntryQuote: math.NewInt(-1000),
@@ -438,20 +518,22 @@ func TestLiquidate_FillCarriesLLPAsLiquidationFeeRecipient(t *testing.T) {
 	matchk := newStubMatching()
 	k, ctx := newKeeper(t, ak, rk, tk, matchk)
 
-	err := k.Liquidate(ctx, 100, 0, 4, 200)
+	err := k.Liquidate(ctx, 100, 0, 4)
 	require.NoError(t, err)
-	require.Len(t, tk.calls, 1)
-	fill := tk.calls[0]
-	require.Equal(t, perptypes.InsuranceFundOperatorAccountIdx, fill.LiquidationFeeRecipient,
+	require.Len(t, matchk.liqCalls, 1)
+	got := matchk.liqCalls[0]
+	require.Equal(t, uint64(100), got.Victim)
+	require.Equal(t, uint32(0), got.MarketIdx)
+	require.Equal(t, uint32(95), got.ZeroPrice)
+	require.Equal(t, uint64(4), got.BaseAmount)
+	require.Greater(t, got.LiquidationFeeBps, uint32(0),
+		"market.LiquidationFee must populate the fee bps on the IOC call")
+	require.Equal(t, perptypes.InsuranceFundOperatorAccountIdx, got.LiquidationFeeRecipient,
 		"liquidation fee must route to LLP / Insurance Fund operator")
-	require.Equal(t, uint32(95), fill.ZeroPrice)
-	require.Equal(t, uint32(95), fill.Price, "engine fills at zero price")
-	require.Equal(t, uint32(0), fill.MakerFee)
-	require.Equal(t, uint32(0), fill.TakerFee)
-	require.True(t, fill.SkipMakerRiskCheck,
-		"victim must not be subject to IsValidRiskChange (PARTIAL post-state)")
-	require.Greater(t, fill.LiquidationFeeBps, uint32(0),
-		"market.LiquidationFee must populate the fee bps on the fill")
+	// Liquidate path no longer invokes ApplyPerpsMatching directly
+	// — that is the matching keeper's job.
+	require.Empty(t, tk.calls,
+		"liquidation must not bypass the orderbook IOC route")
 }
 
 // TestEndBlocker_FullLiquidationPrefersLLPThenADL exercises the

@@ -17,15 +17,26 @@ import (
 // Liquidate is the keeper entry point for MsgLiquidate. It implements
 // the Lighter partial-liquidation procedure:
 //
-//  1. Verify the victim is in PARTIAL or FULL liquidation.
+//  1. Verify the victim is in PARTIAL_LIQUIDATION. FULL/BANKRUPTCY are
+//     out of scope here — those tiers are handled by EndBlocker via
+//     the LLP take-over → ADL waterfall, mirroring Lighter's
+//     `InternalDeleverageTx` separation from `InternalLiquidatePositionTx`.
 //  2. Cancel every open order owned by the victim. A victim's resting
-//     bids could otherwise front-run the close-out fill.
+//     bids could otherwise front-run the close-out fill — Lighter
+//     parity with the standalone `InternalCancelAllOrdersTx` that
+//     precedes a partial liquidation.
 //  3. Compute the position's mark-based zero price (TAV/MMR ratio
-//     invariant).
-//  4. Issue a single fill at the zero price; route any improvement-
-//     based fee to the LLP / Insurance Fund (capped at 1% of notional).
-//  5. Top up any residual negative collateral from the Insurance Fund.
-func (k Keeper) Liquidate(ctx context.Context, victim uint64, marketIdx uint32, baseAmount uint64, liquidatorAccount uint64) error {
+//     invariant) — the worst price the victim is allowed to receive.
+//  4. Submit a synthetic `LIQUIDATION_ORDER + IOC + reduce_only` to
+//     the matching keeper on behalf of the victim. The order trades
+//     against the open book at maker prices that improve on the zero
+//     price; any improvement is taxed at `market.LiquidationFee` and
+//     routed to the LLP / Insurance Fund. The matching loop also
+//     short-circuits the moment the victim is no longer in
+//     liquidation.
+//  5. Top up any residual negative collateral from the Insurance Fund
+//     so a single MsgLiquidate cannot leave residual debt on the chain.
+func (k Keeper) Liquidate(ctx context.Context, victim uint64, marketIdx uint32, baseAmount uint64) error {
 	pos, err := k.accountKeeper.GetPosition(ctx, victim, marketIdx)
 	if err != nil {
 		return err
@@ -39,8 +50,16 @@ func (k Keeper) Liquidate(ctx context.Context, victim uint64, marketIdx uint32, 
 	if err != nil {
 		return err
 	}
-	if status != perptypes.HealthPartialLiquidation && status != perptypes.HealthFullLiquidation {
-		return types.ErrNotLiquidatable.Wrapf("status=%d", status)
+	// MsgLiquidate is intentionally restricted to PARTIAL: FULL and
+	// BANKRUPTCY are deleverage / IF / LLP territory and are driven
+	// by EndBlocker (see abci.go). A keeper bot that sees a
+	// FULL/BANKRUPTCY account should not race the EndBlocker by
+	// issuing MsgLiquidate.
+	if status != perptypes.HealthPartialLiquidation {
+		return types.ErrNotLiquidatable.Wrapf(
+			"victim status=%d not partial; FULL/BANKRUPTCY routes via EndBlocker LLP→ADL",
+			status,
+		)
 	}
 	if baseAmount == 0 {
 		return types.ErrInvalidParams.Wrap("base_amount must be > 0")
@@ -55,9 +74,10 @@ func (k Keeper) Liquidate(ctx context.Context, victim uint64, marketIdx uint32, 
 			"base_amount=%d exceeds victim position size %s", baseAmount, absVictim.String(),
 		)
 	}
-	// Cancel-all orders BEFORE booking the close to mirror lighter's
-	// "cancel all open orders of the user" step. We tolerate failure
-	// when the matching keeper is not wired (tests).
+	// Cancel-all orders BEFORE the IOC close-out, mirroring lighter's
+	// `InternalCancelAllOrdersTx → InternalLiquidatePositionTx`
+	// ordering. We tolerate a missing matching keeper only as a
+	// graceful fall-through for stub-driven tests.
 	if k.matchingKeeper != nil {
 		if _, err := k.matchingKeeper.CancelAllOpenOrdersForAccount(ctx, victim); err != nil {
 			return err
@@ -72,38 +92,20 @@ func (k Keeper) Liquidate(ctx context.Context, victim uint64, marketIdx uint32, 
 		return err
 	}
 
-	// Victim is the maker; the trade keeper convention is:
-	//   IsTakerAsk=true  ⇒ makerSign=+1 (maker buys / increases long)
-	//   IsTakerAsk=false ⇒ makerSign=-1 (maker sells / increases short)
-	// To CLOSE the victim's position we therefore need the maker delta
-	// to flip the sign of the existing position: long victim → maker
-	// delta negative → IsTakerAsk=false; short victim → maker delta
-	// positive → IsTakerAsk=true. That is `pos.Position.IsNegative()`.
-	takerIsAsk := pos.Position.IsNegative()
-
-	fill := tradekeeper.PerpFill{
-		MakerAccountIndex:       victim,
-		TakerAccountIndex:       liquidatorAccount,
-		MarketIndex:             marketIdx,
-		Price:                   zeroPrice,
-		BaseAmount:              baseAmount,
-		IsTakerAsk:              takerIsAsk,
-		// Standard taker/maker fees suppressed; only the
-		// improvement-over-zero-price fee applies on the close-out.
-		TakerFee:                0,
-		MakerFee:                0,
-		ZeroPrice:               zeroPrice,
-		LiquidationFeeBps:       market.LiquidationFee,
-		LiquidationFeeRecipient: perptypes.InsuranceFundOperatorAccountIdx,
-		// Victim is being closed at zero price by construction; the
-		// fill mechanically improves their TAV/MMR ratio. Skip the
-		// post-trade risk check on the victim/maker side so a still-
-		// unhealthy post-state is not rejected back into the
-		// keeper-bot loop.
-		SkipMakerRiskCheck: true,
-	}
-	if err := k.tradeKeeper.ApplyPerpsMatching(ctx, fill); err != nil {
-		return err
+	// Drive the close-out through the public order book. The matching
+	// keeper synthesises a victim-owned LIQUIDATION_ORDER + IOC +
+	// reduce_only and consumes opposite makers at prices that improve
+	// on the zero price. The synthetic taker is never persisted; IOC
+	// residue is silently discarded.
+	var filled uint64
+	if k.matchingKeeper != nil {
+		filled, err = k.matchingKeeper.MatchLiquidationOrder(
+			ctx, victim, marketIdx, zeroPrice, baseAmount,
+			market.LiquidationFee, perptypes.InsuranceFundOperatorAccountIdx,
+		)
+		if err != nil {
+			return err
+		}
 	}
 
 	if err := k.absorbNegativeCollateral(ctx, victim); err != nil {
@@ -113,11 +115,12 @@ func (k Keeper) Liquidate(ctx context.Context, victim uint64, marketIdx uint32, 
 		types.EventTypeLiquidate,
 		sdk.NewAttribute(types.AttributeKeyVictim, strconv.FormatUint(victim, 10)),
 		sdk.NewAttribute(types.AttributeKeyMarketIndex, strconv.FormatUint(uint64(marketIdx), 10)),
-		sdk.NewAttribute(types.AttributeKeyBaseAmount, strconv.FormatUint(baseAmount, 10)),
+		sdk.NewAttribute(types.AttributeKeyBaseAmount, strconv.FormatUint(filled, 10)),
 		sdk.NewAttribute(types.AttributeKeyZeroPrice, strconv.FormatUint(uint64(zeroPrice), 10)),
 	))
 	return nil
 }
+
 
 // Deleverage is the keeper entry for MsgDeleverage and the engine path
 // used by EndBlocker for both LLP takeover and user-side ADL fills.

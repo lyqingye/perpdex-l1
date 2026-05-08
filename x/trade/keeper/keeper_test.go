@@ -342,13 +342,30 @@ func TestApplyPerpsMatching_RejectsMakerRisk(t *testing.T) {
 	require.Equal(t, 2, rk.snapshots) // maker + taker both snapshotted
 }
 
-// TestApplyPerpsMatching_LiquidationFeeRoutesToLLP exercises the new
-// improvement-over-zero-price liquidation fee path. When the fill price
-// is BETTER than the zero price by `improvement_per_unit`, the
-// computed fee is debited from the maker (victim) and credited to
-// LiquidationFeeRecipient (LLP / Insurance Fund). Standard
-// taker/maker fees do not apply on the same fill (caller sets them to
-// 0), so the treasury stays untouched.
+// TestApplyPerpsMatching_LiquidationFeeRoutesToLLP exercises the
+// Lighter-aligned improvement-over-zero-price liquidation fee path.
+// When the fill price is strictly better than the zero price for the
+// victim, an improvement fee is debited from the side being closed
+// and credited to LiquidationFeeRecipient (LLP / Insurance Fund).
+// Standard taker/maker fees do not apply on the same fill (caller
+// sets them to 0), so the treasury stays untouched.
+//
+// Numerical expectations (Lighter parity):
+//
+//	improvement     = (Price - ZeroPrice) * BaseAmount = (110-100)*1000 = 10_000
+//	notional        = Price * BaseAmount               = 110*1000       = 110_000
+//	price_diff_rate = (|Price-ZeroPrice| * FeeTick) / Price
+//	                = (10 * 1_000_000) / 110 ≈ 90_909
+//	effective_rate  = min(LiquidationFeeBps=10_000, 90_909) = 10_000
+//	fee             = notional * 10_000 / FeeTick
+//	                = 110_000 * 10_000 / 1_000_000        = 1_100
+//
+// The previous "1% notional cap" (the legacy `min(rawFee, notional/100)`
+// branch) is gone — the cap now naturally drops out of the
+// `min(LiquidationFeeBps, price_diff_rate)` rate, scaled across
+// notional rather than across improvement. This is exactly the
+// per-trade taker fee bound enforced in `lighter-prover`'s
+// `matching_engine.rs` `_compute_liquidation_taker_fee`.
 func TestApplyPerpsMatching_LiquidationFeeRoutesToLLP(t *testing.T) {
 	ctx, ak, _, _, k := newSdkCtx(t)
 	const (
@@ -365,10 +382,6 @@ func TestApplyPerpsMatching_LiquidationFeeRoutesToLLP(t *testing.T) {
 	require.NoError(t, ak.SetAccount(ctx, accounttypes.Account{
 		AccountIndex: llpIdx, Collateral: math.NewInt(0),
 	}))
-	// Victim is long; the fill closes via taker-ask (sells base).
-	// improvement = (Price - ZeroPrice) * BaseAmount = (110-100)*1000 = 10_000.
-	// liq_fee_bps = 10_000 / FeeTick = 1% on improvement = 100.
-	// 1% notional cap = 110*1000/100 = 1100. raw_fee=100 < 1100 ⇒ fee=100.
 	require.NoError(t, k.ApplyPerpsMatching(ctx, tradekeeper.PerpFill{
 		MakerAccountIndex:       victimIdx,
 		TakerAccountIndex:       takerIdx,
@@ -384,12 +397,65 @@ func TestApplyPerpsMatching_LiquidationFeeRoutesToLLP(t *testing.T) {
 	}))
 	llp, err := ak.GetAccount(ctx, llpIdx)
 	require.NoError(t, err)
-	require.Equal(t, "100", llp.Collateral.String(),
-		"LLP must receive 1%% of improvement, NOT the treasury")
+	require.Equal(t, "1100", llp.Collateral.String(),
+		"LLP must receive notional * min(bps, price_diff_rate) / FeeTick")
 	treasury, err := ak.GetAccount(ctx, perptypes.TreasuryAccountIndex)
 	require.NoError(t, err)
 	require.True(t, treasury.Collateral.IsZero(),
 		"Treasury must remain untouched on a fee-less liquidation fill")
+}
+
+// TestApplyPerpsMatching_LiquidationFeePriceDiffRateBound asserts the
+// `min(LiquidationFeeBps, price_diff_rate)` ceiling: when the price
+// improvement over the zero-price floor is small relative to the
+// price (price_diff_rate < LiquidationFeeBps), the fee is bounded by
+// price_diff_rate, NOT by the configured LiquidationFee. Without the
+// rate bound, a tiny improvement at a high LiquidationFee would
+// allow fees that exceed the actual gain.
+//
+// Setup: Price=101, ZeroPrice=100, BaseAmount=1000, fee_bps=50_000 (5%).
+//
+//	improvement     = 1 * 1000 = 1000
+//	notional        = 101 * 1000 = 101_000
+//	price_diff_rate = (1 * 1_000_000) / 101 ≈ 9_900
+//	effective_rate  = min(50_000, 9_900) = 9_900
+//	fee             = 101_000 * 9_900 / 1_000_000 = 999  (truncated)
+//
+// Without the price_diff_rate cap the fee would have been
+// `notional * 50_000 / FeeTick = 5_050`, ~5x larger than the actual
+// improvement — the bug Lighter explicitly guards against.
+func TestApplyPerpsMatching_LiquidationFeePriceDiffRateBound(t *testing.T) {
+	ctx, ak, _, _, k := newSdkCtx(t)
+	const (
+		victimIdx = uint64(100)
+		takerIdx  = uint64(200)
+		llpIdx    = perptypes.InsuranceFundOperatorAccountIdx
+	)
+	require.NoError(t, ak.SetAccount(ctx, accounttypes.Account{
+		AccountIndex: victimIdx, Collateral: math.NewInt(10_000_000),
+	}))
+	require.NoError(t, ak.SetAccount(ctx, accounttypes.Account{
+		AccountIndex: takerIdx, Collateral: math.NewInt(10_000_000),
+	}))
+	require.NoError(t, ak.SetAccount(ctx, accounttypes.Account{
+		AccountIndex: llpIdx, Collateral: math.NewInt(0),
+	}))
+	require.NoError(t, k.ApplyPerpsMatching(ctx, tradekeeper.PerpFill{
+		MakerAccountIndex:       victimIdx,
+		TakerAccountIndex:       takerIdx,
+		MarketIndex:             1,
+		Price:                   101,
+		BaseAmount:              1000,
+		IsTakerAsk:              true,
+		ZeroPrice:               100,
+		LiquidationFeeBps:       50_000, // 5%, deliberately oversized
+		LiquidationFeeRecipient: llpIdx,
+		SkipMakerRiskCheck:      true,
+	}))
+	llp, err := ak.GetAccount(ctx, llpIdx)
+	require.NoError(t, err)
+	require.Equal(t, "999", llp.Collateral.String(),
+		"price_diff_rate must clip the LLP fee below the bps ceiling")
 }
 
 // TestApplyPerpsMatching_LiquidationFeeNoneAtZeroPrice asserts the
