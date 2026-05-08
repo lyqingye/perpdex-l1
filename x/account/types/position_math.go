@@ -7,6 +7,23 @@ import (
 	markettypes "github.com/perpdex/perpdex-l1/x/market/types"
 )
 
+// NormalizeIntFields rewrites every nil math.Int on the position to
+// math.ZeroInt().
+func (p *AccountPosition) NormalizeIntFields() {
+	if p.Position.IsNil() {
+		p.Position = math.ZeroInt()
+	}
+	if p.EntryQuote.IsNil() {
+		p.EntryQuote = math.ZeroInt()
+	}
+	if p.LastFundingRatePrefixSum.IsNil() {
+		p.LastFundingRatePrefixSum = math.ZeroInt()
+	}
+	if p.AllocatedMargin.IsNil() {
+		p.AllocatedMargin = math.ZeroInt()
+	}
+}
+
 // IsSameSide returns true iff `a` and `b` are both non-zero and share the
 // same sign. The perp domain uses it to classify whether `Position` and
 // `Delta` point the same way (increase vs decrease vs flip), so a zero
@@ -23,10 +40,10 @@ func IsSameSide(a, b math.Int) bool {
 }
 
 // Notional returns |position| * mark. Returns ZeroInt when either the
-// position size is nil/zero or `markPrice` is zero. Pure value receiver,
+// position size is zero or `markPrice` is zero. Pure value receiver,
 // no I/O.
 func (p AccountPosition) Notional(markPrice uint32) math.Int {
-	if p.Position.IsNil() || p.Position.IsZero() || markPrice == 0 {
+	if p.Position.IsZero() || markPrice == 0 {
 		return math.ZeroInt()
 	}
 	return p.Position.Abs().Mul(math.NewIntFromUint64(uint64(markPrice)))
@@ -75,14 +92,10 @@ func (p AccountPosition) CloseOutMargin(markPrice uint32, md markettypes.MarketD
 // positive when the position is in profit. Returns ZeroInt for empty positions
 // or when the mark is zero.
 func (p AccountPosition) UnrealizedPnL(markPrice uint32) math.Int {
-	if p.Position.IsNil() || p.Position.IsZero() || markPrice == 0 {
+	if p.Position.IsZero() || markPrice == 0 {
 		return math.ZeroInt()
 	}
-	entryQuote := p.EntryQuote
-	if entryQuote.IsNil() {
-		entryQuote = math.ZeroInt()
-	}
-	return p.Position.Mul(math.NewIntFromUint64(uint64(markPrice))).Sub(entryQuote)
+	return p.Position.Mul(math.NewIntFromUint64(uint64(markPrice))).Sub(p.EntryQuote)
 }
 
 // FillResult describes the post-trade snapshot produced by ApplyFill. Pure
@@ -130,16 +143,7 @@ type FillResult struct {
 // truth, retiring the duplicate switch that previously lived in both.
 func (p AccountPosition) ApplyFill(delta math.Int, price uint32) FillResult {
 	curSize := p.Position
-	if curSize.IsNil() {
-		curSize = math.ZeroInt()
-	}
 	curEntryQuote := p.EntryQuote
-	if curEntryQuote.IsNil() {
-		curEntryQuote = math.ZeroInt()
-	}
-	if delta.IsNil() {
-		delta = math.ZeroInt()
-	}
 
 	priceInt := math.NewIntFromUint64(uint64(price))
 	// notional carries the trade-direction sign by construction:

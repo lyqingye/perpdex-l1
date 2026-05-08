@@ -46,9 +46,6 @@ func Collateral(app *perp.PerpDEXApp, ctx sdk.Context, idx uint64) (math.Int, er
 	if err != nil {
 		return math.ZeroInt(), err
 	}
-	if a.Collateral.IsNil() {
-		return math.ZeroInt(), nil
-	}
 	return a.Collateral, nil
 }
 
@@ -73,9 +70,6 @@ func PositionSize(
 	p, err := Position(app, ctx, accountIdx, marketIdx)
 	if err != nil {
 		return math.ZeroInt(), err
-	}
-	if p.Position.IsNil() {
-		return math.ZeroInt(), nil
 	}
 	return p.Position, nil
 }

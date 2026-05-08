@@ -213,9 +213,6 @@ func (k Keeper) settleMarket(ctx context.Context, marketIdx uint32, params types
 	if err != nil {
 		return err
 	}
-	if d.FundingRatePrefixSum.IsNil() {
-		d.FundingRatePrefixSum = math.ZeroInt()
-	}
 	if d.TotalPremiumSamples == 0 {
 		return nil
 	}

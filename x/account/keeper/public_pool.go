@@ -130,22 +130,13 @@ func (k Keeper) AvailableSharesToBurn(
 // Burn (operator burn while pool not frozen) and Update.
 //
 // An empty pool (`total_shares == 0`) trivially satisfies the invariant,
-// so the check is skipped. Nil big-ints from a freshly deserialised
-// genesis entry are normalised to zero for safety.
+// so the check is skipped.
 func CheckMinOperatorShareRate(info types.PublicPoolInfo) bool {
-	total := info.TotalShares
-	if total.IsNil() {
-		total = math.ZeroInt()
-	}
-	opShares := info.OperatorShares
-	if opShares.IsNil() {
-		opShares = math.ZeroInt()
-	}
-	if total.IsZero() {
+	if info.TotalShares.IsZero() {
 		return true
 	}
-	lhs := total.Mul(math.NewIntFromUint64(uint64(info.MinOperatorShareRate)))
-	rhs := opShares.Mul(math.NewIntFromUint64(uint64(perptypes.ShareTick)))
+	lhs := info.TotalShares.Mul(math.NewIntFromUint64(uint64(info.MinOperatorShareRate)))
+	rhs := info.OperatorShares.Mul(math.NewIntFromUint64(uint64(perptypes.ShareTick)))
 	return lhs.LTE(rhs)
 }
 

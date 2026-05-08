@@ -22,6 +22,7 @@ func (k Keeper) GetAccount(ctx context.Context, idx uint64) (types.Account, erro
 		}
 		return types.Account{}, err
 	}
+	a.NormalizeIntFields()
 	return a, nil
 }
 
@@ -151,9 +152,6 @@ func (k Keeper) AddCollateral(ctx context.Context, idx uint64, delta math.Int) e
 	if err != nil {
 		return err
 	}
-	if a.Collateral.IsNil() {
-		a.Collateral = math.ZeroInt()
-	}
 	a.Collateral = a.Collateral.Add(delta)
 	return k.setAccount(ctx, a)
 }
@@ -185,12 +183,7 @@ func (k Keeper) GetAccountAsset(ctx context.Context, accIdx uint64, assetIdx uin
 		}
 		return types.AccountAsset{}, err
 	}
-	if a.Balance.IsNil() {
-		a.Balance = math.ZeroInt()
-	}
-	if a.LockedBalance.IsNil() {
-		a.LockedBalance = math.ZeroInt()
-	}
+	a.NormalizeIntFields()
 	return a, nil
 }
 
@@ -251,12 +244,6 @@ func (k Keeper) TransferAccountAssetBalance(
 	if err != nil {
 		return err
 	}
-	if src.Balance.IsNil() {
-		src.Balance = math.ZeroInt()
-	}
-	if src.LockedBalance.IsNil() {
-		src.LockedBalance = math.ZeroInt()
-	}
 	if drainLockedFirst {
 		// Maker path: balance must cover full amount; the lock is
 		// drained first so a partial fill releases the proportional
@@ -280,9 +267,6 @@ func (k Keeper) TransferAccountAssetBalance(
 	if err != nil {
 		return err
 	}
-	if dst.Balance.IsNil() {
-		dst.Balance = math.ZeroInt()
-	}
 	if drainLockedFirst {
 		drain := amount
 		if drain.GT(src.LockedBalance) {
@@ -298,24 +282,15 @@ func (k Keeper) TransferAccountAssetBalance(
 	return k.setAccountAsset(ctx, dst)
 }
 
-// AvailableBalance returns Balance - LockedBalance for an account asset
-// (clamped to zero on the very rare nil-state row). Lock-on-place spot
-// orders consume Available at place time and release it on cancel /
-// evict / fill.
+// AvailableBalance returns Balance - LockedBalance for an account asset.
+// Lock-on-place spot orders consume Available at place time and release
+// it on cancel / evict / fill.
 func (k Keeper) AvailableBalance(ctx context.Context, accIdx uint64, assetIdx uint32) (math.Int, error) {
 	aa, err := k.GetAccountAsset(ctx, accIdx, assetIdx)
 	if err != nil {
 		return math.ZeroInt(), err
 	}
-	bal := aa.Balance
-	if bal.IsNil() {
-		bal = math.ZeroInt()
-	}
-	locked := aa.LockedBalance
-	if locked.IsNil() {
-		locked = math.ZeroInt()
-	}
-	avail := bal.Sub(locked)
+	avail := aa.Balance.Sub(aa.LockedBalance)
 	if avail.IsNegative() {
 		return math.ZeroInt(), nil
 	}
@@ -337,12 +312,6 @@ func (k Keeper) IncreaseLockedBalance(ctx context.Context, accIdx uint64, assetI
 	aa, err := k.GetAccountAsset(ctx, accIdx, assetIdx)
 	if err != nil {
 		return err
-	}
-	if aa.Balance.IsNil() {
-		aa.Balance = math.ZeroInt()
-	}
-	if aa.LockedBalance.IsNil() {
-		aa.LockedBalance = math.ZeroInt()
 	}
 	available := aa.Balance.Sub(aa.LockedBalance)
 	if available.LT(amount) {
@@ -371,9 +340,6 @@ func (k Keeper) DecreaseLockedBalance(ctx context.Context, accIdx uint64, assetI
 	aa, err := k.GetAccountAsset(ctx, accIdx, assetIdx)
 	if err != nil {
 		return err
-	}
-	if aa.LockedBalance.IsNil() {
-		aa.LockedBalance = math.ZeroInt()
 	}
 	release := amount
 	if release.GT(aa.LockedBalance) {
@@ -675,25 +641,12 @@ func (k Keeper) GetPosition(ctx context.Context, accIdx uint64, marketIdx uint32
 		}
 		return types.AccountPosition{}, err
 	}
-	if p.Position.IsNil() {
-		p.Position = math.ZeroInt()
-	}
-	if p.EntryQuote.IsNil() {
-		p.EntryQuote = math.ZeroInt()
-	}
-	if p.LastFundingRatePrefixSum.IsNil() {
-		p.LastFundingRatePrefixSum = math.ZeroInt()
-	}
-	if p.AllocatedMargin.IsNil() {
-		p.AllocatedMargin = math.ZeroInt()
-	}
+	p.NormalizeIntFields()
 	return p, nil
 }
 
 // IterateAccountPositions walks every persisted AccountPosition row owned
-// by `accountIdx`. The callback returns `true` to stop early. Each row is
-// normalised the same way `GetPosition` would (math.Int fields are
-// non-nil), so callers can do arithmetic without re-checking IsNil.
+// by `accountIdx`. The callback returns `true` to stop early.
 //
 // Replaces the old MaxPerpsMarketIndex-wide loops in
 // risk.ComputeRiskInfo / IsValidRiskChange / SnapshotPreRisk /
@@ -722,18 +675,7 @@ func (k Keeper) IterateAccountPositions(
 		if err != nil {
 			return err
 		}
-		if p.Position.IsNil() {
-			p.Position = math.ZeroInt()
-		}
-		if p.EntryQuote.IsNil() {
-			p.EntryQuote = math.ZeroInt()
-		}
-		if p.LastFundingRatePrefixSum.IsNil() {
-			p.LastFundingRatePrefixSum = math.ZeroInt()
-		}
-		if p.AllocatedMargin.IsNil() {
-			p.AllocatedMargin = math.ZeroInt()
-		}
+		p.NormalizeIntFields()
 		if cb(p) {
 			return nil
 		}

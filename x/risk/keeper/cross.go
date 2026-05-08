@@ -39,9 +39,6 @@ func (k Keeper) ComputeRiskInfo(ctx context.Context, accountIdx uint64) (types.R
 		return types.RiskInfo{}, err
 	}
 	collateral := a.Collateral
-	if collateral.IsNil() {
-		collateral = math.ZeroInt()
-	}
 
 	cross := types.RiskParameters{
 		Collateral:                   collateral,
@@ -179,10 +176,7 @@ func (k Keeper) GetAvailableUsdcCollateral(ctx context.Context, accountIdx uint6
 		return math.ZeroInt(), nil
 	}
 	collateral := cur.CollateralWithFunding
-	if collateral.IsNil() {
-		collateral = cur.Collateral
-	}
-	if collateral.IsNil() || collateral.IsNegative() {
+	if collateral.IsNegative() {
 		return math.ZeroInt(), nil
 	}
 	avail := cur.TotalAccountValue.Sub(cur.InitialMarginRequirement)

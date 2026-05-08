@@ -185,9 +185,6 @@ func (e Engine) calculateIsolatedMarginDelta(ctx context.Context, res *positionC
 	newPos := res.New
 	oldPos := res.Old
 	allocated := newPos.AllocatedMargin
-	if allocated.IsNil() {
-		allocated = math.ZeroInt()
-	}
 
 	// case 1: new position closed → release positive allocated_margin
 	if newPos.Position.IsZero() {
@@ -223,9 +220,6 @@ func (e Engine) calculateIsolatedMarginDelta(ctx context.Context, res *positionC
 			return math.ZeroInt(), err
 		}
 		oldAllocated := oldPos.AllocatedMargin
-		if oldAllocated.IsNil() {
-			oldAllocated = math.ZeroInt()
-		}
 		oldMV := oldAllocated.Add(oldUPnL)
 		newMV := allocated.Add(newUPnL)
 

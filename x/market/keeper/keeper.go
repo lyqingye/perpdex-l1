@@ -7,7 +7,6 @@ import (
 
 	"cosmossdk.io/collections"
 	"cosmossdk.io/core/store"
-	"cosmossdk.io/math"
 
 	"github.com/cosmos/cosmos-sdk/codec"
 
@@ -76,9 +75,7 @@ func (k Keeper) GetMarketDetails(ctx context.Context, idx uint32) (types.MarketD
 		}
 		return types.MarketDetails{}, err
 	}
-	if d.FundingRatePrefixSum.IsNil() {
-		d.FundingRatePrefixSum = math.ZeroInt()
-	}
+	d.NormalizeIntFields()
 	return d, nil
 }
 
