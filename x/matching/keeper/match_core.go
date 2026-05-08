@@ -123,7 +123,7 @@ func (k Keeper) nextMaker(
 	}
 }
 
-// fillBaseAmount computes the trade base for a `(taker, maker)` pair,
+// matchSize computes the trade base for a `(taker, maker)` pair,
 // applying both sides' reduce-only caps so a single fill cannot flip
 // either account to the opposite side.
 //
@@ -131,12 +131,12 @@ func (k Keeper) nextMaker(
 // Returns (0, false, nil) when sizing collapses to zero (e.g. the
 // taker's reduce-only |position| is already 0 or, defensively, the
 // maker's is — the latter should already have been evicted by
-// nextMaker but the guard keeps fillBaseAmount self-contained).
+// nextMaker but the guard keeps matchSize self-contained).
 //
-// fillBaseAmount never mutates orderbook state; nextMaker owns the
+// matchSize never mutates orderbook state; nextMaker owns the
 // outer-ctx eviction policy. When ok=false the outer loop should
 // stop matching for this taker.
-func (k Keeper) fillBaseAmount(
+func (k Keeper) matchSize(
 	ctx context.Context,
 	taker *orderbooktypes.Order,
 	maker orderbooktypes.OrderBookEntry,

@@ -168,7 +168,7 @@ func (k Keeper) matchLiquidation(
 			break
 		}
 
-		base, ok, err := k.fillBaseAmount(ctx, taker, maker, true)
+		base, ok, err := k.matchSize(ctx, taker, maker, true)
 		if err != nil {
 			return totalFilled, err
 		}

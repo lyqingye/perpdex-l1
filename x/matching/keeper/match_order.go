@@ -20,14 +20,14 @@ import (
 // per-iteration mechanics:
 //
 //	nextMaker        : peek + outer-ctx eviction of unusable makers
-//	fillBaseAmount   : trade base sizing with reduce-only caps
+//	matchSize        : trade base sizing with reduce-only caps
 //	applyUserFill    : cache-scoped trade engine apply + maker book
 //	                   update + recoverable-error classification
 //
 // The 12-step matching sequence from 17-matching.md §3 is now
 // distributed: trigger / POST_ONLY-cross / empty-book outcomes are
 // handled by the caller (msg_server) before this function is
-// invoked; steps 5–9 live in nextMaker / fillBaseAmount; steps
+// invoked; steps 5–9 live in nextMaker / matchSize; steps
 // 10–12 live in applyUserFill.
 func (k Keeper) matchOrder(ctx context.Context, taker *orderbooktypes.Order, maxFills uint32) (uint64, uint32, error) {
 	now := sdk.UnwrapSDKContext(ctx).BlockTime().UnixMilli()
@@ -48,7 +48,7 @@ func (k Keeper) matchOrder(ctx context.Context, taker *orderbooktypes.Order, max
 			break
 		}
 
-		base, ok, err := k.fillBaseAmount(ctx, taker, maker, isPerp)
+		base, ok, err := k.matchSize(ctx, taker, maker, isPerp)
 		if err != nil {
 			return totalFilled, perptypes.OrderStatusCancelled, err
 		}
