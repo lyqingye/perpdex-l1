@@ -67,9 +67,6 @@ func (k Keeper) GetMarket(ctx context.Context, idx uint32) (types.Market, error)
 }
 
 // GetMarketDetails returns a MarketDetails or ErrMarketNotFound.
-//
-// The persisted row is funnelled through `MarketDetails.NormalizeIntFields()`
-// so callers can read `FundingRatePrefixSum` without re-checking IsNil.
 func (k Keeper) GetMarketDetails(ctx context.Context, idx uint32) (types.MarketDetails, error) {
 	d, err := k.MarketDetails.Get(ctx, idx)
 	if err != nil {

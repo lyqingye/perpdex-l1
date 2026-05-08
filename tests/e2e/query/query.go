@@ -40,8 +40,7 @@ func Account(app *perp.PerpDEXApp, ctx sdk.Context, idx uint64) (accounttypes.Ac
 }
 
 // Collateral returns the (signed) collateral of an account in internal
-// precision. Returns ZeroInt if the account collateral has never been set
-// (the keeper's GetAccount normalises the field to ZeroInt for us).
+// precision. Returns ZeroInt if the account collateral has never been set.
 func Collateral(app *perp.PerpDEXApp, ctx sdk.Context, idx uint64) (math.Int, error) {
 	a, err := app.PerpAccountKeeper.GetAccount(ctx, idx)
 	if err != nil {
@@ -61,8 +60,7 @@ func Position(
 	return app.PerpAccountKeeper.GetPosition(ctx, accountIdx, marketIdx)
 }
 
-// PositionSize returns the signed integer position (positive=long). The
-// keeper's GetPosition normalises Position to ZeroInt for missing rows.
+// PositionSize returns the signed integer position (positive=long).
 func PositionSize(
 	app *perp.PerpDEXApp,
 	ctx sdk.Context,

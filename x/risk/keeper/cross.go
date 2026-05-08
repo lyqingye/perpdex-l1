@@ -38,7 +38,6 @@ func (k Keeper) ComputeRiskInfo(ctx context.Context, accountIdx uint64) (types.R
 	if err != nil {
 		return types.RiskInfo{}, err
 	}
-	// `a.Collateral` is normalised by accountkeeper.GetAccount.
 	collateral := a.Collateral
 
 	cross := types.RiskParameters{
@@ -176,8 +175,6 @@ func (k Keeper) GetAvailableUsdcCollateral(ctx context.Context, accountIdx uint6
 	if classifyHealth(*cur) != perptypes.HealthHealthy {
 		return math.ZeroInt(), nil
 	}
-	// ComputeRiskInfo seeds CollateralWithFunding from the normalised
-	// account collateral, so it is always non-nil here.
 	collateral := cur.CollateralWithFunding
 	if collateral.IsNegative() {
 		return math.ZeroInt(), nil

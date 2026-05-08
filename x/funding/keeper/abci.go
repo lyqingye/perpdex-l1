@@ -213,8 +213,6 @@ func (k Keeper) settleMarket(ctx context.Context, marketIdx uint32, params types
 	if err != nil {
 		return err
 	}
-	// `d` comes pre-normalised via marketkeeper.GetMarketDetails so
-	// FundingRatePrefixSum is guaranteed non-nil here.
 	if d.TotalPremiumSamples == 0 {
 		return nil
 	}

@@ -82,11 +82,6 @@ func (k Keeper) SettlePositionFunding(ctx context.Context, accountIndex uint64, 
 	if err != nil {
 		return err
 	}
-	// `d` comes pre-normalised via marketkeeper.GetMarketDetails (it
-	// invokes MarketDetails.NormalizeIntFields), so FundingRatePrefixSum
-	// is always non-nil. Likewise `pos` inside UpdatePosition is routed
-	// through GetPosition / NormalizeIntFields, so per-field IsNil guards
-	// that used to live here are no longer needed.
 	_, err = k.accountKeeper.UpdatePosition(ctx, accountIndex, marketIndex, func(pos *accounttypes.AccountPosition) error {
 		if pos.Position.IsZero() {
 			pos.LastFundingRatePrefixSum = d.FundingRatePrefixSum

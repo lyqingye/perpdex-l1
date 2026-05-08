@@ -130,10 +130,7 @@ func (k Keeper) AvailableSharesToBurn(
 // Burn (operator burn while pool not frozen) and Update.
 //
 // An empty pool (`total_shares == 0`) trivially satisfies the invariant,
-// so the check is skipped. Callers feed `info` from
-// `pool.PublicPoolInfo` after `accountkeeper.GetAccount`, which
-// normalises every embedded math.Int via Account.NormalizeIntFields,
-// so per-field IsNil guards are not needed here.
+// so the check is skipped.
 func CheckMinOperatorShareRate(info types.PublicPoolInfo) bool {
 	if info.TotalShares.IsZero() {
 		return true

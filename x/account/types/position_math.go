@@ -8,13 +8,7 @@ import (
 )
 
 // NormalizeIntFields rewrites every nil math.Int on the position to
-// math.ZeroInt() so subsequent arithmetic never panics on a freshly
-// deserialised default-valued row. The keeper's GetPosition /
-// IterateAccountPositions / UpdatePosition helpers funnel through this
-// method so downstream code can drop the per-field IsNil guards that
-// used to be inlined at every read site. The pure-math methods on
-// AccountPosition (Notional, UnrealizedPnL, ApplyFill, MarginRequirement)
-// rely on this contract being upheld by callers.
+// math.ZeroInt().
 func (p *AccountPosition) NormalizeIntFields() {
 	if p.Position.IsNil() {
 		p.Position = math.ZeroInt()
@@ -47,9 +41,7 @@ func IsSameSide(a, b math.Int) bool {
 
 // Notional returns |position| * mark. Returns ZeroInt when either the
 // position size is zero or `markPrice` is zero. Pure value receiver,
-// no I/O. Caller MUST hand in a position whose math.Int fields have
-// been normalised (use `NormalizeIntFields()`); the keeper getter /
-// iterator helpers already do this.
+// no I/O.
 func (p AccountPosition) Notional(markPrice uint32) math.Int {
 	if p.Position.IsZero() || markPrice == 0 {
 		return math.ZeroInt()
@@ -98,8 +90,7 @@ func (p AccountPosition) CloseOutMargin(markPrice uint32, md markettypes.MarketD
 
 // UnrealizedPnL returns position * mark - entry_quote at `markPrice`. Sign is
 // positive when the position is in profit. Returns ZeroInt for empty positions
-// or when the mark is zero. Caller MUST hand in a normalised position (see
-// `NormalizeIntFields`).
+// or when the mark is zero.
 func (p AccountPosition) UnrealizedPnL(markPrice uint32) math.Int {
 	if p.Position.IsZero() || markPrice == 0 {
 		return math.ZeroInt()
@@ -150,12 +141,6 @@ type FillResult struct {
 // UpdatePosition) and x/risk `SimulateRiskAfterTakeover` (which inspects
 // the post-state for IM/MM/CM aggregation) consume this single source of
 // truth, retiring the duplicate switch that previously lived in both.
-//
-// Caller MUST hand in a normalised position (see `NormalizeIntFields`)
-// and a non-nil `delta`. Both call sites build `delta` from
-// `math.NewIntFromUint64(...)` so it is always non-nil; the position
-// flows through `accountKeeper.GetPosition`/`UpdatePosition`, which
-// normalise the row before returning.
 func (p AccountPosition) ApplyFill(delta math.Int, price uint32) FillResult {
 	curSize := p.Position
 	curEntryQuote := p.EntryQuote

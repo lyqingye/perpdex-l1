@@ -68,9 +68,7 @@ func (m msgServer) CreatePublicPool(ctx context.Context, msg *types.MsgCreatePub
 		Mul(math.NewIntFromUint64(perptypes.InitialPoolShareValue))
 	seedCollat := seedUSDC.Mul(math.NewIntFromUint64(perptypes.USDCToCollateralMultiplier))
 
-	// Pre-flight: master must have enough collateral. `master` came
-	// from GetAccount, which normalises Collateral, so no IsNil guard
-	// is needed here.
+	// Pre-flight: master must have enough collateral.
 	if master.Collateral.LT(seedCollat) {
 		return nil, types.ErrInsufficientFunds.Wrapf(
 			"need %s, have %s", seedCollat.String(), master.Collateral.String(),
@@ -212,8 +210,7 @@ func (m msgServer) assertPoolEmpty(ctx context.Context, pool types.Account) erro
 			"pool has %d open order(s)", pool.TotalOrderCount,
 		)
 	}
-	// Walk positions for this pool index. IterateAccountPositions
-	// normalises every row, so a plain IsZero check is enough.
+	// Walk positions for this pool index.
 	var firstNonZero *types.AccountPosition
 	if err := m.IterateAccountPositions(ctx, pool.AccountIndex, func(p types.AccountPosition) bool {
 		if !p.Position.IsZero() {
@@ -631,9 +628,6 @@ func (m msgServer) StrategyTransfer(ctx context.Context, msg *types.MsgStrategyT
 			copy(fixed, info.Strategies)
 			info.Strategies = fixed
 		}
-		// Strategies entries are normalised by Account.NormalizeIntFields
-		// on read (and the slot rebuild above seeds new entries with
-		// math.ZeroInt), so direct arithmetic is safe.
 		from := info.Strategies[msg.FromStrategy]
 		if from.LT(msg.Amount) {
 			return types.ErrInsufficientFunds.Wrapf(

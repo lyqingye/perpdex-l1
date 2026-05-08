@@ -7,10 +7,7 @@ import (
 )
 
 // NormalizeIntFields rewrites every nil math.Int on the account (and on
-// its embedded PublicPoolInfo, when present) to math.ZeroInt() so
-// downstream callers can treat the row as if it were freshly minted.
-// The keeper's GetAccount funnel-point invokes this so consumers don't
-// have to repeat per-field IsNil() guards.
+// its embedded PublicPoolInfo, when present) to math.ZeroInt().
 func (a *Account) NormalizeIntFields() {
 	if a.Collateral.IsNil() {
 		a.Collateral = math.ZeroInt()
@@ -31,8 +28,7 @@ func (a *Account) NormalizeIntFields() {
 }
 
 // NormalizeIntFields rewrites every nil math.Int on the spot-asset row
-// to math.ZeroInt(). The keeper's GetAccountAsset funnel-point invokes
-// this so callers can treat Balance / LockedBalance as always non-nil.
+// to math.ZeroInt().
 func (a *AccountAsset) NormalizeIntFields() {
 	if a.Balance.IsNil() {
 		a.Balance = math.ZeroInt()

@@ -14,10 +14,6 @@ import (
 )
 
 // GetAccount returns the account with the given index.
-//
-// Every successful return goes through `Account.NormalizeIntFields()`,
-// so callers can read `Collateral` (and `PublicPoolInfo` int fields when
-// present) without re-checking `IsNil`.
 func (k Keeper) GetAccount(ctx context.Context, idx uint64) (types.Account, error) {
 	a, err := k.Accounts.Get(ctx, idx)
 	if err != nil {
@@ -173,9 +169,6 @@ func (k Keeper) setAccountAsset(ctx context.Context, aa types.AccountAsset) erro
 }
 
 // GetAccountAsset returns the (account, asset) row, zero-valued if absent.
-//
-// Persisted rows are passed through `AccountAsset.NormalizeIntFields()`
-// so callers can read `Balance` / `LockedBalance` directly.
 func (k Keeper) GetAccountAsset(ctx context.Context, accIdx uint64, assetIdx uint32) (types.AccountAsset, error) {
 	a, err := k.AccountAssets.Get(ctx, collections.Join(accIdx, assetIdx))
 	if err != nil {
@@ -291,8 +284,7 @@ func (k Keeper) TransferAccountAssetBalance(
 
 // AvailableBalance returns Balance - LockedBalance for an account asset.
 // Lock-on-place spot orders consume Available at place time and release
-// it on cancel / evict / fill. `GetAccountAsset` already normalises both
-// fields to non-nil, so the subtraction is safe without local guards.
+// it on cancel / evict / fill.
 func (k Keeper) AvailableBalance(ctx context.Context, accIdx uint64, assetIdx uint32) (math.Int, error) {
 	aa, err := k.GetAccountAsset(ctx, accIdx, assetIdx)
 	if err != nil {
@@ -633,11 +625,6 @@ func (k Keeper) ReducePublicPoolShare(
 }
 
 // GetPosition returns the position; an empty zero-valued one if absent.
-//
-// The persisted row (when present) is passed through
-// `AccountPosition.NormalizeIntFields()` so callers can do arithmetic
-// on `Position` / `EntryQuote` / `LastFundingRatePrefixSum` /
-// `AllocatedMargin` without re-checking IsNil.
 func (k Keeper) GetPosition(ctx context.Context, accIdx uint64, marketIdx uint32) (types.AccountPosition, error) {
 	p, err := k.AccountPositions.Get(ctx, collections.Join(accIdx, marketIdx))
 	if err != nil {
@@ -659,9 +646,7 @@ func (k Keeper) GetPosition(ctx context.Context, accIdx uint64, marketIdx uint32
 }
 
 // IterateAccountPositions walks every persisted AccountPosition row owned
-// by `accountIdx`. The callback returns `true` to stop early. Each row is
-// normalised the same way `GetPosition` would (math.Int fields are
-// non-nil), so callers can do arithmetic without re-checking IsNil.
+// by `accountIdx`. The callback returns `true` to stop early.
 //
 // Replaces the old MaxPerpsMarketIndex-wide loops in
 // risk.ComputeRiskInfo / IsValidRiskChange / SnapshotPreRisk /
