@@ -230,14 +230,14 @@ replace (
 	// Use the cosmos fork to avoid the deprecated 99designs/keyring v1.2.2 stub.
 	github.com/99designs/keyring => github.com/cosmos/keyring v1.2.0
 
-	// The oracle-sidecar lives in a sibling module under the same repo.
+	// The oracle-sidecar lives in a nested service module under the same repo.
 	// `go.work` makes this transparent for normal `go test` invocations,
 	// but `go mod tidy` does NOT consult workspaces and would otherwise
 	// try to download oracle-sidecar from the network. Pinning a
 	// path-replace here keeps tidy local-only; the placeholder require
 	// version below is required by the spec but ignored at build time
 	// because the replace short-circuits resolution.
-	github.com/perpdex/perpdex-l1/oracle-sidecar => ./oracle-sidecar
+	github.com/perpdex/perpdex-l1/oracle-sidecar => ./services/oracle
 
 	// goleveldb v1.0.1+ has known issues; pin to a stable revision.
 	github.com/syndtr/goleveldb => github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7

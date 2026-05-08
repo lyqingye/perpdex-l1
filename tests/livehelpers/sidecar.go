@@ -46,7 +46,7 @@ type SidecarProviderEntry struct {
 }
 
 // DefaultLiveConfig returns a sidecar config equivalent to the bundled
-// `oracle-sidecar/oracle.json` but with `grpc_addr` / `metrics_addr` left
+// `services/oracle/oracle.json` but with `grpc_addr` / `metrics_addr` left
 // blank so callers can fill in dynamically chosen ports.
 func DefaultLiveConfig() SidecarConfig {
 	return SidecarConfig{
@@ -106,7 +106,7 @@ func RepoRoot(t *testing.T) string {
 
 // SidecarBinaryPath resolves the location of the prebuilt sidecar binary,
 // preferring an `ORACLE_SIDECAR_BIN` override over the canonical
-// `<repo>/oracle-sidecar/build/oracle-sidecar` path produced by
+// `<repo>/services/oracle/build/oracle-sidecar` path produced by
 // `make build-sidecar`.
 func SidecarBinaryPath(t *testing.T) string {
 	t.Helper()
@@ -116,7 +116,7 @@ func SidecarBinaryPath(t *testing.T) string {
 		}
 		return v
 	}
-	bin := filepath.Join(RepoRoot(t), "oracle-sidecar", "build", "oracle-sidecar")
+	bin := filepath.Join(RepoRoot(t), "services", "oracle", "build", "oracle-sidecar")
 	if _, err := os.Stat(bin); err != nil {
 		t.Fatalf("livehelpers: %s missing — run `make build-sidecar` first (or set ORACLE_SIDECAR_BIN)", bin)
 	}

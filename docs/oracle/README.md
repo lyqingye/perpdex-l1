@@ -61,10 +61,10 @@ The full lifecycle of a single block:
 ```sh
 # 1. build everything
 make build           # the chain binary  -> ./build/perpd
-make build-sidecar   # the sidecar       -> ./oracle-sidecar/build/oracle-sidecar
+make build-sidecar   # the sidecar       -> ./services/oracle/build/oracle-sidecar
 
 # 2. start the sidecar
-./oracle-sidecar/build/oracle-sidecar --config ./oracle-sidecar/oracle.json -v
+./services/oracle/build/oracle-sidecar --config ./services/oracle/oracle.json -v
 
 # 3. (in another shell) initialise & run the chain
 ./build/perpd init mynode --chain-id perpdex-dev

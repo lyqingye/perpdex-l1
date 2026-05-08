@@ -14,7 +14,7 @@ services:
     image: ghcr.io/perpdex/perpdex-l1-oracle-sidecar:dev
     build:
       context: ../..
-      dockerfile: oracle-sidecar/Dockerfile
+      dockerfile: services/oracle/Dockerfile
     command: ["--config", "/etc/sidecar/oracle.json"]
     ports:
       - "8080:8080"   # gRPC
@@ -67,11 +67,11 @@ volumes:
 ## Sidecar Dockerfile
 
 ```dockerfile
-# oracle-sidecar/Dockerfile
+# services/oracle/Dockerfile
 FROM golang:1.25.7 AS builder
 WORKDIR /src
-COPY oracle-sidecar/ ./oracle-sidecar/
-WORKDIR /src/oracle-sidecar
+COPY services/oracle/ ./services/oracle/
+WORKDIR /src/services/oracle
 RUN CGO_ENABLED=0 go build -trimpath -o /oracle-sidecar ./cmd/oracle-sidecar
 
 FROM gcr.io/distroless/static:nonroot
@@ -118,7 +118,7 @@ Confirm operation:
 # Sidecar prices (the binary does not register gRPC reflection, so the
 # bundled .proto must be supplied):
 grpcurl -plaintext \
-  -import-path oracle-sidecar/service/proto -proto oracle.proto \
+  -import-path services/oracle/service/proto -proto oracle.proto \
   localhost:8080 perpdex.oracle.sidecar.v1.Oracle/Prices
 
 # Sidecar metrics scraped by Prometheus:
