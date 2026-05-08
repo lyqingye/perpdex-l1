@@ -41,11 +41,6 @@ import (
 //                      stitch cross + isolated together.
 //   - position.go : per-position query helpers consumed by liquidation
 //                   (GetPositionMarkValue, GetPositionUnrealizedPnL).
-//                   The trade keeper consumes GetMarkAndMarketDetails
-//                   directly and runs the IM / uPnL math via
-//                   `MarketDetails.InitialMargin` / `AccountPosition.UnrealizedPnL`,
-//                   so the keeper-bound `ComputePositionInitialMargin` /
-//                   `ComputeUnrealizedPnLAt` helpers retired here.
 //   - liquidation.go : liquidation-specific math
 //                      (GetPositionZeroPrice, SimulateRiskAfterTakeover,
 //                      quoTowardZero).
@@ -109,15 +104,11 @@ func (k Keeper) Authority() string { return k.authority }
 //     would silently zero out IM/MM/CM/uPnL and let bankrupt accounts
 //     look healthy.
 //
-// Centralised here to retire the eight identical guards previously
-// inlined in ComputeRiskInfo / ComputeIsolatedRisk /
-// GetPositionZeroPrice / GetPositionMarkValue /
-// GetPositionUnrealizedPnL / SimulateRiskAfterTakeover, plus the two
-// retired `ComputePositionInitialMargin` / `ComputeUnrealizedPnLAt`
-// helpers (now subsumed by `GetMarkAndMarketDetails` + caller-side
-// `MarketDetails.InitialMargin` / `AccountPosition.UnrealizedPnL`).
-// Callers that need to attach extra account context can wrap the
-// returned error with errors.Wrapf themselves.
+// Centralised here to retire the identical guards previously inlined in
+// ComputeRiskInfo / ComputeIsolatedRisk / GetPositionZeroPrice /
+// GetPositionMarkValue / GetPositionUnrealizedPnL /
+// SimulateRiskAfterTakeover. Callers that need to attach extra account
+// context can wrap the returned error with errors.Wrapf themselves.
 func (k Keeper) resolveMarkPrice(ctx context.Context, marketIdx uint32) (uint32, error) {
 	px, err := k.oracleKeeper.GetPrice(ctx, marketIdx)
 	if err != nil {
@@ -130,14 +121,7 @@ func (k Keeper) resolveMarkPrice(ctx context.Context, marketIdx uint32) (uint32,
 }
 
 // GetMarkAndMarketDetails returns the live mark price and `MarketDetails`
-// row for `marketIdx` in a single round-trip. It is the public entry
-// point trade keeper's `calculateIsolatedMarginDelta` uses so the four
-// IM / uPnL evaluations of one fill leg share a single oracle read +
-// market-details fetch (lighter parity).
-//
-// Errors mirror `resolveMarkPrice` (`ErrMissingPrice` / `ErrZeroMarkPrice`)
-// or the underlying `marketKeeper.GetMarketDetails` failure, so callers
-// can match on the same sentinels they already handle.
+// row for `marketIdx` in a single round-trip.
 func (k Keeper) GetMarkAndMarketDetails(ctx context.Context, marketIdx uint32) (uint32, markettypes.MarketDetails, error) {
 	mark, err := k.resolveMarkPrice(ctx, marketIdx)
 	if err != nil {

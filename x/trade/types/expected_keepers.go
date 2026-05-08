@@ -62,12 +62,6 @@ type RiskKeeper interface {
 	// of HEALTHY.
 	GetAvailableUsdcCollateral(ctx context.Context, accountIndex uint64) (math.Int, error)
 	// GetMarkAndMarketDetails returns the live mark price and
-	// `MarketDetails` row for `marketIdx` in a single round-trip. The
-	// trade keeper drives the lighter `calculate_isolated_margin_change`
-	// math directly via `MarketDetails.InitialMargin` and
-	// `AccountPosition.UnrealizedPnL` / `MarketValue`, so a single
-	// resolve+fetch up front replaces the four oracle/market reads the
-	// retired `ComputePositionInitialMargin` / `ComputeUnrealizedPnLAt`
-	// helpers used to incur per fill leg.
+	// `MarketDetails` row for `marketIdx` in a single round-trip.
 	GetMarkAndMarketDetails(ctx context.Context, marketIdx uint32) (uint32, markettypes.MarketDetails, error)
 }

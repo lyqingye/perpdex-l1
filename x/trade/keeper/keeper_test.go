@@ -234,19 +234,11 @@ type stubRisk struct {
 	// reports an essentially unbounded headroom so existing tests
 	// keep passing.
 	availableCollateral map[uint64]math.Int
-	// markPrice is returned by GetMarkAndMarketDetails. Default 0
-	// means the trade keeper sees a zero mark, which collapses the
-	// real `MarketDetails.InitialMargin` and `AccountPosition.UnrealizedPnL`
-	// helpers to zero — preserving the historical "no IM / no uPnL"
-	// test expectations from before the cohesive refactor.
+	// markPrice + imfBps populate the MarketDetails returned by
+	// GetMarkAndMarketDetails; default 0 short-circuits the IM / uPnL
+	// math to zero so legacy test expectations stay intact.
 	markPrice uint64
-	// imfBps populates `MarketDetails.DefaultInitialMarginFraction` so
-	// the production `MarketDetails.InitialMargin` formula
-	// `posAbs * mark * imfBps / MarginTick` is exercised end-to-end
-	// without re-implementing IM math here. MarginTick == 10_000, so
-	// existing tests that drove the old `imfBps / 10_000` stub keep
-	// the same numerical expectations.
-	imfBps uint64
+	imfBps    uint64
 }
 
 func (s *stubRisk) IsValidRiskChange(_ context.Context, _ uint64) (bool, error) {

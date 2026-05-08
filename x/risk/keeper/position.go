@@ -7,22 +7,7 @@ import (
 )
 
 // position.go owns the per-position query helpers consumed by the
-// liquidation keeper to rank ADL / LLP candidates. The trade keeper
-// previously sourced its hypothetical-position IM / uPnL from this
-// file too (`ComputePositionInitialMargin` / `ComputeUnrealizedPnLAt`),
-// but those helpers retired in favour of the cohesive split:
-//
-//   - `RiskKeeper.GetMarkAndMarketDetails` returns mark + md in one
-//     round-trip;
-//   - `MarketDetails.InitialMargin(posAbs, mark)` owns the IM formula
-//     (the IMF multiplier lives on MarketDetails, so the math is
-//     hosted there alongside MaintenanceMargin / CloseOutMargin's
-//     siblings on AccountPosition);
-//   - `AccountPosition.UnrealizedPnL(mark)` covers the uPnL math.
-//
-// Trade-side `calculateIsolatedMarginDelta` now drives those primitives
-// directly, freeing this file to focus on the stored-position queries
-// liquidation actually consumes.
+// liquidation keeper to rank ADL / LLP candidates.
 
 // GetPositionMarkValue returns |position| * mark_price as a math.Int.
 // Returns zero when no position exists; errors out on missing/stale oracle.
@@ -64,6 +49,4 @@ func (k Keeper) GetPositionUnrealizedPnL(ctx context.Context, accountIdx uint64,
 }
 
 // note: ComputeRiskInfo / ComputeIsolatedRisk live in cross.go and
-// isolated.go respectively; the per-position helpers above are kept
-// separate so the package's split mirrors the way x/liquidation
-// consumes them (stored-position queries for ADL / LLP ranking).
+// isolated.go respectively.

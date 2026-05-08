@@ -181,23 +181,12 @@ func (e Engine) rebalanceIsolatedMargin(ctx context.Context, res *positionChange
 // 2, matching lighter's ordering where the
 // `taker_collateral_delta`-adjusted allocated_margin feeds into
 // `calculate_isolated_margin_change`.
-//
-// The IM / uPnL primitives now hang on the right value receivers:
-// `MarketDetails.InitialMargin(size, mark)` owns the IMF formula (size
-// is just a number — caller-supplied, so |new| / |OI delta| no longer
-// require constructing a one-shot synthetic AccountPosition); the
-// position-bound `UnrealizedPnL` / `MarketValue` cover the per-fill
-// state-comparison math. mark + md are read once via the cohesive
-// `RiskKeeper.GetMarkAndMarketDetails` instead of resolving the
-// oracle four times per fill leg.
 func (e Engine) calculateIsolatedMarginDelta(ctx context.Context, res *positionChangeResult, fee math.Int) (math.Int, error) {
 	newPos := res.New
 	oldPos := res.Old
 	allocated := newPos.AllocatedMargin
 
 	// case 1: new position closed → release positive allocated_margin.
-	// Bail out before fetching mark / md — closed positions don't
-	// reference market state.
 	if newPos.Position.IsZero() {
 		if allocated.IsPositive() {
 			return allocated.Neg(), nil
