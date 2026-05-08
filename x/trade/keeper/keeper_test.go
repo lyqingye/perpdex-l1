@@ -234,14 +234,11 @@ type stubRisk struct {
 	// reports an essentially unbounded headroom so existing tests
 	// keep passing.
 	availableCollateral map[uint64]math.Int
-	// markPrice is consulted by ComputePositionInitialMargin /
-	// ComputeUnrealizedPnLAt. Default of 0 means the margin auto-
-	// allocation logic short-circuits to zero (no IM, no uPnL),
-	// preserving legacy test expectations.
+	// markPrice + imfBps populate the MarketDetails returned by
+	// GetMarkAndMarketDetails; default 0 short-circuits the IM / uPnL
+	// math to zero so legacy test expectations stay intact.
 	markPrice uint64
-	// imfBps controls the synthetic IM = notional * imfBps / 10_000
-	// computed by the stub.
-	imfBps uint64
+	imfBps    uint64
 }
 
 func (s *stubRisk) IsValidRiskChange(_ context.Context, _ uint64) (bool, error) {
@@ -267,22 +264,11 @@ func (s *stubRisk) GetAvailableUsdcCollateral(_ context.Context, accountIdx uint
 	return math.NewIntFromUint64(1<<62 - 1), nil
 }
 
-func (s *stubRisk) ComputePositionInitialMargin(_ context.Context, _ uint32, posAbs math.Int) (math.Int, error) {
-	if s.markPrice == 0 || s.imfBps == 0 || posAbs.IsNil() || posAbs.IsZero() {
-		return math.ZeroInt(), nil
+func (s *stubRisk) GetMarkAndMarketDetails(_ context.Context, _ uint32) (uint32, markettypes.MarketDetails, error) {
+	md := markettypes.MarketDetails{
+		DefaultInitialMarginFraction: uint32(s.imfBps),
 	}
-	notional := posAbs.Mul(math.NewIntFromUint64(s.markPrice))
-	return notional.Mul(math.NewIntFromUint64(s.imfBps)).Quo(math.NewInt(10_000)), nil
-}
-
-func (s *stubRisk) ComputeUnrealizedPnLAt(_ context.Context, _ uint32, position, entryQuote math.Int) (math.Int, error) {
-	if s.markPrice == 0 || position.IsNil() || position.IsZero() {
-		return math.ZeroInt(), nil
-	}
-	if entryQuote.IsNil() {
-		entryQuote = math.ZeroInt()
-	}
-	return position.Mul(math.NewIntFromUint64(s.markPrice)).Sub(entryQuote), nil
+	return uint32(s.markPrice), md, nil
 }
 
 func newSdkCtx(t *testing.T) (sdk.Context, *stubAccount, *stubMarket, *stubRisk, tradekeeper.Keeper) {

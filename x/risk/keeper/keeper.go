@@ -10,6 +10,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/codec"
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
+	markettypes "github.com/perpdex/perpdex-l1/x/market/types"
 	"github.com/perpdex/perpdex-l1/x/risk/types"
 )
 
@@ -38,10 +39,8 @@ import (
 //                   IterateIsolatedPositions, isIsolatedRiskChangeValid).
 //   - risk_change.go : IsValidRiskChange + SnapshotPreRisk drivers that
 //                      stitch cross + isolated together.
-//   - position.go : per-position query helpers shared by trade and
-//                   liquidation (ComputePositionInitialMargin,
-//                   ComputeUnrealizedPnLAt, GetPositionMarkValue,
-//                   GetPositionUnrealizedPnL).
+//   - position.go : per-position query helpers consumed by liquidation
+//                   (GetPositionMarkValue, GetPositionUnrealizedPnL).
 //   - liquidation.go : liquidation-specific math
 //                      (GetPositionZeroPrice, SimulateRiskAfterTakeover,
 //                      quoTowardZero).
@@ -105,13 +104,11 @@ func (k Keeper) Authority() string { return k.authority }
 //     would silently zero out IM/MM/CM/uPnL and let bankrupt accounts
 //     look healthy.
 //
-// Centralised here to retire the eight identical guards previously
-// inlined in ComputeRiskInfo / ComputeIsolatedRisk /
-// ComputePositionInitialMargin / ComputeUnrealizedPnLAt /
-// GetPositionZeroPrice / GetPositionMarkValue /
-// GetPositionUnrealizedPnL / SimulateRiskAfterTakeover. Callers that
-// need to attach extra account context can wrap the returned error with
-// errors.Wrapf themselves.
+// Centralised here to retire the identical guards previously inlined in
+// ComputeRiskInfo / ComputeIsolatedRisk / GetPositionZeroPrice /
+// GetPositionMarkValue / GetPositionUnrealizedPnL /
+// SimulateRiskAfterTakeover. Callers that need to attach extra account
+// context can wrap the returned error with errors.Wrapf themselves.
 func (k Keeper) resolveMarkPrice(ctx context.Context, marketIdx uint32) (uint32, error) {
 	px, err := k.oracleKeeper.GetPrice(ctx, marketIdx)
 	if err != nil {
@@ -121,6 +118,20 @@ func (k Keeper) resolveMarkPrice(ctx context.Context, marketIdx uint32) (uint32,
 		return 0, types.ErrZeroMarkPrice.Wrapf("market=%d", marketIdx)
 	}
 	return px.MarkPrice, nil
+}
+
+// GetMarkAndMarketDetails returns the live mark price and `MarketDetails`
+// row for `marketIdx` in a single round-trip.
+func (k Keeper) GetMarkAndMarketDetails(ctx context.Context, marketIdx uint32) (uint32, markettypes.MarketDetails, error) {
+	mark, err := k.resolveMarkPrice(ctx, marketIdx)
+	if err != nil {
+		return 0, markettypes.MarketDetails{}, err
+	}
+	md, err := k.marketKeeper.GetMarketDetails(ctx, marketIdx)
+	if err != nil {
+		return 0, markettypes.MarketDetails{}, err
+	}
+	return mark, md, nil
 }
 
 // classifyHealth implements the 5-level state machine.

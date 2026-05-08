@@ -186,7 +186,7 @@ func (e Engine) calculateIsolatedMarginDelta(ctx context.Context, res *positionC
 	oldPos := res.Old
 	allocated := newPos.AllocatedMargin
 
-	// case 1: new position closed → release positive allocated_margin
+	// case 1: new position closed → release positive allocated_margin.
 	if newPos.Position.IsZero() {
 		if allocated.IsPositive() {
 			return allocated.Neg(), nil
@@ -194,34 +194,22 @@ func (e Engine) calculateIsolatedMarginDelta(ctx context.Context, res *positionC
 		return math.ZeroInt(), nil
 	}
 
-	posReq, err := e.riskKeeper.ComputePositionInitialMargin(ctx, res.MarketIdx, newPos.Position.Abs())
+	mark, md, err := e.riskKeeper.GetMarkAndMarketDetails(ctx, res.MarketIdx)
 	if err != nil {
 		return math.ZeroInt(), err
 	}
+	posReq := md.InitialMargin(newPos.Position.Abs(), mark)
 
 	// case 2: side flipped → re-margin to position_requirement at the
 	// new uPnL-adjusted account state.
 	if res.SideFlipped {
-		newUPnL, err := e.riskKeeper.ComputeUnrealizedPnLAt(ctx, res.MarketIdx, newPos.Position, newPos.EntryQuote)
-		if err != nil {
-			return math.ZeroInt(), err
-		}
-		return posReq.Sub(allocated.Add(newUPnL)), nil
+		return posReq.Sub(allocated.Add(newPos.UnrealizedPnL(mark))), nil
 	}
 
 	if res.OIDelta < 0 {
 		// case 4: same side, OI shrank → proportional release.
-		oldUPnL, err := e.riskKeeper.ComputeUnrealizedPnLAt(ctx, res.MarketIdx, oldPos.Position, oldPos.EntryQuote)
-		if err != nil {
-			return math.ZeroInt(), err
-		}
-		newUPnL, err := e.riskKeeper.ComputeUnrealizedPnLAt(ctx, res.MarketIdx, newPos.Position, newPos.EntryQuote)
-		if err != nil {
-			return math.ZeroInt(), err
-		}
-		oldAllocated := oldPos.AllocatedMargin
-		oldMV := oldAllocated.Add(oldUPnL)
-		newMV := allocated.Add(newUPnL)
+		oldMV := oldPos.MarketValue(mark)
+		newMV := newPos.MarketValue(mark)
 
 		var targetValue math.Int
 		oldAbs := oldPos.Position.Abs()
@@ -263,19 +251,8 @@ func (e Engine) calculateIsolatedMarginDelta(ctx context.Context, res *positionC
 	if oiAbs.IsZero() {
 		return math.ZeroInt(), nil
 	}
-	oiReq, err := e.riskKeeper.ComputePositionInitialMargin(ctx, res.MarketIdx, oiAbs)
-	if err != nil {
-		return math.ZeroInt(), err
-	}
-	oldUPnL, err := e.riskKeeper.ComputeUnrealizedPnLAt(ctx, res.MarketIdx, oldPos.Position, oldPos.EntryQuote)
-	if err != nil {
-		return math.ZeroInt(), err
-	}
-	newUPnL, err := e.riskKeeper.ComputeUnrealizedPnLAt(ctx, res.MarketIdx, newPos.Position, newPos.EntryQuote)
-	if err != nil {
-		return math.ZeroInt(), err
-	}
-	tradePnL := newUPnL.Sub(oldUPnL).Sub(fee)
+	oiReq := md.InitialMargin(oiAbs, mark)
+	tradePnL := newPos.UnrealizedPnL(mark).Sub(oldPos.UnrealizedPnL(mark)).Sub(fee)
 	delta := oiReq.Sub(tradePnL)
 	if delta.IsNegative() {
 		return math.ZeroInt(), nil

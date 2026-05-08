@@ -73,7 +73,7 @@ func (p AccountPosition) MarginRequirement(markPrice uint32, fractionBps uint32)
 // `default_initial_margin_fraction`. Only meaningful for perp markets; spot
 // markets are settled by the spot keeper and never reach here.
 func (p AccountPosition) InitialMargin(markPrice uint32, md markettypes.MarketDetails) math.Int {
-	return p.MarginRequirement(markPrice, md.DefaultInitialMarginFraction)
+	return md.InitialMargin(p.Position.Abs(), markPrice)
 }
 
 // MaintenanceMargin returns the position's MM at `markPrice` using the market's
@@ -96,6 +96,15 @@ func (p AccountPosition) UnrealizedPnL(markPrice uint32) math.Int {
 		return math.ZeroInt()
 	}
 	return p.Position.Mul(math.NewIntFromUint64(uint64(markPrice))).Sub(p.EntryQuote)
+}
+
+// MarketValue returns AllocatedMargin + UnrealizedPnL(markPrice).
+func (p AccountPosition) MarketValue(markPrice uint32) math.Int {
+	allocated := p.AllocatedMargin
+	if allocated.IsNil() {
+		allocated = math.ZeroInt()
+	}
+	return allocated.Add(p.UnrealizedPnL(markPrice))
 }
 
 // FillResult describes the post-trade snapshot produced by ApplyFill. Pure
