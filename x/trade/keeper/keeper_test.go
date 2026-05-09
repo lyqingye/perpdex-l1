@@ -493,6 +493,92 @@ func TestApplyPerpsMatching_LiquidationFeeNoneAtZeroPrice(t *testing.T) {
 		"no improvement ⇒ no fee; LLP must not receive collateral")
 }
 
+// TestApplyPerpsMatching_SkipTakerRiskCheck verifies the Lighter-parity
+// flag introduced for `Deleverage`'s LLP / IF path: when the taker is
+// the IF/LLP absorber, both the pre-trade snapshot and the post-trade
+// `IsValidRiskChange` on the taker must be skipped (the absorber's
+// collateral sufficiency is gated by `tryLLPAbsorb`'s pre-trade
+// `SimulateRiskAfterTakeover`/IMR check and Lighter's
+// `is_*_has_enough_cross_collateral` assert instead). The maker side
+// keeps its full risk pipeline.
+func TestApplyPerpsMatching_SkipTakerRiskCheck(t *testing.T) {
+	ctx, ak, _, rk, k := newSdkCtx(t)
+	require.NoError(t, ak.SetAccount(ctx, accounttypes.Account{
+		AccountIndex: 10, Collateral: math.NewInt(1_000_000),
+	}))
+	require.NoError(t, ak.SetAccount(ctx, accounttypes.Account{
+		AccountIndex: 20, Collateral: math.NewInt(1_000_000),
+	}))
+
+	require.NoError(t, k.ApplyPerpsMatching(ctx, tradekeeper.PerpFill{
+		MakerAccountIndex:  10,
+		TakerAccountIndex:  20,
+		MarketIndex:        1,
+		Price:              100,
+		BaseAmount:         5,
+		IsTakerAsk:         true,
+		NoFee:              true,
+		SkipTakerRiskCheck: true,
+	}))
+	// Only the maker should be snapshotted and risk-checked once;
+	// the taker side is fully bypassed.
+	require.Equal(t, 1, rk.snapshots,
+		"taker pre-snapshot must be skipped under SkipTakerRiskCheck")
+	require.Equal(t, 1, rk.riskChecks,
+		"only the maker should run IsValidRiskChange under SkipTakerRiskCheck")
+
+	// SkipMakerRiskCheck stays independent: turning ON SkipMaker as
+	// well drops the post-check count to 0 (we still snapshot
+	// nothing on either side, and never enter the post-trade loop).
+	ctx2, ak2, _, rk2, k2 := newSdkCtx(t)
+	require.NoError(t, ak2.SetAccount(ctx2, accounttypes.Account{
+		AccountIndex: 10, Collateral: math.NewInt(1_000_000),
+	}))
+	require.NoError(t, ak2.SetAccount(ctx2, accounttypes.Account{
+		AccountIndex: 20, Collateral: math.NewInt(1_000_000),
+	}))
+	require.NoError(t, k2.ApplyPerpsMatching(ctx2, tradekeeper.PerpFill{
+		MakerAccountIndex:  10,
+		TakerAccountIndex:  20,
+		MarketIndex:        1,
+		Price:              100,
+		BaseAmount:         5,
+		IsTakerAsk:         true,
+		NoFee:              true,
+		SkipMakerRiskCheck: true,
+		SkipTakerRiskCheck: true,
+	}))
+	require.Equal(t, 0, rk2.snapshots,
+		"both flags on => no snapshots at all")
+	require.Equal(t, 0, rk2.riskChecks,
+		"both flags on => no IsValidRiskChange")
+
+	// Sanity: with SkipTakerRiskCheck OFF (default), a forced taker
+	// rejection (rejectOnCall=1, the for-loop iterates [Taker, Maker])
+	// surfaces as `ErrTakerRiskRegression`, confirming the taker leg
+	// IS reachable when the flag isn't set.
+	ctx3, ak3, _, rk3, k3 := newSdkCtx(t)
+	require.NoError(t, ak3.SetAccount(ctx3, accounttypes.Account{
+		AccountIndex: 10, Collateral: math.NewInt(1_000_000),
+	}))
+	require.NoError(t, ak3.SetAccount(ctx3, accounttypes.Account{
+		AccountIndex: 20, Collateral: math.NewInt(1_000_000),
+	}))
+	rk3.rejectOnCall = 1
+	err := k3.ApplyPerpsMatching(ctx3, tradekeeper.PerpFill{
+		MakerAccountIndex: 10,
+		TakerAccountIndex: 20,
+		MarketIndex:       1,
+		Price:             100,
+		BaseAmount:        5,
+		IsTakerAsk:        true,
+		NoFee:             true,
+	})
+	require.Error(t, err)
+	require.ErrorIs(t, err, tradetypes.ErrTakerRiskRegression,
+		"baseline (no Skip*RiskCheck) MUST classify the rejection as taker regression")
+}
+
 // TestApplySpotMatching_RejectsNegativeBalance ensures a buy-side spot trade
 // against a zero-balance maker errors instead of writing a negative balance
 // (audit High trade-8).

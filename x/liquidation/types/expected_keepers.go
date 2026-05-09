@@ -62,6 +62,18 @@ type RiskKeeper interface {
 	ComputeIsolatedRisk(ctx context.Context, accountIdx uint64, marketIdx uint32) (risktypes.RiskParameters, error)
 }
 
+// FundingKeeper provides funding-settlement primitives. Used by the
+// pre-trade collateral assert in Deleverage so the bankrupt /
+// deleverager balances the assert reads are funding-aware: any pending
+// funding for the targeted market position is realised before we
+// compare available collateral against the predicted realised PnL.
+// Settling funding is idempotent and rolls accrued obligations into
+// `EntryQuote`, mirroring what `Engine.Apply`'s step-1 will do
+// immediately afterwards.
+type FundingKeeper interface {
+	SettlePositionFunding(ctx context.Context, accountIndex uint64, marketIndex uint32) error
+}
+
 type MatchingKeeper interface {
 	// CancelAllOpenOrdersForAccount cancels every resting order
 	// (regardless of market) owned by `accountIdx`. Authority/sender

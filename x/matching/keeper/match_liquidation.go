@@ -229,11 +229,21 @@ func (k Keeper) matchLiquidation(
 //     into the trade engine so any improvement above the zero-price
 //     floor is captured and routed to the configured recipient
 //     (Insurance Fund / LLP).
-//   - NoRiskCheck = true: the maker is a normal account whose
-//     post-trade health was vetted at order placement; the taker
-//     (victim) is being closed-out by construction, so its residual
-//     post-trade health is allowed to remain in PARTIAL/FULL until
-//     the loop's `needsLiquidation` short-circuit fires.
+//   - Risk checks: both maker and taker are validated post-trade,
+//     mirroring Lighter `matching_engine.rs:1801,1843` where a
+//     LIQUIDATION_ORDER + IOC fill runs `is_valid_risk_change` on
+//     both sides. Recoverable rejections are wrapped into
+//     errMakerRejected / errTakerRejected by `applyPerpFill`; the
+//     enclosing `matchLiquidation` loop evicts a bad maker and
+//     gracefully stops on a bad taker (preserving prior fills).
+//
+//     The taker side (victim) almost always passes by construction
+//     (filling at >= zero price strictly improves TAV/MMR), but
+//     leaving the check in place catches pathological pricing /
+//     funding interactions and removes the previous "trust placement
+//     vetting" assumption on the maker side, since the maker's
+//     account state may have changed between order placement and
+//     this fill (other fills, funding accruals).
 func (k Keeper) applyLiquidationFill(
 	ctx context.Context,
 	taker *orderbooktypes.Order,
@@ -255,21 +265,34 @@ func (k Keeper) applyLiquidationFill(
 		ZeroPrice:               zeroPrice,
 		LiquidationFeeBps:       liquidationFeeBps,
 		LiquidationFeeRecipient: liquidationFeeRecipient,
-		NoRiskCheck:             true,
 	})
 }
 
 // needsLiquidation reports whether a victim is still subject to
-// (partial or full) liquidation in the targeted market. The
-// classification mirrors x/liquidation's `victimHealthForPosition`:
-// cross-mode positions consult the cross account health; isolated
-// positions consult the per-market isolated health, since each
-// isolated position is its own risk envelope.
+// liquidation in the targeted market. The classification mirrors
+// x/liquidation's `victimHealthForPosition`: cross-mode positions
+// consult the cross account health; isolated positions consult the
+// per-market isolated health, since each isolated position is its
+// own risk envelope.
 //
 // Used exclusively by `matchLiquidation` to implement the Lighter
 // `is_not_in_liquidation_and_is_liquidation_order` short-circuit.
 // It is intentionally NOT called from `matchOrder` so the user-path
 // matching loop pays no per-fill risk-keeper read.
+//
+// The accepted health-status set mirrors Lighter's `is_in_liquidation`
+// predicate (risk_info.rs:362):
+//
+//	is_in_liquidation = (TALT.sign == -1) ∨ (TALT.abs < MMR)
+//
+// In perpdex's single-asset USDC mode (no non-USDC margined assets)
+// `total_account_liquidation_threshold` collapses onto
+// `total_account_value`, so the predicate reduces to `TAV < MMR`,
+// which spans PARTIAL_LIQUIDATION ∪ FULL_LIQUIDATION ∪ BANKRUPTCY.
+// BANKRUPTCY is included for spec parity even though entry to the
+// IOC loop requires PARTIAL and fills only improve TAV — funding
+// accruals between fills could in theory push an account from
+// PARTIAL through FULL into BANKRUPTCY mid-loop.
 func (k Keeper) needsLiquidation(ctx context.Context, victim uint64, marketIdx uint32) (bool, error) {
 	pos, err := k.accountKeeper.GetPosition(ctx, victim, marketIdx)
 	if err != nil {
@@ -284,5 +307,7 @@ func (k Keeper) needsLiquidation(ctx context.Context, victim uint64, marketIdx u
 	if err != nil {
 		return false, err
 	}
-	return s == perptypes.HealthPartialLiquidation || s == perptypes.HealthFullLiquidation, nil
+	return s == perptypes.HealthPartialLiquidation ||
+		s == perptypes.HealthFullLiquidation ||
+		s == perptypes.HealthBankruptcy, nil
 }

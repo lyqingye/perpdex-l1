@@ -61,26 +61,35 @@ type Fill struct {
 	TakerFee          uint32
 	MakerFee          uint32
 	NoFee             bool // liquidation/deleverage path
-	// NoRiskCheck skips the post-trade IsValidRiskChange call on the
-	// taker and maker. Reserved for forced close-outs (market-expiry
-	// exit, etc.) where the insurance fund or ADL counterparty must
-	// absorb residual size even when doing so worsens its own health.
+	// NoRiskCheck skips the post-trade IsValidRiskChange call on
+	// BOTH taker and maker (and the matching SnapshotPreRisk pre-
+	// fill). Reserved for forced close-outs that must commit even
+	// when both sides regress (market-expiry exit; the insurance
+	// fund / ADL counterparty are willing absorbers by construction).
+	// Prefer SkipMakerRiskCheck / SkipTakerRiskCheck for
+	// finer-grained suppression; this flag is "skip everything".
 	NoRiskCheck bool
 	// SkipMakerRiskCheck only skips the post-trade risk check on the
-	// MAKER side. Retained for the legacy "victim is the maker"
-	// liquidation pattern (still used by Deleverage / market-expiry
-	// exits): the maker is the victim — the fill strictly closes
-	// part of an unhealthy position so it is guaranteed to improve
-	// health, but the IsValidRiskChange routine would still reject
-	// because post is not HEALTHY. The taker (counterparty / LLP)
-	// keeps its standard check.
-	//
-	// Note: the partial-liquidation orderbook IOC path (engine route
-	// for `LIQUIDATION_ORDER + IOC + reduce_only`) sets `NoRiskCheck`
-	// instead because in that flow the victim is the TAKER and the
-	// maker is a normal account whose post-trade health was already
-	// vetted at order placement.
+	// MAKER side. Used to encode "the maker is the victim" patterns
+	// where the trade mechanically improves the maker (close-out at
+	// zero price) yet IsValidRiskChange would still reject because
+	// post is not HEALTHY. Modern liquidation paths instead let the
+	// engine validate both sides and rely on errMakerRejected /
+	// errTakerRejected handling in the matching loop, so this flag
+	// is only kept for niche "we know the maker is being closed by
+	// design" callers.
 	SkipMakerRiskCheck bool
+	// SkipTakerRiskCheck mirrors SkipMakerRiskCheck on the TAKER
+	// side. Used by Deleverage to opt the LLP / Insurance Fund out
+	// of post-trade health validation when they take over a victim's
+	// position: pool-side absorbers are explicitly allowed to take
+	// on residual exposure, mirroring Lighter
+	// `internal_deleverage.rs` where `is_valid_risk_change` is
+	// asserted on bankrupt (maker in our convention) but NOT on the
+	// deleverager when it is the insurance fund. perpdex's user-ADL
+	// path keeps both flags off — defense-in-depth check on the
+	// counterparty's health.
+	SkipTakerRiskCheck bool
 	// ZeroPrice + LiquidationFeeBps + LiquidationFeeRecipient
 	// describe the Lighter "improvement-over-zero-price" liquidation
 	// fee. When LiquidationFeeBps > 0 and the fill price is strictly
@@ -138,12 +147,21 @@ func (e Engine) Apply(ctx context.Context, f Fill) error {
 	if err := e.fundingKeeper.SettlePositionFunding(ctx, f.TakerAccountIndex, f.MarketIndex); err != nil {
 		return err
 	}
+	// Snapshot pre-state risk only for sides that will actually
+	// enforce IsValidRiskChange downstream. NoRiskCheck masks both;
+	// the per-side Skip*RiskCheck flags mask just that side. This
+	// keeps the snapshot work proportional to the verification work
+	// and avoids dirtying risk caches for sides we never compare.
 	if !f.NoRiskCheck {
-		if err := e.riskKeeper.SnapshotPreRisk(ctx, f.MakerAccountIndex); err != nil {
-			return err
+		if !f.SkipMakerRiskCheck {
+			if err := e.riskKeeper.SnapshotPreRisk(ctx, f.MakerAccountIndex); err != nil {
+				return err
+			}
 		}
-		if err := e.riskKeeper.SnapshotPreRisk(ctx, f.TakerAccountIndex); err != nil {
-			return err
+		if !f.SkipTakerRiskCheck {
+			if err := e.riskKeeper.SnapshotPreRisk(ctx, f.TakerAccountIndex); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -253,15 +271,21 @@ func (e Engine) Apply(ctx context.Context, f Fill) error {
 	// low-collateral maker lets the book close against them into a fresh
 	// unhealthy position. Lighter parity: l2_trade enforces both sides.
 	//
-	// Exception: when the fill is the partial-liquidation closing leg
-	// (SkipMakerRiskCheck), the maker IS the victim — the trade
-	// mechanically improves their TAV/MMR ratio (the fill price is at
-	// or better than the zero price, by construction). The
-	// IsValidRiskChange routine still rejects an unhealthy post-state,
-	// so we skip it on the maker side and let the liquidation engine
-	// be the authority on the close-out.
+	// Per-side suppression:
+	//
+	//   - SkipMakerRiskCheck: the maker is being mechanically closed
+	//     (legacy "victim is maker" pattern) and validation would
+	//     spuriously reject any non-HEALTHY post-state.
+	//   - SkipTakerRiskCheck: the taker is an explicit absorber
+	//     (LLP / Insurance Fund deleverager) — Lighter's Deleverage
+	//     path skips the deleverager check (relying on a separate
+	//     pre-trade collateral-sufficiency guard instead). User-ADL
+	//     keeps both flags off and runs full defense-in-depth.
 	for _, idx := range []uint64{f.TakerAccountIndex, f.MakerAccountIndex} {
 		if f.SkipMakerRiskCheck && idx == f.MakerAccountIndex {
+			continue
+		}
+		if f.SkipTakerRiskCheck && idx == f.TakerAccountIndex {
 			continue
 		}
 		ok, err := e.riskKeeper.IsValidRiskChange(ctx, idx)

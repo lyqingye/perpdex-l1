@@ -176,11 +176,12 @@ func (stubMarket) GetMarketDetails(_ context.Context, idx uint32) (markettypes.M
 // stubRisk fully implements types.RiskKeeper. Per-account / per-market
 // values are pre-loaded by the test; nothing is computed dynamically.
 type stubRisk struct {
-	status   uint32                       // returned by GetHealthStatus
-	isoStat  map[[2]uint64]uint32          // (acc, market) -> isolated status
-	zero     map[[2]uint64]uint32          // (acc, market) -> zero price
-	uPnL     map[[2]uint64]math.Int        // (acc, market) -> uPnL
-	mark     map[[2]uint64]math.Int        // (acc, market) -> mark value
+	status   uint32                              // global default for GetHealthStatus
+	statuses map[uint64]uint32                   // per-account override (falls back to `status`)
+	isoStat  map[[2]uint64]uint32                // (acc, market) -> isolated status
+	zero     map[[2]uint64]uint32                // (acc, market) -> zero price
+	uPnL     map[[2]uint64]math.Int              // (acc, market) -> uPnL
+	mark     map[[2]uint64]math.Int              // (acc, market) -> mark value
 	cross    map[uint64]risktypes.RiskParameters
 	iso      map[[2]uint64]risktypes.RiskParameters
 	postSim  map[uint64]risktypes.RiskParameters // simulated takeover post-state per account
@@ -188,17 +189,21 @@ type stubRisk struct {
 
 func newStubRisk() *stubRisk {
 	return &stubRisk{
-		isoStat: map[[2]uint64]uint32{},
-		zero:    map[[2]uint64]uint32{},
-		uPnL:    map[[2]uint64]math.Int{},
-		mark:    map[[2]uint64]math.Int{},
-		cross:   map[uint64]risktypes.RiskParameters{},
-		iso:     map[[2]uint64]risktypes.RiskParameters{},
-		postSim: map[uint64]risktypes.RiskParameters{},
+		statuses: map[uint64]uint32{},
+		isoStat:  map[[2]uint64]uint32{},
+		zero:     map[[2]uint64]uint32{},
+		uPnL:     map[[2]uint64]math.Int{},
+		mark:     map[[2]uint64]math.Int{},
+		cross:    map[uint64]risktypes.RiskParameters{},
+		iso:      map[[2]uint64]risktypes.RiskParameters{},
+		postSim:  map[uint64]risktypes.RiskParameters{},
 	}
 }
 
-func (s *stubRisk) GetHealthStatus(_ context.Context, _ uint64) (uint32, error) {
+func (s *stubRisk) GetHealthStatus(_ context.Context, acc uint64) (uint32, error) {
+	if v, ok := s.statuses[acc]; ok {
+		return v, nil
+	}
 	return s.status, nil
 }
 func (s *stubRisk) GetIsolatedHealthStatus(_ context.Context, acc uint64, mkt uint32) (uint32, error) {
@@ -271,11 +276,32 @@ func (s *stubRisk) ComputeIsolatedRisk(_ context.Context, acc uint64, mkt uint32
 
 type stubTrade struct {
 	calls []tradekeeper.PerpFill
+	// err lets tests force ApplyPerpsMatching to fail (used to
+	// model post-trade risk regression on bankrupt or recoverable
+	// rejections).
+	err error
 }
 
 func (s *stubTrade) ApplyPerpsMatching(_ context.Context, f tradekeeper.PerpFill) error {
 	s.calls = append(s.calls, f)
-	return nil
+	return s.err
+}
+
+// stubFunding satisfies liquidation/types.FundingKeeper. The real
+// keeper writes to position state via UpdatePosition; the stub
+// exposes a per-(acc,mkt) call counter so tests can assert that the
+// pre-trade collateral assert in Deleverage settles funding before
+// reading available collateral.
+type stubFunding struct {
+	calls map[[2]uint64]int
+	err   error
+}
+
+func newStubFunding() *stubFunding { return &stubFunding{calls: map[[2]uint64]int{}} }
+
+func (s *stubFunding) SettlePositionFunding(_ context.Context, acc uint64, mkt uint32) error {
+	s.calls[[2]uint64{acc, uint64(mkt)}]++
+	return s.err
 }
 
 // liqOrderCall captures every MatchLiquidationOrder argument for the
@@ -343,6 +369,14 @@ func newKeeper(
 	ak *stubAccount, rk *stubRisk, tk *stubTrade, matchk *stubMatching,
 ) (liqkeeper.Keeper, sdk.Context) {
 	t.Helper()
+	return newKeeperWithFunding(t, ak, rk, tk, matchk, newStubFunding())
+}
+
+func newKeeperWithFunding(
+	t *testing.T,
+	ak *stubAccount, rk *stubRisk, tk *stubTrade, matchk *stubMatching, fk *stubFunding,
+) (liqkeeper.Keeper, sdk.Context) {
+	t.Helper()
 	keys := storetypes.NewKVStoreKeys(liqtypes.StoreKey)
 	cdc := moduletestutil.MakeTestEncodingConfig().Codec
 	cms := integration.CreateMultiStore(keys, log.NewTestLogger(t))
@@ -356,6 +390,7 @@ func newKeeper(
 		rk,
 		tk,
 		matchk,
+		fk,
 	)
 	// Seed Params so EndBlocker can read MaxAdlAttemptsPerBlock /
 	// MaxAdlCandidatesPerVictim. Without this each EndBlocker invocation
@@ -552,11 +587,15 @@ func TestEndBlocker_FullLiquidationPrefersLLPThenADL(t *testing.T) {
 			OperatorShares: math.NewInt(1),
 		},
 	}
-	// Victim with one FULL_LIQUIDATION cross position.
+	// Victim with one FULL_LIQUIDATION cross position. EntryQuote
+	// follows the production canonical sign (long → positive
+	// notional in) so the pre-trade collateral assert can pass —
+	// closing this position at zeroPrice=10 yields a realised PnL
+	// of +4_500 in the engine's "Collateral += RealizedPnL" frame.
 	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.NewInt(10)}
 	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 100, MarketIndex: 0,
-		Position: math.NewInt(50), EntryQuote: math.NewInt(-5_000),
+		Position: math.NewInt(50), EntryQuote: math.NewInt(5_000),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	rk := newStubRisk()
@@ -573,7 +612,10 @@ func TestEndBlocker_FullLiquidationPrefersLLPThenADL(t *testing.T) {
 	require.Equal(t, perptypes.InsuranceFundOperatorAccountIdx, tk.calls[0].TakerAccountIndex,
 		"counterparty must be the insurance fund operator")
 	require.True(t, tk.calls[0].NoFee, "LLP takeover is a fee-less close")
-	require.True(t, tk.calls[0].NoRiskCheck, "LLP bypasses post-trade risk check")
+	require.True(t, tk.calls[0].SkipTakerRiskCheck,
+		"LLP / IF deleverager bypasses post-trade taker risk check (Lighter parity)")
+	require.False(t, tk.calls[0].SkipMakerRiskCheck,
+		"bankrupt (maker) post-trade risk check must remain enabled")
 }
 
 // TestLLPAbsorb_StopsWhenLLPWouldBreachIMR verifies that the LLP IMR
@@ -600,13 +642,18 @@ func TestLLPAbsorb_StopsWhenLLPWouldBreachIMR(t *testing.T) {
 	}
 	ak.pos[[2]uint64{999, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 999, MarketIndex: 0,
-		Position: math.NewInt(-10), EntryQuote: math.NewInt(2_000),
+		Position: math.NewInt(-10), EntryQuote: math.NewInt(-2_000),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
-	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.NewInt(10)}
+	// Bankrupt has a small but non-zero cushion so the autoADL pre-
+	// trade collateral assert (Lighter `is_bankrupt_has_enough_cross_
+	// collateral`) passes at the candidate's settle price (mid of
+	// 100/110 = 105). The realised PnL on a 10-unit close at 105
+	// against EQ=+5000 is small (~50), so 100 of cushion is plenty.
+	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.NewInt(100)}
 	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 100, MarketIndex: 0,
-		Position: math.NewInt(50), EntryQuote: math.NewInt(-5_000),
+		Position: math.NewInt(50), EntryQuote: math.NewInt(5_000),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	rk := newStubRisk()
@@ -657,13 +704,17 @@ func TestEndBlocker_BankruptcyFallsThroughToADLWhenLLPBreachesIMR(t *testing.T) 
 	}
 	ak.pos[[2]uint64{999, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 999, MarketIndex: 0,
-		Position: math.NewInt(-10), EntryQuote: math.NewInt(2_000),
+		Position: math.NewInt(-10), EntryQuote: math.NewInt(-2_000),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
-	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.NewInt(-100)}
+	// Victim is BANKRUPT but the trade-mechanical realised PnL still
+	// has to fit available collateral; the test gives the bankrupt a
+	// modest cushion (300) so the pre-trade collateral assert in
+	// autoADL can pass at the candidate's settle price.
+	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.NewInt(300)}
 	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 100, MarketIndex: 0,
-		Position: math.NewInt(50), EntryQuote: math.NewInt(-10_000),
+		Position: math.NewInt(50), EntryQuote: math.NewInt(10_000),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	rk := newStubRisk()
@@ -696,12 +747,18 @@ func TestEndBlocker_BankruptcyFallsThroughToADLWhenLLPBreachesIMR(t *testing.T) 
 // TestAutoADL_RequiresZeroPriceAlignment verifies that ADL skips
 // counterparties whose zero prices do NOT overlap with the victim's,
 // which prevents the close-out from worsening the counterparty.
+//
+// The bankrupt is given a small but non-trivial collateral cushion so
+// the pre-trade collateral assert (Lighter
+// `is_bankrupt_has_enough_cross_collateral` parity) passes at the
+// candidate settle price; the test's interest is purely the ZP
+// alignment filter, not the collateral guard.
 func TestAutoADL_RequiresZeroPriceAlignment(t *testing.T) {
 	ak := newStubAccount()
-	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.NewInt(-50)}
+	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.NewInt(200)}
 	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 100, MarketIndex: 0,
-		Position: math.NewInt(50), EntryQuote: math.NewInt(-5_000),
+		Position: math.NewInt(50), EntryQuote: math.NewInt(5_000),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	// Two opposite-side candidates, but only one has an aligned ZP.
@@ -711,7 +768,7 @@ func TestAutoADL_RequiresZeroPriceAlignment(t *testing.T) {
 	}
 	ak.pos[[2]uint64{201, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 201, MarketIndex: 0,
-		Position: math.NewInt(-10), EntryQuote: math.NewInt(1_500),
+		Position: math.NewInt(-10), EntryQuote: math.NewInt(-1_500),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	ak.accounts[202] = accounttypes.Account{
@@ -720,7 +777,7 @@ func TestAutoADL_RequiresZeroPriceAlignment(t *testing.T) {
 	}
 	ak.pos[[2]uint64{202, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 202, MarketIndex: 0,
-		Position: math.NewInt(-20), EntryQuote: math.NewInt(2_500),
+		Position: math.NewInt(-20), EntryQuote: math.NewInt(-2_500),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	rk := newStubRisk()
@@ -897,12 +954,17 @@ func TestDeleverage_LeavesResidualOnVictim(t *testing.T) {
 			OperatorShares: math.NewInt(1),
 		},
 	}
+	// Bankrupt with a residual debt (-75) plus enough remaining
+	// collateral to absorb the close-out's predicted realised PnL
+	// at zeroPrice=10 (the stubRisk default). EntryQuote uses the
+	// production canonical sign so `ApplyFill` returns a consistent
+	// value with the engine.
 	ak.accounts[100] = accounttypes.Account{
 		AccountIndex: 100, Collateral: math.NewInt(-75),
 	}
 	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 100, MarketIndex: 0,
-		Position: math.NewInt(20), EntryQuote: math.NewInt(-2_000),
+		Position: math.NewInt(20), EntryQuote: math.NewInt(2_000),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	rk := newStubRisk()
@@ -996,4 +1058,180 @@ func TestEndBlocker_BankruptResidueStaysWithVictim(t *testing.T) {
 		"IF collateral must not be debited as a post-block sweep (got=%s)",
 		ak.accounts[perptypes.InsuranceFundOperatorAccountIdx].Collateral.String(),
 	)
+}
+
+// TestDeleverage_BankruptRiskRegressionRejected covers Gap B: when the
+// bankrupt's post-trade IsValidRiskChange rejects (e.g., a pricing
+// pathology that worsens TAV/MMR despite the close-out being
+// supposedly improving), the entire deleverage trade is aborted —
+// previously perpdex skipped the bankrupt check on the LLP path
+// (`SkipMakerRiskCheck=true`), allowing such regressions through.
+//
+// The new behaviour mirrors Lighter `internal_deleverage.rs` which
+// asserts `is_valid_risk_change` on bankrupt regardless of the
+// deleverager type.
+func TestDeleverage_BankruptRiskRegressionRejected(t *testing.T) {
+	ak := newStubAccount()
+	ak.accounts[perptypes.InsuranceFundOperatorAccountIdx] = accounttypes.Account{
+		AccountIndex: perptypes.InsuranceFundOperatorAccountIdx,
+		AccountType:  perptypes.InsuranceFundAccountType,
+		Collateral:   math.NewInt(10_000_000),
+		PublicPoolInfo: &accounttypes.PublicPoolInfo{
+			Status:         perptypes.PublicPoolStatusActive,
+			TotalShares:    math.NewInt(1),
+			OperatorShares: math.NewInt(1),
+		},
+	}
+	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.NewInt(10_000)}
+	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
+		AccountIndex: 100, MarketIndex: 0,
+		Position: math.NewInt(50), EntryQuote: math.NewInt(5_000),
+		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
+	}
+	rk := newStubRisk()
+	rk.status = perptypes.HealthFullLiquidation
+	tk := &stubTrade{
+		// Simulate post-trade risk regression on the bankrupt side
+		// so the engine returns ErrMakerRiskRegression. Pre-fix the
+		// LLP path used SkipMakerRiskCheck=true and would have silently
+		// committed.
+		err: liqtypes.ErrInsuranceUnderfunded.Wrap("simulated bankrupt risk regression"),
+	}
+	matchk := newStubMatching()
+	k, ctx := newKeeper(t, ak, rk, tk, matchk)
+
+	err := k.Deleverage(ctx, 100, 0, perptypes.InsuranceFundOperatorAccountIdx, 50)
+	require.Error(t, err,
+		"bankrupt-side post-trade risk regression must abort the deleverage tx")
+
+	// The flag-controlled checks on the engine call should have
+	// requested bankrupt validation (SkipMakerRiskCheck=false) and
+	// skipped the LLP/IF taker side (SkipTakerRiskCheck=true).
+	require.Len(t, tk.calls, 1)
+	require.False(t, tk.calls[0].SkipMakerRiskCheck,
+		"bankrupt (maker) post-trade risk check must remain enabled in deleverage path")
+	require.True(t, tk.calls[0].SkipTakerRiskCheck,
+		"LLP / IF deleverager (taker) skips post-trade risk check")
+}
+
+// TestDeleverage_InsufficientDeleveragerCollateral_UserADL covers Gap C
+// deleverager branch: under user-ADL the deleverager's own collateral
+// is also asserted (perpdex defense-in-depth + Lighter parity for
+// `is_deleverager_has_enough_cross_collateral`). Insufficient
+// collateral on the user-ADL deleverager rejects the trade.
+//
+// IF / pool deleveragers are NOT subject to this assert; that case is
+// covered by the absence of an `ErrInsufficientCollateral` failure in
+// `TestEndBlocker_FullLiquidationPrefersLLPThenADL`.
+func TestDeleverage_InsufficientDeleveragerCollateral_UserADL(t *testing.T) {
+	ak := newStubAccount()
+	// Bankrupt with positive collateral so the bankrupt-side assert
+	// passes by short-circuit.
+	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.NewInt(1_000_000)}
+	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
+		AccountIndex: 100, MarketIndex: 0,
+		Position: math.NewInt(50), EntryQuote: math.NewInt(5_000),
+		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
+	}
+	// User-ADL deleverager: opposite-side, but no cushion at all.
+	// Closing their short at zeroPrice=10 against EQ=-5_000 yields
+	// realised PnL ≈ -4_500 (in the engine's "Collateral += PnL"
+	// frame) which they cannot cover.
+	ak.accounts[200] = accounttypes.Account{
+		AccountIndex: 200, AccountType: perptypes.MasterAccountType,
+		Collateral: math.NewInt(0),
+	}
+	ak.pos[[2]uint64{200, 0}] = accounttypes.AccountPosition{
+		AccountIndex: 200, MarketIndex: 0,
+		Position: math.NewInt(-50), EntryQuote: math.NewInt(-5_000),
+		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
+	}
+	rk := newStubRisk()
+	rk.status = perptypes.HealthFullLiquidation
+	tk := &stubTrade{}
+	matchk := newStubMatching()
+	k, ctx := newKeeper(t, ak, rk, tk, matchk)
+
+	err := k.Deleverage(ctx, 100, 0, 200, 50)
+	require.Error(t, err)
+	require.ErrorIs(t, err, liqtypes.ErrInsufficientCollateral)
+	require.Empty(t, tk.calls)
+}
+
+// TestEndBlocker_ADLCandidateInsufficientCollateral_AdvancesToNext
+// covers Gap C 内 autoADL: when the first ADL candidate's collateral
+// cannot cover the close-out at the candidate-specific settle price,
+// autoADL must move on to the next candidate rather than aborting.
+func TestEndBlocker_ADLCandidateInsufficientCollateral_AdvancesToNext(t *testing.T) {
+	ak := newStubAccount()
+	// IF that breaches IMR so EndBlocker delegates to autoADL.
+	ak.accounts[perptypes.InsuranceFundOperatorAccountIdx] = accounttypes.Account{
+		AccountIndex: perptypes.InsuranceFundOperatorAccountIdx,
+		AccountType:  perptypes.InsuranceFundAccountType,
+		Collateral:   math.NewInt(100),
+		PublicPoolInfo: &accounttypes.PublicPoolInfo{
+			Status: perptypes.PublicPoolStatusActive,
+		},
+	}
+	// Bankrupt with sufficient cushion for ADL settle.
+	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.NewInt(1_000)}
+	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
+		AccountIndex: 100, MarketIndex: 0,
+		Position: math.NewInt(50), EntryQuote: math.NewInt(5_000),
+		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
+	}
+	// First candidate (highest profit rank) has zero cushion and
+	// will trip the deleverager-side collateral assert.
+	ak.accounts[201] = accounttypes.Account{
+		AccountIndex: 201, AccountType: perptypes.MasterAccountType,
+		Collateral: math.NewInt(0),
+	}
+	ak.pos[[2]uint64{201, 0}] = accounttypes.AccountPosition{
+		AccountIndex: 201, MarketIndex: 0,
+		Position: math.NewInt(-10), EntryQuote: math.NewInt(-2_000),
+		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
+	}
+	// Second candidate has a deep cushion and matches.
+	ak.accounts[202] = accounttypes.Account{
+		AccountIndex: 202, AccountType: perptypes.MasterAccountType,
+		Collateral: math.NewInt(1_000_000),
+	}
+	ak.pos[[2]uint64{202, 0}] = accounttypes.AccountPosition{
+		AccountIndex: 202, MarketIndex: 0,
+		Position: math.NewInt(-10), EntryQuote: math.NewInt(-2_000),
+		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
+	}
+	rk := newStubRisk()
+	// Only the bankrupt (100) is in FULL_LIQUIDATION — the ADL
+	// counterparties (201, 202) are healthy.
+	rk.status = perptypes.HealthHealthy
+	rk.statuses[100] = perptypes.HealthFullLiquidation
+	// Both candidates aligned + in profit; rank by uPnL — 201 ranks
+	// first (higher profit) and exercises the "advance on
+	// insufficient collateral" path.
+	rk.uPnL[[2]uint64{201, 0}] = math.NewInt(200)
+	rk.uPnL[[2]uint64{202, 0}] = math.NewInt(100)
+	rk.zero[[2]uint64{100, 0}] = 100
+	rk.zero[[2]uint64{201, 0}] = 110
+	rk.zero[[2]uint64{202, 0}] = 110
+	rk.postSim[perptypes.InsuranceFundOperatorAccountIdx] = risktypes.RiskParameters{
+		Collateral:                   math.NewInt(100),
+		TotalAccountValue:            math.NewInt(50),
+		InitialMarginRequirement:     math.NewInt(500),
+		MaintenanceMarginRequirement: math.NewInt(250),
+		CloseOutMarginRequirement:    math.NewInt(125),
+	}
+	tk := &stubTrade{}
+	matchk := newStubMatching()
+	k, ctx := newKeeper(t, ak, rk, tk, matchk)
+
+	require.NoError(t, k.EndBlocker(ctx))
+
+	require.NotEmpty(t, tk.calls,
+		"second ADL candidate must take over after the first one is rejected")
+	for _, f := range tk.calls {
+		require.NotEqual(t, uint64(201), f.TakerAccountIndex,
+			"candidate 201 had insufficient collateral; must have been skipped")
+	}
+	require.Equal(t, uint64(202), tk.calls[0].TakerAccountIndex)
 }

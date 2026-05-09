@@ -32,14 +32,19 @@ import (
 //     PARTIAL is the only state that MsgLiquidate services. FULL and
 //     BANKRUPTCY are end-block-only because they require the LLP IMR
 //     gate before the LLP can take over.
-//  4. BANKRUPTCY - skip the LLP path entirely; ADL only. Any
-//     residual negative collateral after a fully-deleveraged
-//     close-out remains as an account-level debt on the victim
-//     ledger; the chain does NOT silently move it to the IF.
-//     IF "absorption" is realised by IF taking the position via
-//     `Deleverage`, gated by `tryLLPAbsorb` IMR simulation — the
-//     same guard that already routes IMR-breaching takeovers to
-//     ADL.
+//  4. BANKRUPTCY - same waterfall as FULL_LIQUIDATION. The deleverage
+//     transaction in Lighter (`internal_deleverage.rs`) accepts both
+//     `FULL_LIQUIDATION` and `BANKRUPTCY` indistinctly; only the
+//     deleverager type is filtered (IF vs user). EndBlocker therefore
+//     also tries `tryLLPAbsorb` first for BANKRUPTCY victims and
+//     falls through to ADL on an IMR breach. Inside ADL the
+//     deleverager-side collateral assert skips under-capitalised
+//     candidates and advances to the next. Any residual negative
+//     collateral after a fully-deleveraged close-out remains as an
+//     account-level debt on the victim ledger; the chain does NOT
+//     silently move it to the IF. IF "absorption" is realised by the
+//     IF taking the position via `Deleverage`, never via a silent
+//     post-trade top-up.
 type Keeper struct {
 	cdc            codec.BinaryCodec
 	storeService   store.KVStoreService
@@ -49,6 +54,7 @@ type Keeper struct {
 	riskKeeper     types.RiskKeeper
 	tradeKeeper    types.TradeKeeper
 	matchingKeeper types.MatchingKeeper
+	fundingKeeper  types.FundingKeeper
 
 	Schema collections.Schema
 	Params collections.Item[types.Params]
@@ -57,7 +63,7 @@ type Keeper struct {
 
 func NewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, authority string,
 	ak types.AccountKeeper, mk types.MarketKeeper, rk types.RiskKeeper, tk types.TradeKeeper,
-	matchk types.MatchingKeeper,
+	matchk types.MatchingKeeper, fk types.FundingKeeper,
 ) Keeper {
 	sb := collections.NewSchemaBuilder(storeService)
 	k := Keeper{
@@ -69,6 +75,7 @@ func NewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, authori
 		riskKeeper:     rk,
 		tradeKeeper:    tk,
 		matchingKeeper: matchk,
+		fundingKeeper:  fk,
 
 		Params: collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
 		Flags:  collections.NewMap(sb, types.LiquidationFlagKey, "flags", collections.PairKeyCodec(collections.Uint64Key, collections.Uint32Key), codec.CollValue[types.LiquidationFlag](cdc)),

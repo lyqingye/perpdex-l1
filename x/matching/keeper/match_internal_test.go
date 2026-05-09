@@ -149,6 +149,7 @@ type stubFill struct {
 	LiquidationFeeRecipient uint64
 	NoRiskCheck             bool
 	SkipMakerRiskCheck      bool
+	SkipTakerRiskCheck      bool
 }
 
 // stubTrade records every fill it sees and applies the position delta to
@@ -180,6 +181,7 @@ func (s *stubTrade) ApplyPerpsMatching(_ context.Context, f tradekeeper.PerpFill
 		LiquidationFeeRecipient: f.LiquidationFeeRecipient,
 		NoRiskCheck:             f.NoRiskCheck,
 		SkipMakerRiskCheck:      f.SkipMakerRiskCheck,
+		SkipTakerRiskCheck:      f.SkipTakerRiskCheck,
 	})
 	base := int64(f.BaseAmount)
 	if f.IsTakerAsk {

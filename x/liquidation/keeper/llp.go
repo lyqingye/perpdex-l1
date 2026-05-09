@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"errors"
 	"sort"
 
 	"cosmossdk.io/math"
@@ -10,6 +11,7 @@ import (
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
 	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
+	"github.com/perpdex/perpdex-l1/x/liquidation/types"
 )
 
 // tryLLPAbsorb implements the Lighter "LLP picks up positions in
@@ -90,6 +92,19 @@ func (k Keeper) tryLLPAbsorb(
 	}
 
 	if err := k.Deleverage(ctx, victim, marketIdx, perptypes.InsuranceFundOperatorAccountIdx, size.Uint64()); err != nil {
+		if errors.Is(err, types.ErrInsufficientCollateral) {
+			// Defensive: `Deleverage` skips the deleverager
+			// pre-trade collateral assert when the deleverager is
+			// the IF (`isInsuranceFund`), so this branch is not
+			// expected to fire on the LLP path. Keep the graceful
+			// fallback in case a future change re-introduces a
+			// collateral guard against the IF — we still want
+			// EndBlocker to advance to autoADL rather than abort
+			// the entire block.
+			sdk.UnwrapSDKContext(ctx).Logger().Info("liquidation: LLP absorb skipped (insufficient collateral)",
+				"victim", victim, "market", marketIdx, "err", err)
+			return false, nil
+		}
 		sdk.UnwrapSDKContext(ctx).Logger().Error("liquidation: LLP absorb failed",
 			"victim", victim, "market", marketIdx, "err", err)
 		return false, err
