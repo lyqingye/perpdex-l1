@@ -443,3 +443,41 @@ func TestIsValidRiskChange_PreLiquidationAllowsReduceOnly(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok2, "shrinking position in PRE must be allowed")
 }
+
+// TestGetLiquidationRiskSnapshot_EmptyPositionShortCircuitsOracle is
+// the regression test for PR review P2 (error-priority audit): the
+// snapshot builder must NOT reach the oracle for an empty position.
+// Prior to the fix, an account with no position in `marketIdx` would
+// surface an `ErrStalePrice` from the oracle even though the caller
+// (gRPC GetPositionZeroPrice, Liquidate, Deleverage) only wants the
+// "no position" short-circuit. We intentionally configure the oracle
+// to error so a leak would surface as a non-nil error.
+func TestGetLiquidationRiskSnapshot_EmptyPositionShortCircuitsOracle(t *testing.T) {
+	// Account holds NO position in market 0; stub returns the
+	// zero-valued AccountPosition for that lookup.
+	ak := stubAccountKeeper{
+		acc: accounttypes.Account{AccountIndex: 1, Collateral: math.NewInt(1_000)},
+		pos: accounttypes.AccountPosition{
+			AccountIndex: 1, MarketIndex: 99 /* a different market */,
+			Position: math.ZeroInt(), EntryQuote: math.ZeroInt(),
+			LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
+		},
+	}
+	mk := stubMarketKeeper{md: markettypes.MarketDetails{}}
+	// Oracle would fail if asked. The snapshot must not ask.
+	ok := stubOracleKeeper{err: oracletypes.ErrStalePrice}
+	k, ctx := makeKeeper(t, &ak, mk, ok)
+
+	snap, err := k.GetLiquidationRiskSnapshot(ctx, 1, 0)
+	require.NoError(t, err,
+		"empty position must short-circuit before any oracle read")
+	require.True(t, snap.Position.Position.IsZero())
+	require.Equal(t, uint32(0), snap.MarkPrice)
+	require.Equal(t, uint32(0), snap.ZeroPrice)
+
+	// gRPC entry point must mirror the snapshot's short-circuit.
+	zp, err := k.GetPositionZeroPrice(ctx, 1, 0)
+	require.NoError(t, err,
+		"GetPositionZeroPrice must keep the empty-position semantics: 0 regardless of oracle health")
+	require.Equal(t, uint32(0), zp)
+}

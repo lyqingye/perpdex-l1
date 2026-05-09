@@ -28,8 +28,11 @@ import (
 // The keeper code is split across several files for navigability:
 //
 //   - keeper.go   : Keeper struct + constructor + universally-shared
-//                   helpers (Authority, classifyHealth / classifyChange,
-//                   resolveMarkPrice, GetMarkAndMarketDetails).
+//                   helpers (Authority, classifyChange, resolveMarkPrice,
+//                   GetMarkAndMarketDetails). Per-RP health classification
+//                   lives on RiskParameters itself in x/risk/types so
+//                   liquidation-side callers can classify locally without
+//                   re-aggregating state.
 //   - cross.go    : cross-margin aggregation (ComputeRiskInfo,
 //                   GetHealthStatus, GetTotalAccountValue,
 //                   GetAvailableCollateral, GetAvailableUsdcCollateral)
@@ -131,40 +134,20 @@ func (k Keeper) GetMarkAndMarketDetails(ctx context.Context, marketIdx uint32) (
 	return mark, md, nil
 }
 
-// classifyHealth implements the 5-level state machine. Kept package-
-// private: external callers go through GetHealthStatus /
-// GetIsolatedHealthStatus so the aggregation contract (cross vs
-// isolated) is enforced from one place.
-func classifyHealth(p types.RiskParameters) uint32 {
-	if p.TotalAccountValue.IsNegative() {
-		return perptypes.HealthBankruptcy
-	}
-	if p.TotalAccountValue.LT(p.CloseOutMarginRequirement) {
-		return perptypes.HealthFullLiquidation
-	}
-	if p.TotalAccountValue.LT(p.MaintenanceMarginRequirement) {
-		return perptypes.HealthPartialLiquidation
-	}
-	if p.TotalAccountValue.LT(p.InitialMarginRequirement) {
-		return perptypes.HealthPreLiquidation
-	}
-	return perptypes.HealthHealthy
-}
-
 // classifyChange centralises the pre-vs-post risk decision used by both
 // the cross and isolated paths. `missingPre` signals that no pre-state
 // snapshot exists; in that case we reject any unhealthy post-state to
 // avoid silently accepting a change that may have introduced the
 // underwater state.
 func classifyChange(pre, post types.RiskParameters, missingPre bool) bool {
-	postClass := classifyHealth(post)
+	postClass := post.HealthStatus()
 	if postClass == perptypes.HealthHealthy {
 		return true
 	}
 	if missingPre {
 		return false
 	}
-	preClass := classifyHealth(pre)
+	preClass := pre.HealthStatus()
 	if postClass > preClass {
 		return false
 	}

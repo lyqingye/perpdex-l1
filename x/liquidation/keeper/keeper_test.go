@@ -1363,10 +1363,13 @@ func TestEndBlocker_ADLCandidateInsufficientCollateral_AdvancesToNext(t *testing
 // is FULL_LIQUIDATION at the start of the block. The LLP can absorb
 // both. After the FIRST absorption (market 0) the stubbed trade
 // engine flips the account to HEALTHY — modelling the realised PnL
-// having lifted TAV above IMR. With a fresh per-call snapshot the
-// next market's tryLLPAbsorb sees the new status and Deleverage's
-// `victimHealthForPosition` rejects with ErrNotBankrupt; with a
-// cached aggregate the second fill would still go through.
+// having lifted TAV above IMR. The fix here is twofold: (1)
+// processAccount calls `refreshHealth` per cross position right
+// before the LLP/ADL waterfall fires, so the second market's
+// trigger sees the post-mutation HEALTHY status and skips entirely;
+// (2) autoADL self-asserts on its own snapshot's risk envelope as
+// defense-in-depth (covered separately by
+// TestAutoADL_RefusesHealedVictimViaSelfAssert).
 func TestEndBlocker_CrossAggregateRefreshedAcrossMarkets(t *testing.T) {
 	ak := newStubAccount()
 	ak.accounts[perptypes.InsuranceFundOperatorAccountIdx] = accounttypes.Account{
@@ -1421,4 +1424,82 @@ func TestEndBlocker_CrossAggregateRefreshedAcrossMarkets(t *testing.T) {
 	require.Equal(t, uint32(0), tk.calls[0].MarketIndex)
 	require.GreaterOrEqual(t, rk.snapshotCalls, 2,
 		"each per-market LLP/ADL invocation must build its own fresh risk snapshot")
+}
+
+// TestAutoADL_RefusesHealedVictimViaSelfAssert is the defense-in-depth
+// regression for the same staleness audit (PR review P1) targeted at
+// autoADL itself: even if processAccount has already decided the
+// victim is FULL_LIQUIDATION and tryLLPAbsorb has rejected the
+// absorption, autoADL must re-classify the victim's envelope from
+// its OWN fresh snapshot. The engine's IsValidRiskChange is
+// permissive on HEALTHY post-state, so without this self-assertion
+// a recovered victim could be ADL'd against the engine's permissive
+// path.
+//
+// We model an LLP-absorption FAILURE (postSim breach IMR) so the
+// EndBlocker drops into the autoADL branch even though the victim
+// is healing in real-time. The snapshot hook flips
+// `statuses[100]` to HEALTHY on the SECOND snapshot call — the
+// first is `tryLLPAbsorb`, the second is `autoADL` — so autoADL's
+// own snap projects HEALTHY despite processAccount's cached trigger.
+func TestAutoADL_RefusesHealedVictimViaSelfAssert(t *testing.T) {
+	ak := newStubAccount()
+	ak.accounts[perptypes.InsuranceFundOperatorAccountIdx] = accounttypes.Account{
+		AccountIndex: perptypes.InsuranceFundOperatorAccountIdx,
+		AccountType:  perptypes.InsuranceFundAccountType,
+		Collateral:   math.NewInt(10_000_000),
+		PublicPoolInfo: &accounttypes.PublicPoolInfo{
+			Status:         perptypes.PublicPoolStatusActive,
+			TotalShares:    math.NewInt(1),
+			OperatorShares: math.NewInt(1),
+		},
+	}
+	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.NewInt(10)}
+	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
+		AccountIndex: 100, MarketIndex: 0,
+		Position: math.NewInt(50), EntryQuote: math.NewInt(10_000),
+		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
+	}
+	// Profitable counterparty so BuildADLQueue is non-empty: without
+	// the self-assert, autoADL would happily fill against this
+	// account. Short opened at 400 (negative EntryQuote per ApplyFill
+	// sign convention) → uPnL = -50*100 - (-20_000) = +15_000.
+	ak.accounts[999] = accounttypes.Account{AccountIndex: 999, Collateral: math.NewInt(1_000_000)}
+	ak.pos[[2]uint64{999, 0}] = accounttypes.AccountPosition{
+		AccountIndex: 999, MarketIndex: 0,
+		Position: math.NewInt(-50), EntryQuote: math.NewInt(-20_000),
+		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
+	}
+
+	rk := newStubRisk()
+	rk.statuses[100] = perptypes.HealthFullLiquidation
+	rk.zero[[2]uint64{100, 0}] = 90
+	rk.zero[[2]uint64{999, 0}] = 110
+	// Force IF takeover to breach IMR so tryLLPAbsorb returns false
+	// and the EndBlocker falls through to autoADL.
+	rk.postSim[perptypes.InsuranceFundOperatorAccountIdx] = risktypes.RiskParameters{
+		Collateral:                   math.NewInt(1),
+		CollateralWithFunding:        math.NewInt(1),
+		TotalAccountValue:            math.NewInt(1),
+		InitialMarginRequirement:     math.NewInt(1_000_000_000),
+		MaintenanceMarginRequirement: math.ZeroInt(),
+		CloseOutMarginRequirement:    math.ZeroInt(),
+	}
+	// Flip the victim to HEALTHY on the second snapshot call. Call
+	// #1 is tryLLPAbsorb; call #2 is autoADL. The flip happens
+	// AFTER refreshHealth has already locked in the trigger
+	// decision, so this isolates the self-assert path.
+	rk.onSnapshot = func(s *stubRisk, acc uint64, _ uint32) {
+		if acc == 100 && s.snapshotCalls == 2 {
+			s.statuses[100] = perptypes.HealthHealthy
+			s.cross[100] = riskParamsForStatus(perptypes.HealthHealthy)
+		}
+	}
+	tk := &stubTrade{}
+	matchk := newStubMatching()
+	k, ctx := newKeeper(t, ak, rk, tk, matchk)
+
+	require.NoError(t, k.EndBlocker(ctx))
+	require.Empty(t, tk.calls,
+		"autoADL must self-refuse a victim whose own snapshot says HEALTHY, regardless of the trigger that brought us here")
 }

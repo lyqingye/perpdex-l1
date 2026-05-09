@@ -64,7 +64,7 @@ func (k Keeper) GetIsolatedHealthStatus(ctx context.Context, accountIdx uint64, 
 	if err != nil {
 		return 0, err
 	}
-	return classifyHealth(rp), nil
+	return rp.HealthStatus(), nil
 }
 
 // IterateIsolatedPositions walks every isolated perp position held by
@@ -84,7 +84,7 @@ func (k Keeper) IterateIsolatedPositions(ctx context.Context, accountIdx uint64,
 			iterErr = err
 			return true
 		}
-		return fn(pos.MarketIndex, classifyHealth(rp), rp)
+		return fn(pos.MarketIndex, rp.HealthStatus(), rp)
 	}); err != nil {
 		return err
 	}

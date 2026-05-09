@@ -35,12 +35,24 @@ import (
 // cross aggregate so ADL ranking can keep using leverage on the cross
 // aggregate even for isolated candidates.
 //
-// Each call performs ONE oracle read, ONE market read, ONE cross
-// aggregation, and (for isolated targets only) ONE additional
-// per-position aggregation, then folds the zero-price formula in. The
-// returned snapshot is a value: it represents the state at the moment
-// of the call and is invalidated by any subsequent mutation (fill,
-// funding settlement, collateral move, oracle refresh).
+// The snapshot represents a single CONSISTENT view of (account,
+// market) at the moment of the call: position is read first, then
+// the targeted market's mark/md, then the cross (and optionally
+// isolated) risk aggregate. Note that the cross aggregation walks
+// the account's other positions and queries each of THEIR mark
+// prices independently — the snapshot does not yet share a per-block
+// oracle cache, so a follow-up that fans those reads through a
+// shared cache is still possible. Snapshots are values and MUST be
+// re-built after any state mutation (fill, funding settlement,
+// collateral move, oracle refresh) — threading a snapshot across a
+// mutation will feed stale TAV / MMR into downstream computations.
+//
+// Empty-position short-circuit: a caller asking for a snapshot of a
+// closed position gets a zero-valued snapshot back without an oracle
+// read. This preserves the gRPC `GetPositionZeroPrice` semantics
+// (zero on empty position, regardless of oracle state) and lets the
+// liquidation msg handlers report "victim has no position" before
+// any oracle dependency can fail.
 func (k Keeper) GetLiquidationRiskSnapshot(
 	ctx context.Context,
 	accountIdx uint64,
@@ -49,6 +61,9 @@ func (k Keeper) GetLiquidationRiskSnapshot(
 	pos, err := k.accountKeeper.GetPosition(ctx, accountIdx, marketIdx)
 	if err != nil {
 		return types.LiquidationRiskSnapshot{}, err
+	}
+	if pos.Position.IsZero() {
+		return types.LiquidationRiskSnapshot{Position: pos}, nil
 	}
 	mark, md, err := k.GetMarkAndMarketDetails(ctx, marketIdx)
 	if err != nil {

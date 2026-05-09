@@ -6,8 +6,8 @@ import (
 )
 
 // LiquidationRiskSnapshot is the cohesive (account, market) view the
-// liquidation keeper drives ZP / LLP / ADL math from. All five fields
-// are read in lockstep at the time the snapshot is built and `ZeroPrice`
+// liquidation keeper drives ZP / LLP / ADL math from. All fields are
+// read in lockstep at the time the snapshot is built and `ZeroPrice`
 // is computed from those same inputs by the risk keeper, so the
 // snapshot is the only object liquidation needs in order to make a
 // decision for that pair.
@@ -17,6 +17,14 @@ import (
 // refresh, etc.). Callers that thread one snapshot through a
 // state-mutating waterfall WILL feed stale TAV/MMR into the next step
 // — refresh per call.
+//
+// Note that "cohesive" describes the LOGICAL view, not the IO budget:
+// the cross aggregation that backs `Risk` / `CrossRisk` walks the
+// account's other positions and queries each of THEIR mark prices
+// independently. The snapshot does not yet share a per-block oracle
+// cache, so a builder that fans those reads through a shared cache
+// would shave additional oracle round-trips. That is a future
+// optimisation; correctness is unaffected.
 //
 // Field semantics:
 //

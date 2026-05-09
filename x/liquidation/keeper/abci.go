@@ -65,17 +65,18 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 // each isolated position is flagged / liquidated against its own
 // per-market isolated health.
 //
-// Cross status is read once at the top of the function and reused as
-// the flag-bookkeeping driver for every cross position the account
-// holds. We deliberately do NOT pass the underlying RiskParameters /
-// snapshot down to `tryLLPAbsorb` / `autoADL`: those callees mutate
-// state (Deleverage / ApplyPerpsMatching), so any RP cached at this
-// level would go stale across markets. The callees rebuild their
-// own snapshots so each ZP they quote reflects the post-mutation
-// cross aggregate. The cached cross status is still safe — the inner
-// Deleverage and engine `IsValidRiskChange` paths re-check health
-// against current state, so a position that became HEALTHY during
-// processing cannot generate a stale fill.
+// Cross status is read once at the top of the function as the
+// flag-bookkeeping driver, but a SECOND fresh status read happens
+// inside the FULL/BANKRUPTCY branch right before the LLP/ADL
+// waterfall fires: a sibling-market fill earlier in this account's
+// iteration may have already lifted the cross account back to
+// HEALTHY. Without the refresh `tryLLPAbsorb` would still be invoked
+// (Deleverage's inner health gate would reject it with
+// `ErrNotBankrupt`), and `autoADL` — which only enforces zero-price
+// alignment, not victim health — would happily quote a fill against a
+// healed account because the engine's `IsValidRiskChange` is
+// permissive on HEALTHY post-states. autoADL also self-asserts on
+// the snapshot's risk envelope as defense-in-depth.
 func (k Keeper) processAccount(
 	ctx context.Context, a accounttypes.Account, height int64, now int64,
 	attemptsLeft *uint32, candCap uint32,
@@ -140,6 +141,18 @@ func (k Keeper) processAccount(
 			return false
 		}
 		if posStatus == perptypes.HealthFullLiquidation || posStatus == perptypes.HealthBankruptcy {
+			fresh, err := k.refreshHealth(ctx, a.AccountIndex, marketIdx, pos.MarginMode)
+			if err != nil {
+				iterErr = err
+				return true
+			}
+			if fresh != perptypes.HealthFullLiquidation && fresh != perptypes.HealthBankruptcy {
+				// A sibling fill in this account already healed
+				// the envelope; do not quote a fill against a
+				// recovered account. Flag stays — bookkeeping
+				// self-corrects on the next block.
+				return false
+			}
 			absorbed, err := k.tryLLPAbsorb(ctx, a.AccountIndex, marketIdx, attemptsLeft)
 			if err != nil {
 				sdkCtx.Logger().Error("liquidation: LLP absorb failed",
@@ -180,6 +193,20 @@ func (k Keeper) processAccount(
 		))
 	}
 	return nil
+}
+
+// refreshHealth re-reads the account's relevant health envelope
+// (cross or isolated) for `(accIdx, marketIdx)`. Used right before
+// the LLP / ADL waterfall fires so prior fills in the same
+// processAccount iteration cannot leave the trigger pointing at a
+// stale FULL / BANKRUPTCY status.
+func (k Keeper) refreshHealth(
+	ctx context.Context, accIdx uint64, marketIdx uint32, marginMode uint32,
+) (uint32, error) {
+	if marginMode == perptypes.IsolatedMargin {
+		return k.riskKeeper.GetIsolatedHealthStatus(ctx, accIdx, marketIdx)
+	}
+	return k.riskKeeper.GetHealthStatus(ctx, accIdx)
 }
 
 // clearCrossFlags removes every (account, market) flag whose first key
