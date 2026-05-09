@@ -12,7 +12,6 @@ import (
 	perptypes "github.com/perpdex/perpdex-l1/types"
 	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
 	"github.com/perpdex/perpdex-l1/x/liquidation/types"
-	risktypes "github.com/perpdex/perpdex-l1/x/risk/types"
 )
 
 // tryLLPAbsorb implements the Lighter "LLP picks up positions in
@@ -23,19 +22,16 @@ import (
 //
 // Returns true iff the targeted position was fully absorbed; the
 // caller skips ADL on a true return. False return means the LLP would
-// have breached IMR or is frozen / nonexistent — caller falls back to
-// ADL for the residual size.
-//
-// `victimRP` lets the EndBlocker hand in the cross / isolated risk
-// parameters it already fetched for `victim`, sparing one
-// ComputeRiskInfo / ComputeIsolatedRisk inside the ZP computation.
-// Pass nil when the caller has no cached state.
+// have breached IMR, is frozen / nonexistent, or the targeted
+// position is not the worst one yet — caller falls back to ADL for
+// the residual size. A non-nil error indicates an upstream invariant
+// violation (e.g., LLP / IF position misconfigured as isolated); the
+// EndBlocker logs and still falls through to autoADL.
 func (k Keeper) tryLLPAbsorb(
 	ctx context.Context,
 	victim uint64,
 	marketIdx uint32,
 	attemptsLeft *uint32,
-	victimRP *risktypes.RiskParameters,
 ) (bool, error) {
 	if attemptsLeft == nil || *attemptsLeft == 0 {
 		return false, nil
@@ -68,50 +64,42 @@ func (k Keeper) tryLLPAbsorb(
 		return false, nil
 	}
 
-	pos, err := k.accountKeeper.GetPosition(ctx, victim, marketIdx)
-	if err != nil || pos.Position.IsZero() {
+	// Snapshot the victim's targeted position fresh: any earlier
+	// LLP/ADL fill in this account's iteration may have shifted the
+	// cross aggregate, and the snapshot's ZeroPrice MUST come from
+	// the post-mutation TAV/MMR.
+	snap, err := k.riskKeeper.GetLiquidationRiskSnapshot(ctx, victim, marketIdx)
+	if err != nil {
 		return false, err
 	}
-	size := pos.Position.Abs()
+	if snap.Position.Position.IsZero() {
+		return false, nil
+	}
+	size := snap.Position.Position.Abs()
 	if !size.IsPositive() {
 		return false, nil
 	}
 
-	// Prefetch market state so both ZP and the takeover simulation
-	// can reuse it. Each helper call below is pure math.
-	mark, md, err := k.riskKeeper.GetMarkAndMarketDetails(ctx, marketIdx)
-	if err != nil {
-		return false, err
-	}
-	victimParams, err := k.resolveVictimRiskParams(ctx, victim, marketIdx, pos, victimRP)
-	if err != nil {
-		return false, err
-	}
-	zeroPrice := k.riskKeeper.ComputeZeroPrice(pos, mark, md, victimParams.TotalAccountValue, victimParams.MaintenanceMarginRequirement)
-
 	// LLP IMR check: simulate the takeover and require the LLP's
 	// post-state TAV >= IMR. The takeover delta is the position the
 	// LLP will inherit (opposite sign of victim, since LLP is the
-	// taker that offsets the victim's exposure).
-	llpDelta := pos.Position.Neg()
-	llpPos, err := k.accountKeeper.GetPosition(ctx, perptypes.InsuranceFundOperatorAccountIdx, marketIdx)
+	// taker that offsets the victim's exposure). The wrapper
+	// re-reads the LLP's cross state, so even if a sibling market
+	// just absorbed against the LLP earlier in this account's
+	// iteration the gate still uses fresh TAV / IMR.
+	//
+	// SimulateRiskAfterTakeover refuses isolated targets with an
+	// error (LLP / IF positions MUST be cross). We surface that as a
+	// non-nil error rather than swallowing it as a silent fallback —
+	// processAccount logs the misconfiguration and still falls
+	// through to autoADL.
+	llpDelta := snap.Position.Position.Neg()
+	postRP, err := k.riskKeeper.SimulateRiskAfterTakeover(
+		ctx, perptypes.InsuranceFundOperatorAccountIdx, marketIdx, llpDelta, snap.ZeroPrice,
+	)
 	if err != nil {
 		return false, err
 	}
-	if llpPos.MarginMode == perptypes.IsolatedMargin {
-		// LLP positions are always cross; refuse rather than silently
-		// mis-simulate. The fallback is ADL.
-		return false, nil
-	}
-	llpRi, err := k.riskKeeper.ComputeRiskInfo(ctx, perptypes.InsuranceFundOperatorAccountIdx)
-	if err != nil {
-		return false, err
-	}
-	llpCurrent := risktypes.RiskParameters{}
-	if llpRi.CurrentRiskParameters != nil {
-		llpCurrent = *llpRi.CurrentRiskParameters
-	}
-	postRP := k.riskKeeper.ApplySimulatedTakeover(llpPos, llpCurrent, mark, md, llpDelta, zeroPrice)
 	if postRP.TotalAccountValue.LT(postRP.InitialMarginRequirement) {
 		// LLP would breach its initial margin; reject and let ADL
 		// handle the position.
@@ -151,8 +139,11 @@ type rankedPosition struct {
 // sorted by ascending unrealized PnL (worst first), as the Lighter
 // spec requires for LLP takeover. Mark prices are fetched once per
 // distinct MarketIndex encountered and reused; uPnL is derived
-// directly from the iterated position via `pos.UnrealizedPnL(mark)`,
-// avoiding a second GetPosition round-trip.
+// directly from the iterated position via `pos.UnrealizedPnL(mark)`.
+//
+// Ranking does NOT materialise a full risk snapshot per position —
+// only the mark is needed to score uPnL, and a snapshot's extra cross
+// aggregation would be O(positions^2) for the same victim.
 func (k Keeper) rankVictimPositionsByUPnL(ctx context.Context, victim uint64) ([]rankedPosition, error) {
 	out := []rankedPosition{}
 	marks := map[uint32]uint32{}

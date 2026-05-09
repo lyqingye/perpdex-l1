@@ -46,10 +46,11 @@ import (
 // `tryLLPAbsorb` IMR simulation), not via a silent collateral
 // transfer.
 func (k Keeper) Liquidate(ctx context.Context, victim uint64, marketIdx uint32, baseAmount uint64) error {
-	pos, err := k.accountKeeper.GetPosition(ctx, victim, marketIdx)
+	snap, err := k.riskKeeper.GetLiquidationRiskSnapshot(ctx, victim, marketIdx)
 	if err != nil {
 		return err
 	}
+	pos := snap.Position
 	if pos.Position.IsZero() {
 		return types.ErrNotLiquidatable.Wrap("victim has no position")
 	}
@@ -92,19 +93,7 @@ func (k Keeper) Liquidate(ctx context.Context, victim uint64, marketIdx uint32, 
 			return err
 		}
 	}
-	// Compute ZP locally from prefetched (mark, md, ri/iso). Saves
-	// the wrapper's internal GetPosition + resolveMarkPrice +
-	// GetMarketDetails + ComputeRiskInfo round-trip when the caller
-	// already holds `pos` (we just fetched it above).
-	mark, md, err := k.riskKeeper.GetMarkAndMarketDetails(ctx, marketIdx)
-	if err != nil {
-		return err
-	}
-	rp, err := k.resolveVictimRiskParams(ctx, victim, marketIdx, pos, nil)
-	if err != nil {
-		return err
-	}
-	zeroPrice := k.riskKeeper.ComputeZeroPrice(pos, mark, md, rp.TotalAccountValue, rp.MaintenanceMarginRequirement)
+	zeroPrice := snap.ZeroPrice
 	market, err := k.marketKeeper.GetMarket(ctx, marketIdx)
 	if err != nil {
 		return err
@@ -179,10 +168,11 @@ func (k Keeper) Liquidate(ctx context.Context, victim uint64, marketIdx uint32, 
 // non-negative (it gains collateral from the trade) the check is
 // trivially satisfied.
 func (k Keeper) Deleverage(ctx context.Context, victim uint64, marketIdx uint32, deleverager uint64, baseAmount uint64) error {
-	pos, err := k.accountKeeper.GetPosition(ctx, victim, marketIdx)
+	snap, err := k.riskKeeper.GetLiquidationRiskSnapshot(ctx, victim, marketIdx)
 	if err != nil {
 		return err
 	}
+	pos := snap.Position
 	if pos.Position.IsZero() {
 		return types.ErrNotLiquidatable.Wrap("victim has no position")
 	}
@@ -205,17 +195,7 @@ func (k Keeper) Deleverage(ctx context.Context, victim uint64, marketIdx uint32,
 			"base_amount=%d exceeds victim position size %s", baseAmount, absVictim.String(),
 		)
 	}
-	// Same prefetch-and-compute path as Liquidate: avoid the wrapper's
-	// internal re-fetch of (pos, mark, md, ri/iso).
-	mark, md, err := k.riskKeeper.GetMarkAndMarketDetails(ctx, marketIdx)
-	if err != nil {
-		return err
-	}
-	rp, err := k.resolveVictimRiskParams(ctx, victim, marketIdx, pos, nil)
-	if err != nil {
-		return err
-	}
-	zeroPrice := k.riskKeeper.ComputeZeroPrice(pos, mark, md, rp.TotalAccountValue, rp.MaintenanceMarginRequirement)
+	zeroPrice := snap.ZeroPrice
 
 	dAcc, err := k.accountKeeper.GetAccount(ctx, deleverager)
 	if err != nil {

@@ -28,11 +28,13 @@ type ADLCandidate struct {
 	// UnrealizedPnL of the position at the current mark price.
 	// Strictly positive — losing positions are filtered out.
 	UnrealizedPnL math.Int
-	// ZeroPrice cached from x/risk so autoADL can enforce zero-
-	// price alignment without re-querying.
+	// ZeroPrice cached from the snapshot so autoADL can enforce
+	// zero-price alignment without re-querying.
 	ZeroPrice uint32
 	// Leverage is the cross account leverage at rank time (notional /
-	// max(collateral, 1)), expressed in MarginTick units.
+	// max(collateral, 1)), expressed in MarginTick units. Always the
+	// CROSS aggregate, even for isolated candidates, per the Lighter
+	// spec ("highly-leveraged winners come first").
 	Leverage math.Int
 	// Score = leverage * uPnL_ratio. uPnL_ratio is approximated by
 	// uPnL * MarginTick / max(|entry_quote|, 1). Higher = closer to
@@ -42,19 +44,20 @@ type ADLCandidate struct {
 
 // BuildADLQueue scans every account, picks those that hold an opposing
 // non-zero position in `marketIdx` AND are currently profitable on it,
-// computes the per-Lighter ADL score and returns the top `limit`
-// candidates sorted by score descending. `oppositeIsLong = true` means
-// the victim is short, so the ADL queue must be longs (PositionSize > 0).
+// computes the per-Lighter ADL score, and returns the top `limit`
+// candidates sorted by score descending. `oppositeIsLong = true`
+// means the victim is short, so the ADL queue must be longs
+// (PositionSize > 0).
 //
 // Cost: O(N_accounts) per call. The caller is expected to apply the
 // `MaxAdlCandidatesPerVictim` cap from Params before invoking this.
 //
-// Per-call prefetch: `mark` and `md` are fetched ONCE outside the
-// per-candidate loop so each candidate only triggers (a) GetPosition,
-// (b) ComputeRiskInfo / ComputeIsolatedRisk for leverage + ZP, and (c)
-// the pure ZP math via `riskKeeper.ComputeZeroPrice`. Previously each
-// candidate re-pulled the position three times, the mark price twice,
-// market details once, and the risk aggregate twice.
+// Each candidate is read through one `GetLiquidationRiskSnapshot` call
+// so the (pos, mark, md, Risk, CrossRisk, ZeroPrice) bundle stays
+// internally consistent — uPnL is computed from the same mark the
+// snapshot's ZeroPrice was anchored to. ADL ranking deliberately uses
+// `snap.CrossRisk` even when the candidate's targeted position is
+// isolated.
 func (k Keeper) BuildADLQueue(
 	ctx context.Context,
 	marketIdx uint32,
@@ -63,10 +66,6 @@ func (k Keeper) BuildADLQueue(
 ) ([]ADLCandidate, error) {
 	if limit == 0 {
 		return nil, nil
-	}
-	mark, md, err := k.riskKeeper.GetMarkAndMarketDetails(ctx, marketIdx)
-	if err != nil {
-		return nil, err
 	}
 
 	out := make([]ADLCandidate, 0, limit)
@@ -80,41 +79,24 @@ func (k Keeper) BuildADLQueue(
 			a.IsPoolType() {
 			return false
 		}
-		pos, err := k.accountKeeper.GetPosition(ctx, a.AccountIndex, marketIdx)
-		if err != nil || pos.Position.IsZero() {
+		snap, err := k.riskKeeper.GetLiquidationRiskSnapshot(ctx, a.AccountIndex, marketIdx)
+		if err != nil {
+			return false
+		}
+		pos := snap.Position
+		if pos.Position.IsZero() {
 			return false
 		}
 		// Only opposite-side positions can offset a victim's close-out.
 		if pos.Position.IsPositive() != oppositeIsLong {
 			return false
 		}
-		uPnL := pos.UnrealizedPnL(mark)
+		uPnL := pos.UnrealizedPnL(snap.MarkPrice)
 		if !uPnL.IsPositive() {
 			// Losing or zero-PnL positions are not candidates.
 			return false
 		}
-
-		// Leverage + (TAV, MMR) for ZP both come from the same risk
-		// scope; pick cross or isolated based on the position's
-		// margin mode and reuse the result for both.
-		var rp risktypes.RiskParameters
-		if pos.MarginMode == perptypes.IsolatedMargin {
-			ip, err := k.riskKeeper.ComputeIsolatedRisk(ctx, a.AccountIndex, marketIdx)
-			if err != nil {
-				return false
-			}
-			rp = ip
-		} else {
-			ri, err := k.riskKeeper.ComputeRiskInfo(ctx, a.AccountIndex)
-			if err != nil {
-				return false
-			}
-			if ri.CrossRiskParameters == nil {
-				return false
-			}
-			rp = *ri.CrossRiskParameters
-		}
-		leverage := computeLeverage(rp)
+		leverage := computeLeverage(snap.CrossRisk)
 		// uPnL_ratio = uPnL / max(|entry_quote|, 1).
 		entryAbs := pos.EntryQuote.Abs()
 		if !entryAbs.IsPositive() {
@@ -123,12 +105,11 @@ func (k Keeper) BuildADLQueue(
 		uPnLRatio := uPnL.Mul(math.NewInt(int64(perptypes.MarginTick))).Quo(entryAbs)
 		// Score = leverage * uPnL_ratio (in MarginTick^2 units).
 		score := leverage.Mul(uPnLRatio)
-		zp := k.riskKeeper.ComputeZeroPrice(pos, mark, md, rp.TotalAccountValue, rp.MaintenanceMarginRequirement)
 		out = append(out, ADLCandidate{
 			AccountIndex:  a.AccountIndex,
 			PositionSize:  pos.Position,
 			UnrealizedPnL: uPnL,
-			ZeroPrice:     zp,
+			ZeroPrice:     snap.ZeroPrice,
 			Leverage:      leverage,
 			Score:         score,
 		})
@@ -166,8 +147,8 @@ func computeLeverage(rp risktypes.RiskParameters) math.Int {
 	return rp.InitialMarginRequirement.Mul(math.NewInt(int64(perptypes.MarginTick))).Quo(collateral)
 }
 
-// autoADL closes a portion of the victim's `marketIdx` position against
-// the top-ranked counterparties returned by BuildADLQueue.
+// autoADL closes a portion of the victim's `marketIdx` position
+// against the top-ranked counterparties returned by BuildADLQueue.
 //
 // Per the Lighter spec the trade between the bankrupt account and an
 // opposite-side counterparty MUST happen at a price where the two
@@ -180,37 +161,29 @@ func computeLeverage(rp risktypes.RiskParameters) math.Int {
 // `attemptsLeft` is decremented per successful fill and shared across
 // all victims in the block.
 //
-// `victimRP` lets the EndBlocker hand in the cross / isolated risk
-// parameters it already fetched for `victim`, avoiding a redundant
-// ComputeRiskInfo / ComputeIsolatedRisk inside the ZP computation.
-// Pass nil when the caller has no cached state (msg-server entry, etc.).
+// The victim's snapshot is rebuilt INSIDE this call so victim TAV/MMR
+// reflect any state mutation that happened earlier in the same
+// EndBlocker iteration (e.g., an LLP absorption against a sibling
+// market for the same cross account).
 func (k Keeper) autoADL(
 	ctx context.Context,
 	victim uint64,
 	marketIdx uint32,
 	candCap uint32,
 	attemptsLeft *uint32,
-	victimRP *risktypes.RiskParameters,
 ) error {
 	if attemptsLeft == nil || *attemptsLeft == 0 {
 		return nil
 	}
-	pos, err := k.accountKeeper.GetPosition(ctx, victim, marketIdx)
+	snap, err := k.riskKeeper.GetLiquidationRiskSnapshot(ctx, victim, marketIdx)
 	if err != nil {
 		return err
 	}
+	pos := snap.Position
 	if pos.Position.IsZero() {
 		return nil
 	}
-	mark, md, err := k.riskKeeper.GetMarkAndMarketDetails(ctx, marketIdx)
-	if err != nil {
-		return err
-	}
-	rp, err := k.resolveVictimRiskParams(ctx, victim, marketIdx, pos, victimRP)
-	if err != nil {
-		return err
-	}
-	victimZP := k.riskKeeper.ComputeZeroPrice(pos, mark, md, rp.TotalAccountValue, rp.MaintenanceMarginRequirement)
+	victimZP := snap.ZeroPrice
 
 	// Victim long  → counterparties must be short to offset.
 	// Victim short → counterparties must be long.
@@ -311,34 +284,6 @@ func (k Keeper) autoADL(
 		*attemptsLeft--
 	}
 	return nil
-}
-
-// resolveVictimRiskParams returns the cross or isolated RiskParameters
-// the ZP computation needs. When `cached` is non-nil it's used
-// verbatim, sparing a redundant ComputeRiskInfo / ComputeIsolatedRisk
-// call. Centralised so autoADL / tryLLPAbsorb / Liquidate / Deleverage
-// don't each re-implement the cross-vs-isolated branch.
-func (k Keeper) resolveVictimRiskParams(
-	ctx context.Context,
-	victim uint64,
-	marketIdx uint32,
-	pos accounttypes.AccountPosition,
-	cached *risktypes.RiskParameters,
-) (risktypes.RiskParameters, error) {
-	if cached != nil {
-		return *cached, nil
-	}
-	if pos.MarginMode == perptypes.IsolatedMargin {
-		return k.riskKeeper.ComputeIsolatedRisk(ctx, victim, marketIdx)
-	}
-	ri, err := k.riskKeeper.ComputeRiskInfo(ctx, victim)
-	if err != nil {
-		return risktypes.RiskParameters{}, err
-	}
-	if ri.CrossRiskParameters == nil {
-		return risktypes.RiskParameters{}, nil
-	}
-	return *ri.CrossRiskParameters, nil
 }
 
 // zeroPriceMid returns the integer midpoint of two zero prices. Both

@@ -28,7 +28,7 @@ import (
 // The keeper code is split across several files for navigability:
 //
 //   - keeper.go   : Keeper struct + constructor + universally-shared
-//                   helpers (Authority, ClassifyHealth / classifyChange,
+//                   helpers (Authority, classifyHealth / classifyChange,
 //                   resolveMarkPrice, GetMarkAndMarketDetails).
 //   - cross.go    : cross-margin aggregation (ComputeRiskInfo,
 //                   GetHealthStatus, GetTotalAccountValue,
@@ -39,10 +39,9 @@ import (
 //                   IterateIsolatedPositions, isIsolatedRiskChangeValid).
 //   - risk_change.go : IsValidRiskChange + SnapshotPreRisk drivers that
 //                      stitch cross + isolated together.
-//   - liquidation.go : liquidation-specific math + pure helpers
-//                      (ComputeZeroPrice, ApplySimulatedTakeover,
-//                      GetPositionZeroPrice, SimulateRiskAfterTakeover,
-//                      quoTowardZero).
+//   - liquidation.go : liquidation-specific math
+//                      (GetPositionZeroPrice, SimulateRiskAfterTakeover,
+//                      GetLiquidationRiskSnapshot).
 type Keeper struct {
 	cdc           codec.BinaryCodec
 	storeService  store.KVStoreService
@@ -132,12 +131,11 @@ func (k Keeper) GetMarkAndMarketDetails(ctx context.Context, marketIdx uint32) (
 	return mark, md, nil
 }
 
-// ClassifyHealth implements the 5-level state machine. Exposed as a
-// pure free function so liquidation-side callers that already hold a
-// RiskParameters (from ComputeRiskInfo / ComputeIsolatedRisk) can
-// classify locally without going through GetHealthStatus, which would
-// re-run the aggregation under the hood.
-func ClassifyHealth(p types.RiskParameters) uint32 {
+// classifyHealth implements the 5-level state machine. Kept package-
+// private: external callers go through GetHealthStatus /
+// GetIsolatedHealthStatus so the aggregation contract (cross vs
+// isolated) is enforced from one place.
+func classifyHealth(p types.RiskParameters) uint32 {
 	if p.TotalAccountValue.IsNegative() {
 		return perptypes.HealthBankruptcy
 	}
@@ -159,14 +157,14 @@ func ClassifyHealth(p types.RiskParameters) uint32 {
 // avoid silently accepting a change that may have introduced the
 // underwater state.
 func classifyChange(pre, post types.RiskParameters, missingPre bool) bool {
-	postClass := ClassifyHealth(post)
+	postClass := classifyHealth(post)
 	if postClass == perptypes.HealthHealthy {
 		return true
 	}
 	if missingPre {
 		return false
 	}
-	preClass := ClassifyHealth(pre)
+	preClass := classifyHealth(pre)
 	if postClass > preClass {
 		return false
 	}

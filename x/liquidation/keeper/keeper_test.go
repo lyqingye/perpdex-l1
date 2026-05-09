@@ -173,24 +173,43 @@ func (stubMarket) GetMarketDetails(_ context.Context, idx uint32) (markettypes.M
 	return markettypes.MarketDetails{MarketIndex: idx}, nil
 }
 
-// stubRisk fully implements types.RiskKeeper. Per-account / per-market
-// values are pre-loaded by the test; nothing is computed dynamically.
+// stubRisk implements types.RiskKeeper for liquidation tests.
+// Per-account / per-market values are pre-loaded into the maps below;
+// nothing is aggregated dynamically. The stub deliberately exposes
+// ONLY the fields the production interface consumes (snapshot bundle,
+// statuses, takeover preview) — internal computation steps are not
+// modelled, so tests cannot accidentally rely on a partial production
+// formula.
 //
-// After the dedup refactor the abci.go EndBlocker drives status from
-// `ComputeRiskInfo` + `riskkeeper.ClassifyHealth` directly, so the
-// `status` / `statuses` / `isoStat` table inputs are projected back
-// into `RiskParameters` via `riskParamsForStatus` whenever the test
-// did not seed `cross[acc]` / `iso[(acc,mkt)]` explicitly.
+// `ak` is wired by `newKeeper` after construction so the stub can
+// derive `snap.Position` from the same in-memory table the production
+// account keeper would walk. `riskInfoCalls` lets a test assert that
+// the EndBlocker waterfall does not silently reuse stale aggregates
+// across mutating calls (see TestEndBlocker_StaleCrossAggregateRefresh).
 type stubRisk struct {
-	status   uint32                              // global default
-	statuses map[uint64]uint32                   // per-account override (falls back to `status`)
-	isoStat  map[[2]uint64]uint32                // (acc, market) -> isolated status
-	zero     map[[2]uint64]uint32                // (acc, market) -> zero price (overrides ComputeZeroPrice)
-	marks    map[uint32]uint32                   // market -> mark price (default 100)
-	mds      map[uint32]markettypes.MarketDetails
-	cross    map[uint64]risktypes.RiskParameters
+	ak *stubAccount
+
+	status   uint32                               // global default cross status
+	statuses map[uint64]uint32                    // per-account override (falls back to `status`)
+	isoStat  map[[2]uint64]uint32                 // (acc, market) -> isolated status
+	zero     map[[2]uint64]uint32                 // (acc, market) -> zero price override
+	marks    map[uint32]uint32                    // market -> mark price (default 100)
+	mds      map[uint32]markettypes.MarketDetails // market -> details
+	cross    map[uint64]risktypes.RiskParameters  // account -> cross aggregate (overrides status projection)
 	iso      map[[2]uint64]risktypes.RiskParameters
-	postSim  map[uint64]risktypes.RiskParameters // simulated takeover post-state per account
+	postSim  map[uint64]risktypes.RiskParameters // takeover post-state per account
+	postSimErr error                              // forced error from SimulateRiskAfterTakeover
+
+	// snapshotCalls counts every GetLiquidationRiskSnapshot call;
+	// tests use it to assert that the waterfall takes a fresh
+	// snapshot per LLP / ADL invocation rather than caching across
+	// mutations.
+	snapshotCalls int
+	// onSnapshot lets a test mutate stub state (e.g., flip a cross
+	// account from FULL to HEALTHY) right before a snapshot is
+	// returned, simulating a sibling fill having already mutated the
+	// account.
+	onSnapshot func(s *stubRisk, acc uint64, mkt uint32)
 }
 
 func newStubRisk() *stubRisk {
@@ -216,50 +235,61 @@ func (s *stubRisk) GetPositionZeroPrice(_ context.Context, acc uint64, mkt uint3
 	if v, ok := s.zero[[2]uint64{acc, uint64(mkt)}]; ok {
 		return v, nil
 	}
-	return 10, nil
+	return s.markFor(mkt), nil
 }
 func (s *stubRisk) GetMarkAndMarketDetails(_ context.Context, mkt uint32) (uint32, markettypes.MarketDetails, error) {
 	return s.markFor(mkt), s.mdFor(mkt), nil
 }
-func (s *stubRisk) ComputeZeroPrice(
-	pos accounttypes.AccountPosition,
-	mark uint32,
-	_ markettypes.MarketDetails,
-	_, _ math.Int,
-) uint32 {
-	if v, ok := s.zero[[2]uint64{pos.AccountIndex, uint64(pos.MarketIndex)}]; ok {
-		return v
+
+func (s *stubRisk) GetLiquidationRiskSnapshot(
+	ctx context.Context, acc uint64, mkt uint32,
+) (risktypes.LiquidationRiskSnapshot, error) {
+	s.snapshotCalls++
+	if s.onSnapshot != nil {
+		s.onSnapshot(s, acc, mkt)
 	}
-	if mark == 0 {
-		return 10
+	pos, err := s.ak.GetPosition(ctx, acc, mkt)
+	if err != nil {
+		return risktypes.LiquidationRiskSnapshot{}, err
 	}
-	return mark
+	mark := s.markFor(mkt)
+	md := s.mdFor(mkt)
+	crossRP, ok := s.cross[acc]
+	if !ok {
+		crossRP = riskParamsForStatus(s.crossStatusFor(acc))
+	}
+	risk := crossRP
+	if pos.MarginMode == perptypes.IsolatedMargin {
+		if v, found := s.iso[[2]uint64{acc, uint64(mkt)}]; found {
+			risk = v
+		} else {
+			risk = riskParamsForStatus(s.isoStatusFor(acc, mkt))
+		}
+	}
+	zp, ok := s.zero[[2]uint64{acc, uint64(mkt)}]
+	if !ok {
+		if pos.Position.IsZero() {
+			zp = 0
+		} else {
+			zp = mark
+		}
+	}
+	return risktypes.LiquidationRiskSnapshot{
+		Position:      pos,
+		MarkPrice:     mark,
+		MarketDetails: md,
+		Risk:          risk,
+		CrossRisk:     crossRP,
+		ZeroPrice:     zp,
+	}, nil
 }
-func (s *stubRisk) ApplySimulatedTakeover(
-	pos accounttypes.AccountPosition,
-	_ risktypes.RiskParameters,
-	_ uint32,
-	_ markettypes.MarketDetails,
-	_ math.Int,
-	_ uint32,
-) risktypes.RiskParameters {
-	if v, ok := s.postSim[pos.AccountIndex]; ok {
-		return v
-	}
-	// Default: report a healthy post-takeover RP (TAV >> IMR) so
-	// tests that don't explicitly set postSim still let LLP absorb.
-	return risktypes.RiskParameters{
-		Collateral:                   math.NewInt(1_000_000),
-		CollateralWithFunding:        math.NewInt(1_000_000),
-		TotalAccountValue:            math.NewInt(1_000_000),
-		InitialMarginRequirement:     math.ZeroInt(),
-		MaintenanceMarginRequirement: math.ZeroInt(),
-		CloseOutMarginRequirement:    math.ZeroInt(),
-	}
-}
+
 func (s *stubRisk) SimulateRiskAfterTakeover(
 	_ context.Context, acc uint64, _ uint32, _ math.Int, _ uint32,
 ) (risktypes.RiskParameters, error) {
+	if s.postSimErr != nil {
+		return risktypes.RiskParameters{}, s.postSimErr
+	}
 	if v, ok := s.postSim[acc]; ok {
 		return v, nil
 	}
@@ -271,19 +301,6 @@ func (s *stubRisk) SimulateRiskAfterTakeover(
 		MaintenanceMarginRequirement: math.ZeroInt(),
 		CloseOutMarginRequirement:    math.ZeroInt(),
 	}, nil
-}
-func (s *stubRisk) ComputeRiskInfo(_ context.Context, acc uint64) (risktypes.RiskInfo, error) {
-	if v, ok := s.cross[acc]; ok {
-		return risktypes.RiskInfo{CrossRiskParameters: &v, CurrentRiskParameters: &v}, nil
-	}
-	rp := riskParamsForStatus(s.crossStatusFor(acc))
-	return risktypes.RiskInfo{CrossRiskParameters: &rp, CurrentRiskParameters: &rp}, nil
-}
-func (s *stubRisk) ComputeIsolatedRisk(_ context.Context, acc uint64, mkt uint32) (risktypes.RiskParameters, error) {
-	if v, ok := s.iso[[2]uint64{acc, uint64(mkt)}]; ok {
-		return v, nil
-	}
-	return riskParamsForStatus(s.isoStatusFor(acc, mkt)), nil
 }
 
 func (s *stubRisk) crossStatusFor(acc uint64) uint32 {
@@ -314,10 +331,10 @@ func (s *stubRisk) mdFor(mkt uint32) markettypes.MarketDetails {
 	return markettypes.MarketDetails{MarketIndex: mkt}
 }
 
-// riskParamsForStatus projects a status enum into a RiskParameters that
-// `riskkeeper.ClassifyHealth` round-trips back to the same status. Used
-// by the stub when tests seed `status` / `statuses` / `isoStat` tables
-// instead of full RP fixtures.
+// riskParamsForStatus projects a status enum into a RiskParameters
+// that the production classifier round-trips back to the same status.
+// Used by the stub when tests seed `status` / `statuses` / `isoStat`
+// tables instead of full RP fixtures.
 func riskParamsForStatus(status uint32) risktypes.RiskParameters {
 	z := math.ZeroInt()
 	rp := risktypes.RiskParameters{
@@ -332,22 +349,19 @@ func riskParamsForStatus(status uint32) risktypes.RiskParameters {
 	case perptypes.HealthBankruptcy:
 		rp.TotalAccountValue = math.NewInt(-1)
 	case perptypes.HealthFullLiquidation:
-		// TAV < CMR triggers FULL.
 		rp.TotalAccountValue = math.ZeroInt()
 		rp.InitialMarginRequirement = math.NewInt(3)
 		rp.MaintenanceMarginRequirement = math.NewInt(2)
 		rp.CloseOutMarginRequirement = math.NewInt(1)
 	case perptypes.HealthPartialLiquidation:
-		// CMR <= TAV < MMR triggers PARTIAL.
 		rp.TotalAccountValue = math.NewInt(1)
 		rp.InitialMarginRequirement = math.NewInt(3)
 		rp.MaintenanceMarginRequirement = math.NewInt(2)
 		rp.CloseOutMarginRequirement = math.ZeroInt()
 	case perptypes.HealthPreLiquidation:
-		// MMR <= TAV < IMR triggers PRE.
 		rp.TotalAccountValue = math.NewInt(1)
 		rp.InitialMarginRequirement = math.NewInt(2)
-	default: // Healthy: TAV >= IMR (all zero satisfies).
+	default:
 	}
 	return rp
 }
@@ -358,10 +372,18 @@ type stubTrade struct {
 	// model post-trade risk regression on bankrupt or recoverable
 	// rejections).
 	err error
+	// onCall lets a test mutate sibling stub state right after a
+	// fill is recorded — used to model the cross account's TAV /
+	// status changing as a result of an LLP / ADL fill so the next
+	// position iteration must observe the mutation.
+	onCall func(f tradekeeper.PerpFill)
 }
 
 func (s *stubTrade) ApplyPerpsMatching(_ context.Context, f tradekeeper.PerpFill) error {
 	s.calls = append(s.calls, f)
+	if s.onCall != nil {
+		s.onCall(f)
+	}
 	return s.err
 }
 
@@ -455,6 +477,10 @@ func newKeeperWithFunding(
 	ak *stubAccount, rk *stubRisk, tk *stubTrade, matchk *stubMatching, fk *stubFunding,
 ) (liqkeeper.Keeper, sdk.Context) {
 	t.Helper()
+	// Wire the account stub into the risk stub so
+	// GetLiquidationRiskSnapshot can derive Position from the same
+	// in-memory table the production keeper would walk.
+	rk.ak = ak
 	keys := storetypes.NewKVStoreKeys(liqtypes.StoreKey)
 	cdc := moduletestutil.MakeTestEncodingConfig().Codec
 	cms := integration.CreateMultiStore(keys, log.NewTestLogger(t))
@@ -1325,4 +1351,74 @@ func TestEndBlocker_ADLCandidateInsufficientCollateral_AdvancesToNext(t *testing
 			"candidate 201 had insufficient collateral; must have been skipped")
 	}
 	require.Equal(t, uint64(202), tk.calls[0].TakerAccountIndex)
+}
+
+// TestEndBlocker_CrossAggregateRefreshedAcrossMarkets is the regression
+// test for the cross-aggregate staleness audit (PR review P1):
+// processAccount must NOT carry pre-mutation cross RiskParameters or
+// status across markets when the previous market's fill has just
+// shifted them.
+//
+// Setup: account 100 holds two cross positions (markets 0 and 1) and
+// is FULL_LIQUIDATION at the start of the block. The LLP can absorb
+// both. After the FIRST absorption (market 0) the stubbed trade
+// engine flips the account to HEALTHY — modelling the realised PnL
+// having lifted TAV above IMR. With a fresh per-call snapshot the
+// next market's tryLLPAbsorb sees the new status and Deleverage's
+// `victimHealthForPosition` rejects with ErrNotBankrupt; with a
+// cached aggregate the second fill would still go through.
+func TestEndBlocker_CrossAggregateRefreshedAcrossMarkets(t *testing.T) {
+	ak := newStubAccount()
+	ak.accounts[perptypes.InsuranceFundOperatorAccountIdx] = accounttypes.Account{
+		AccountIndex: perptypes.InsuranceFundOperatorAccountIdx,
+		AccountType:  perptypes.InsuranceFundAccountType,
+		Collateral:   math.NewInt(10_000_000),
+		PublicPoolInfo: &accounttypes.PublicPoolInfo{
+			Status:         perptypes.PublicPoolStatusActive,
+			TotalShares:    math.NewInt(1),
+			OperatorShares: math.NewInt(1),
+		},
+	}
+	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.NewInt(10)}
+	// Two FULL_LIQUIDATION cross positions. Market 0 is the worst
+	// (uPnL = pos*mark - EQ = 50*100 - 10_000 = -5_000 at mark=100);
+	// market 1 is less bad (uPnL = 5*100 - 1_000 = -500). The
+	// LLP-takeover ranking and the persisted-position iterator both
+	// process market 0 first, so the post-fill mutation we install
+	// below fires before market 1 is reached.
+	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
+		AccountIndex: 100, MarketIndex: 0,
+		Position: math.NewInt(50), EntryQuote: math.NewInt(10_000),
+		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
+	}
+	ak.pos[[2]uint64{100, 1}] = accounttypes.AccountPosition{
+		AccountIndex: 100, MarketIndex: 1,
+		Position: math.NewInt(5), EntryQuote: math.NewInt(1_000),
+		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
+	}
+	rk := newStubRisk()
+	rk.statuses[100] = perptypes.HealthFullLiquidation
+
+	// Simulate the cross account flipping HEALTHY after the first
+	// absorption. A keeper that cached crossRP/status from the start
+	// of processAccount would still issue a second fill against the
+	// (no longer bankrupt) account.
+	tk := &stubTrade{
+		onCall: func(f tradekeeper.PerpFill) {
+			if f.MarketIndex == 0 {
+				rk.statuses[100] = perptypes.HealthHealthy
+				rk.cross[100] = riskParamsForStatus(perptypes.HealthHealthy)
+			}
+		},
+	}
+	matchk := newStubMatching()
+	k, ctx := newKeeper(t, ak, rk, tk, matchk)
+
+	require.NoError(t, k.EndBlocker(ctx))
+
+	require.Len(t, tk.calls, 1,
+		"only market 0 should fill: market 1 must observe the post-mutation HEALTHY status and skip")
+	require.Equal(t, uint32(0), tk.calls[0].MarketIndex)
+	require.GreaterOrEqual(t, rk.snapshotCalls, 2,
+		"each per-market LLP/ADL invocation must build its own fresh risk snapshot")
 }

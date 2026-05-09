@@ -11,8 +11,6 @@ import (
 	perptypes "github.com/perpdex/perpdex-l1/types"
 	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
 	"github.com/perpdex/perpdex-l1/x/liquidation/types"
-	riskkeeper "github.com/perpdex/perpdex-l1/x/risk/keeper"
-	risktypes "github.com/perpdex/perpdex-l1/x/risk/types"
 )
 
 // EndBlocker walks every account and processes liquidation in three
@@ -52,8 +50,8 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 		}
 		// We process cross and isolated health independently. Cross
 		// status drives the per-account flag housekeeping; per
-		// isolated position is then handled via the same routine
-		// against ComputeIsolatedRisk.
+		// isolated position is then handled via its own per-market
+		// isolated health envelope inside processAccount.
 		if err := k.processAccount(ctx, a, height, now, &attemptsLeft, candCap); err != nil {
 			sdkCtx.Logger().Error("liquidation: process account failed",
 				"account", a.AccountIndex, "err", err)
@@ -67,29 +65,25 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 // each isolated position is flagged / liquidated against its own
 // per-market isolated health.
 //
-// Risk-info dedup: this function fetches `ComputeRiskInfo(account)`
-// (cross) and per-isolated-position `ComputeIsolatedRisk` directly
-// instead of going through `GetHealthStatus` /
-// `GetIsolatedHealthStatus` wrappers (which throw away the
-// RiskParameters and force `tryLLPAbsorb` / `autoADL` to recompute
-// them). The cached params are passed down to those callees so they
-// don't re-aggregate the account's positions per (account, market)
-// triggered.
+// Cross status is read once at the top of the function and reused as
+// the flag-bookkeeping driver for every cross position the account
+// holds. We deliberately do NOT pass the underlying RiskParameters /
+// snapshot down to `tryLLPAbsorb` / `autoADL`: those callees mutate
+// state (Deleverage / ApplyPerpsMatching), so any RP cached at this
+// level would go stale across markets. The callees rebuild their
+// own snapshots so each ZP they quote reflects the post-mutation
+// cross aggregate. The cached cross status is still safe — the inner
+// Deleverage and engine `IsValidRiskChange` paths re-check health
+// against current state, so a position that became HEALTHY during
+// processing cannot generate a stale fill.
 func (k Keeper) processAccount(
 	ctx context.Context, a accounttypes.Account, height int64, now int64,
 	attemptsLeft *uint32, candCap uint32,
 ) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
-	crossRi, err := k.riskKeeper.ComputeRiskInfo(ctx, a.AccountIndex)
+	crossStatus, err := k.riskKeeper.GetHealthStatus(ctx, a.AccountIndex)
 	if err != nil {
 		return err
-	}
-	var crossRP *risktypes.RiskParameters
-	crossStatus := perptypes.HealthHealthy
-	if crossRi.CurrentRiskParameters != nil {
-		rp := *crossRi.CurrentRiskParameters
-		crossRP = &rp
-		crossStatus = riskkeeper.ClassifyHealth(rp)
 	}
 
 	// PARTIAL+: write a flag for every CROSS market this account holds
@@ -106,24 +100,16 @@ func (k Keeper) processAccount(
 			return false
 		}
 		marketIdx := pos.MarketIndex
-		// Determine the relevant status (cross vs isolated). For
-		// isolated, fetch the params directly so they can be reused
-		// by the LLP / ADL callees below; for cross, reuse the
-		// already-aggregated `crossRP`.
 		var posStatus uint32
-		var victimRP *risktypes.RiskParameters
 		if pos.MarginMode == perptypes.IsolatedMargin {
-			rp, err := k.riskKeeper.ComputeIsolatedRisk(ctx, a.AccountIndex, marketIdx)
+			s, err := k.riskKeeper.GetIsolatedHealthStatus(ctx, a.AccountIndex, marketIdx)
 			if err != nil {
 				iterErr = err
 				return true
 			}
-			isoRP := rp
-			victimRP = &isoRP
-			posStatus = riskkeeper.ClassifyHealth(rp)
+			posStatus = s
 		} else {
 			posStatus = crossStatus
-			victimRP = crossRP
 		}
 
 		if posStatus == perptypes.HealthHealthy || posStatus == perptypes.HealthPreLiquidation {
@@ -147,18 +133,20 @@ func (k Keeper) processAccount(
 		// Lighter spec ("LLP closes all of the user's positions by
 		// taking them over"), gated by SimulateRiskAfterTakeover so
 		// the LLP never breaches its IMR. Anything the LLP refuses
-		// falls through to ADL.
+		// falls through to ADL. Each callee re-snapshots the victim
+		// internally so the post-mutation state is what drives the
+		// next market's decision.
 		if attemptsLeft == nil || *attemptsLeft == 0 {
 			return false
 		}
 		if posStatus == perptypes.HealthFullLiquidation || posStatus == perptypes.HealthBankruptcy {
-			absorbed, err := k.tryLLPAbsorb(ctx, a.AccountIndex, marketIdx, attemptsLeft, victimRP)
+			absorbed, err := k.tryLLPAbsorb(ctx, a.AccountIndex, marketIdx, attemptsLeft)
 			if err != nil {
 				sdkCtx.Logger().Error("liquidation: LLP absorb failed",
 					"victim", a.AccountIndex, "market", marketIdx, "err", err)
 			}
 			if !absorbed {
-				if err := k.autoADL(ctx, a.AccountIndex, marketIdx, candCap, attemptsLeft, victimRP); err != nil {
+				if err := k.autoADL(ctx, a.AccountIndex, marketIdx, candCap, attemptsLeft); err != nil {
 					sdkCtx.Logger().Error("liquidation: auto-adl failed",
 						"victim", a.AccountIndex, "market", marketIdx, "err", err)
 				}

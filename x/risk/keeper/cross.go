@@ -117,7 +117,7 @@ func (k Keeper) GetHealthStatus(ctx context.Context, accountIdx uint64) (uint32,
 	if cur == nil {
 		return perptypes.HealthHealthy, nil
 	}
-	return ClassifyHealth(*cur), nil
+	return classifyHealth(*cur), nil
 }
 
 // GetTotalAccountValue returns TAV = collateral + sum(uPnL across CROSS
@@ -172,7 +172,7 @@ func (k Keeper) GetAvailableUsdcCollateral(ctx context.Context, accountIdx uint6
 	if cur == nil {
 		return math.ZeroInt(), nil
 	}
-	if ClassifyHealth(*cur) != perptypes.HealthHealthy {
+	if classifyHealth(*cur) != perptypes.HealthHealthy {
 		return math.ZeroInt(), nil
 	}
 	collateral := cur.CollateralWithFunding

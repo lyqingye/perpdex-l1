@@ -42,19 +42,18 @@ type MarketKeeper interface {
 type RiskKeeper interface {
 	GetHealthStatus(ctx context.Context, accountIdx uint64) (uint32, error)
 	GetIsolatedHealthStatus(ctx context.Context, accountIdx uint64, marketIdx uint32) (uint32, error)
-	// GetPositionZeroPrice is retained for the gRPC query path and as
-	// a one-shot wrapper for callers that don't already hold (pos,
-	// mark, md, ri/iso). Hot-loop liquidation callers should prefer
-	// `riskkeeper.ComputeZeroPrice` directly with their cached state
-	// to avoid the wrapper's redundant fetches.
+	// GetPositionZeroPrice is the gRPC query entry point. Hot
+	// liquidation loops use GetLiquidationRiskSnapshot below so the
+	// snapshot's other fields (mark / md / Risk / CrossRisk) are not
+	// thrown away.
 	GetPositionZeroPrice(ctx context.Context, accountIdx uint64, marketIdx uint32) (uint32, error)
 	// SimulateRiskAfterTakeover previews the cross risk parameters
 	// the account would have if it inherited `delta` of `marketIdx`
 	// settled at `entryPrice`. Used by the LLP / insurance fund
-	// take-over routine to enforce "post.IM <= post.TAV".
-	//
-	// Hot-loop callers that already have (pos, current_rp, mark, md)
-	// should prefer `riskkeeper.ApplySimulatedTakeover` directly.
+	// take-over routine to enforce "post.IM <= post.TAV". Refuses
+	// isolated targets with an error so an LLP/IF position
+	// misconfigured as isolated is surfaced rather than silently
+	// mis-simulated.
 	SimulateRiskAfterTakeover(
 		ctx context.Context,
 		accountIdx uint64,
@@ -62,36 +61,28 @@ type RiskKeeper interface {
 		delta math.Int,
 		entryPrice uint32,
 	) (risktypes.RiskParameters, error)
-	// ComputeRiskInfo / ComputeIsolatedRisk are needed by the ADL
-	// queue ranking and the LLP IMR check.
-	ComputeRiskInfo(ctx context.Context, accountIdx uint64) (risktypes.RiskInfo, error)
-	ComputeIsolatedRisk(ctx context.Context, accountIdx uint64, marketIdx uint32) (risktypes.RiskParameters, error)
+	// GetLiquidationRiskSnapshot returns the cohesive (pos, mark,
+	// md, Risk, CrossRisk, ZeroPrice) bundle for one (account,
+	// market) pair. It is the primary access the hot liquidation
+	// loops use in place of fetching pos / mark / md / risk-info
+	// individually; callers that previously had to re-fetch in order
+	// to compute a zero price now read `snap.ZeroPrice` directly.
+	//
+	// Snapshots are values: they represent the state at the moment of
+	// the call and MUST be re-built after any state mutation. Threading
+	// a snapshot across a fill / settlement boundary will feed stale
+	// TAV / MMR into downstream computations.
+	GetLiquidationRiskSnapshot(
+		ctx context.Context,
+		accountIdx uint64,
+		marketIdx uint32,
+	) (risktypes.LiquidationRiskSnapshot, error)
 	// GetMarkAndMarketDetails returns the live mark price and
-	// MarketDetails row for `marketIdx` in a single round-trip.
-	// liquidation hot loops prefetch this once per (market) so
-	// per-candidate iterations avoid redundant oracle / market keeper
-	// reads.
+	// MarketDetails row for `marketIdx` in a single round-trip. Used
+	// by `rankVictimPositionsByUPnL` which only needs the mark for
+	// ascending-uPnL ordering and would otherwise have to build a full
+	// snapshot per ranked position.
 	GetMarkAndMarketDetails(ctx context.Context, marketIdx uint32) (uint32, markettypes.MarketDetails, error)
-	// ComputeZeroPrice / ApplySimulatedTakeover are pure math; they
-	// are exposed via the interface so liquidation callers reuse
-	// state already fetched by the EndBlocker (mark/md/risk-info)
-	// instead of going through the GetPositionZeroPrice /
-	// SimulateRiskAfterTakeover wrappers, which re-fetch the same
-	// inputs under the hood.
-	ComputeZeroPrice(
-		pos accounttypes.AccountPosition,
-		mark uint32,
-		md markettypes.MarketDetails,
-		tav, mmr math.Int,
-	) uint32
-	ApplySimulatedTakeover(
-		pos accounttypes.AccountPosition,
-		current risktypes.RiskParameters,
-		mark uint32,
-		md markettypes.MarketDetails,
-		delta math.Int,
-		entryPrice uint32,
-	) risktypes.RiskParameters
 }
 
 // FundingKeeper provides funding-settlement primitives. Used by the
