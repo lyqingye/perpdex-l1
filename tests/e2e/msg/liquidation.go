@@ -9,10 +9,11 @@ import (
 	"github.com/perpdex/perpdex-l1/tests/e2e/common"
 )
 
-// Liquidate is the keeper-bot path: any signer can attempt to liquidate
-// `victim`'s position in `marketIndex` if their health crossed into
-// PARTIAL/FULL_LIQUIDATION. The closed position is credited to
-// `bot.AccountIndex` — set to 0 to fall back to the sender's master.
+// Liquidate is the keeper-bot path: any signer can attempt to
+// liquidate `victim`'s position in `marketIndex` when its health is
+// PARTIAL_LIQUIDATION. The close-out fills against the public order
+// book (no liquidator account); FULL/BANKRUPTCY paths flow through
+// EndBlocker LLP→ADL instead.
 func Liquidate(
 	app *perp.PerpDEXApp,
 	ctx sdk.Context,
@@ -23,11 +24,10 @@ func Liquidate(
 ) (*liquidationtypes.MsgLiquidateResponse, error) {
 	srv := liquidationkeeper.NewMsgServerImpl(app.LiquidationKeeper)
 	return srv.Liquidate(ctx, &liquidationtypes.MsgLiquidate{
-		Sender:                 bot.Address.String(),
-		VictimAccountIndex:     victim,
-		MarketIndex:            marketIndex,
-		BaseAmount:             baseAmount,
-		LiquidatorAccountIndex: bot.AccountIndex,
+		Sender:             bot.Address.String(),
+		VictimAccountIndex: victim,
+		MarketIndex:        marketIndex,
+		BaseAmount:         baseAmount,
 	})
 }
 

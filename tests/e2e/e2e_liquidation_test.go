@@ -127,7 +127,13 @@ func (s *LiquidationSuite) TestRejectsHealthyVictim() {
 
 // TestPartialLiquidation drops the oracle far enough to put the victim
 // into PARTIAL_LIQUIDATION (TAV < MM, but TAV >= CM). MsgLiquidate must
-// then succeed and close the position.
+// then synthesise a victim-owned `LIQUIDATION_ORDER + IOC + reduce_only`
+// at the zero price and consume opposing makers from the public book.
+//
+// The previous semantics (1:1 transfer of the victim's exposure to a
+// caller-supplied "liquidator account") are gone — this test now
+// asserts the orderbook flow that mirrors Lighter's
+// `InternalLiquidatePositionTx`.
 func (s *LiquidationSuite) TestPartialLiquidation() {
 	entry, qty := s.openHurtablePosition()
 	// Anchor oracle at entry first so the trade keeper risk-check during
@@ -141,20 +147,34 @@ func (s *LiquidationSuite) TestPartialLiquidation() {
 	s.SetOraclePrice(s.MarketIndex, distressedPrice, distressedPrice)
 
 	health := s.QueryHealthStatus(s.Users[0].AccountIndex)
-	s.Require().True(
-		health == perptypes.HealthPartialLiquidation || health == perptypes.HealthFullLiquidation,
-		"price drop must push victim into PARTIAL or FULL_LIQUIDATION (got %d)", health,
-	)
+	s.Require().Equal(perptypes.HealthPartialLiquidation, health,
+		"price drop must push victim into PARTIAL_LIQUIDATION (got %d)", health)
 
-	// Pre-fund the bot account so the post-trade risk-check on the
-	// taker (which inherits the victim's notional at zero_price) does
-	// not regress its own health.
+	// A counterparty bid sits on the book at the distressed mark.
+	// Lighter's IOC fills opposite makers at prices that improve on
+	// the zero-price floor for the victim; for a long victim the
+	// floor is at-or-below mark, so distressedPrice itself is enough.
+	// Pre-fund the bidder so its post-trade risk check passes when it
+	// inherits a fresh long at the fill price.
 	s.preFundLiquidator(s.Users[2].AccountIndex, math.NewInt(1_000_000_000_000_000)) // 1e15
+
+	bidResp := s.PlaceLimitOrder(s.Users[2], msg.OrderOpts{
+		MarketIndex:      s.MarketIndex,
+		IsAsk:            false,
+		Price:            distressedPrice,
+		BaseAmount:       qty,
+		ClientOrderIndex: 100,
+	})
+	s.Require().Equal(perptypes.OrderStatusOpen, bidResp.Status,
+		"counterparty bid must rest on the book to feed the IOC")
 
 	prePos := s.QueryPositionSize(s.Users[0].AccountIndex, s.MarketIndex)
 	s.Require().Equal(math.NewInt(int64(qty)), prePos)
 
-	s.Liquidate(s.Users[2], s.Users[0].AccountIndex, s.MarketIndex, qty)
+	// Anyone (here: Users[3]) can poke the engine — there is no
+	// liquidator account to credit anymore. The synthetic IOC is
+	// owned by the victim and matches against Users[2]'s bid.
+	s.Liquidate(s.Users[3], s.Users[0].AccountIndex, s.MarketIndex, qty)
 
 	postPos := s.QueryPositionSize(s.Users[0].AccountIndex, s.MarketIndex)
 	s.Require().True(postPos.LT(prePos),
@@ -163,16 +183,16 @@ func (s *LiquidationSuite) TestPartialLiquidation() {
 	s.Require().True(postPos.IsZero() || postPos.IsPositive(),
 		"position must not flip sign on a single liquidation step")
 
-	// The trade keeper's close-out semantics are a 1:1 transfer: the
-	// liquidator opens a NEW long at zero_price equal in magnitude to
-	// the victim's reduction. user2 ends up holding the same direction
-	// as the victim's pre-state.
-	botPos := s.QueryPositionSize(s.Users[2].AccountIndex, s.MarketIndex)
-	s.Require().True(botPos.IsPositive(),
-		"liquidator inherits the victim's long at zero_price (pos=%s)", botPos.String())
+	// The maker bid (Users[2]) absorbed the closed base; the sender
+	// of MsgLiquidate (Users[3]) does NOT inherit anything.
 	closed := prePos.Sub(postPos)
-	s.Require().Equal(closed, botPos,
-		"liquidator inheritance must equal the size closed on the victim")
+	bidderPos := s.QueryPositionSize(s.Users[2].AccountIndex, s.MarketIndex)
+	s.Require().Equal(closed, bidderPos,
+		"maker bid absorbs the same magnitude the victim closed")
+	senderPos := s.QueryPositionSize(s.Users[3].AccountIndex, s.MarketIndex)
+	s.Require().True(senderPos.IsZero(),
+		"the MsgLiquidate sender must NOT inherit any exposure (got=%s)",
+		senderPos.String())
 }
 
 // TestBankruptcyDeleverage pushes the victim past CM into BANKRUPTCY

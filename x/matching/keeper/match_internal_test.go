@@ -129,12 +129,27 @@ func (*stubMarket) SetMarketDetails(_ context.Context, _ markettypes.MarketDetai
 // and spot so existing tests can keep using `.fills` for cardinality
 // checks and `.fills[i].BaseAmount` for size checks without juggling
 // two slices.
+//
+// The liquidation-specific fields (ZeroPrice, LiquidationFeeBps,
+// LiquidationFeeRecipient, NoRiskCheck, TakerFee, MakerFee, Price)
+// are populated from PerpFill so the matching internal liquidation
+// tests can assert end-to-end fill plumbing without standing up the
+// real trade keeper.
 type stubFill struct {
-	MakerAccountIndex uint64
-	TakerAccountIndex uint64
-	MarketIndex       uint32
-	BaseAmount        uint64
-	IsTakerAsk        bool
+	MakerAccountIndex       uint64
+	TakerAccountIndex       uint64
+	MarketIndex             uint32
+	Price                   uint32
+	BaseAmount              uint64
+	IsTakerAsk              bool
+	TakerFee                uint32
+	MakerFee                uint32
+	ZeroPrice               uint32
+	LiquidationFeeBps       uint32
+	LiquidationFeeRecipient uint64
+	NoRiskCheck             bool
+	SkipMakerRiskCheck      bool
+	SkipTakerRiskCheck      bool
 }
 
 // stubTrade records every fill it sees and applies the position delta to
@@ -153,11 +168,20 @@ func (s *stubTrade) applyDelta(acc uint64, mkt uint32, delta int64) {
 
 func (s *stubTrade) ApplyPerpsMatching(_ context.Context, f tradekeeper.PerpFill) error {
 	s.fills = append(s.fills, stubFill{
-		MakerAccountIndex: f.MakerAccountIndex,
-		TakerAccountIndex: f.TakerAccountIndex,
-		MarketIndex:       f.MarketIndex,
-		BaseAmount:        f.BaseAmount,
-		IsTakerAsk:        f.IsTakerAsk,
+		MakerAccountIndex:       f.MakerAccountIndex,
+		TakerAccountIndex:       f.TakerAccountIndex,
+		MarketIndex:             f.MarketIndex,
+		Price:                   f.Price,
+		BaseAmount:              f.BaseAmount,
+		IsTakerAsk:              f.IsTakerAsk,
+		TakerFee:                f.TakerFee,
+		MakerFee:                f.MakerFee,
+		ZeroPrice:               f.ZeroPrice,
+		LiquidationFeeBps:       f.LiquidationFeeBps,
+		LiquidationFeeRecipient: f.LiquidationFeeRecipient,
+		NoRiskCheck:             f.NoRiskCheck,
+		SkipMakerRiskCheck:      f.SkipMakerRiskCheck,
+		SkipTakerRiskCheck:      f.SkipTakerRiskCheck,
 	})
 	base := int64(f.BaseAmount)
 	if f.IsTakerAsk {

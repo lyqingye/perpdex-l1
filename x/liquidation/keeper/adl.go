@@ -222,12 +222,36 @@ func (k Keeper) autoADL(
 			BaseAmount:        size.Uint64(),
 			IsTakerAsk:        takerIsAsk,
 			NoFee:             true,
-			// Counterparty is profitable + opposite-side; the
-			// settlement at the aligned mid is at least as good
-			// as their zero price so their TAV/MMR ratio cannot
-			// regress. We still skip the maker (victim) check
-			// because the close-out is mechanically improving.
-			SkipMakerRiskCheck: true,
+			// User-ADL: defense-in-depth — both bankrupt (maker)
+			// and counterparty (taker) go through
+			// IsValidRiskChange. The bankrupt check mirrors
+			// Lighter's `is_valid_risk_change` on bankrupt; the
+			// counterparty check is perpdex-stricter than Lighter
+			// (which does only a collateral-sufficiency assert on
+			// ADL deleveragers). The settlement at zeroPriceMid
+			// guarantees the counterparty's TAV/MMR cannot
+			// regress, so the check passes in normal flow but
+			// still catches pathological pricing. Both flags
+			// default to false here because we DO want both risk
+			// checks under user-ADL.
+		}
+		// Pre-trade collateral assert on the counterparty side only
+		// (mirrors the guard inside Deleverage's user-ADL branch).
+		// autoADL fills go through the engine directly because the
+		// settle price differs from the victim's zero price
+		// (`zeroPriceMid` covers the overlap of both sides' zero
+		// prices), so we can't reuse Deleverage as a wrapper.
+		// Replicating the assert keeps both deleverage codepaths
+		// consistently funding-aware. The bankrupt side is not
+		// asserted — see Deleverage docstring for rationale.
+		if err := k.preCheckCollateral(
+			ctx, c.AccountIndex, marketIdx, size.Uint64(), settlePrice,
+			true /*isTakerSide*/, takerIsAsk, "counterparty",
+		); err != nil {
+			sdkCtx.Logger().Info("liquidation: auto-adl skipped (insufficient counterparty collateral)",
+				"victim", victim, "market", marketIdx,
+				"counterparty", c.AccountIndex, "err", err)
+			continue
 		}
 		if err := k.tradeKeeper.ApplyPerpsMatching(ctx, fill); err != nil {
 			sdkCtx.Logger().Error("liquidation: auto-adl fill failed",

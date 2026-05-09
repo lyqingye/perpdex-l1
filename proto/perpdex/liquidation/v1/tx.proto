@@ -20,10 +20,6 @@ message MsgLiquidate {
   uint64 victim_account_index = 2;
   uint32 market_index = 3;
   uint64 base_amount = 4;
-  // liquidator_account_index is the perpdex account that absorbs the
-  // closed-out position. When 0 the keeper falls back to the sender's
-  // master account.
-  uint64 liquidator_account_index = 5;
 }
 message MsgLiquidateResponse {}
 

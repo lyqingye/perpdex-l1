@@ -19,12 +19,16 @@ import (
 //  1. Flag bookkeeping. Off-chain keeper bots use these flags to
 //     decide which (account, market) tuples to target with
 //     MsgLiquidate. PRE / HEALTHY accounts have their flags removed.
-//  2. FULL_LIQUIDATION: try to hand the position to the LLP / IF in
-//     ascending uPnL order, gated by "post-takeover IF risk does not
-//     breach IF IMR". Positions the IF cannot absorb fall through
-//     to ADL.
-//  3. BANKRUPTCY: skip the LLP path; ADL only. The chain caller
-//     (EndBlocker) bounds total work by Params.MaxAdlAttemptsPerBlock.
+//  2. FULL_LIQUIDATION + BANKRUPTCY: same waterfall — try to hand the
+//     position to the LLP / IF in ascending uPnL order, gated by
+//     "post-takeover IF risk does not breach IF IMR". Positions the
+//     LLP cannot absorb (IMR breach) fall through to ADL, where the
+//     deleverager-side pre-trade collateral assert
+//     (`is_deleverager_has_enough_cross_collateral`) skips
+//     under-capitalised candidates and advances to the next
+//     counterparty. Mirrors Lighter `internal_deleverage.rs`
+//     accepting both health states indistinctly. The chain caller
+//     bounds total work by Params.MaxAdlAttemptsPerBlock.
 func (k Keeper) EndBlocker(ctx context.Context) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	now := sdkCtx.BlockTime().UnixMilli()
@@ -135,7 +139,12 @@ func (k Keeper) processAccount(
 				}
 			}
 		}
-		_ = k.absorbNegativeCollateral(ctx, a.AccountIndex)
+		// No silent IF top-up of residual negative collateral.
+		// "Absorption" is the LLP/IF deleverage trade itself; if
+		// `tryLLPAbsorb` rejected (IMR breach) and `autoADL` could not
+		// find counterparties, the position simply remains and is re-
+		// evaluated next block — Lighter's design has no analogue of
+		// the previous `absorbNegativeCollateral` post-block sweep.
 		return false
 	}); err != nil {
 		return err
