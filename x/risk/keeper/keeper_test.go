@@ -170,27 +170,6 @@ func TestIsValidRiskChange_NoPreStateFailClosed(t *testing.T) {
 	require.False(t, ok2)
 }
 
-// TestGetPositionMarkValue_ZeroForEmptyPosition is a sanity check: empty
-// positions should not require a live oracle.
-func TestGetPositionMarkValue_ZeroForEmptyPosition(t *testing.T) {
-	ak := stubAccountKeeper{
-		acc: accounttypes.Account{AccountIndex: 1, Collateral: math.ZeroInt()},
-		pos: accounttypes.AccountPosition{
-			AccountIndex: 1, MarketIndex: 0,
-			Position:                 math.ZeroInt(),
-			EntryQuote:               math.ZeroInt(),
-			LastFundingRatePrefixSum: math.ZeroInt(),
-			AllocatedMargin:          math.ZeroInt(),
-		},
-	}
-	ok := stubOracleKeeper{err: oracletypes.ErrStalePrice}
-	k, ctx := makeKeeper(t, &ak, stubMarketKeeper{}, ok)
-
-	v, err := k.GetPositionMarkValue(ctx, 1, 0)
-	require.NoError(t, err)
-	require.True(t, v.IsZero())
-}
-
 // TestGetPositionZeroPrice_LongMarkBased verifies the new mark-based
 // zero-price formula for a long position. With M_i = 1% (100 bps),
 // TAV = 50, MMR = 100, mark = 1000:

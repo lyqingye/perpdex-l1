@@ -28,8 +28,8 @@ import (
 // The keeper code is split across several files for navigability:
 //
 //   - keeper.go   : Keeper struct + constructor + universally-shared
-//                   helpers (Authority, classifyHealth / classifyChange,
-//                   resolveMarkPrice).
+//                   helpers (Authority, ClassifyHealth / classifyChange,
+//                   resolveMarkPrice, GetMarkAndMarketDetails).
 //   - cross.go    : cross-margin aggregation (ComputeRiskInfo,
 //                   GetHealthStatus, GetTotalAccountValue,
 //                   GetAvailableCollateral, GetAvailableUsdcCollateral)
@@ -39,10 +39,9 @@ import (
 //                   IterateIsolatedPositions, isIsolatedRiskChangeValid).
 //   - risk_change.go : IsValidRiskChange + SnapshotPreRisk drivers that
 //                      stitch cross + isolated together.
-//   - position.go : per-position query helpers consumed by liquidation
-//                   (GetPositionMarkValue, GetPositionUnrealizedPnL).
-//   - liquidation.go : liquidation-specific math
-//                      (GetPositionZeroPrice, SimulateRiskAfterTakeover,
+//   - liquidation.go : liquidation-specific math + pure helpers
+//                      (ComputeZeroPrice, ApplySimulatedTakeover,
+//                      GetPositionZeroPrice, SimulateRiskAfterTakeover,
 //                      quoTowardZero).
 type Keeper struct {
 	cdc           codec.BinaryCodec
@@ -106,7 +105,6 @@ func (k Keeper) Authority() string { return k.authority }
 //
 // Centralised here to retire the identical guards previously inlined in
 // ComputeRiskInfo / ComputeIsolatedRisk / GetPositionZeroPrice /
-// GetPositionMarkValue / GetPositionUnrealizedPnL /
 // SimulateRiskAfterTakeover. Callers that need to attach extra account
 // context can wrap the returned error with errors.Wrapf themselves.
 func (k Keeper) resolveMarkPrice(ctx context.Context, marketIdx uint32) (uint32, error) {
@@ -134,8 +132,12 @@ func (k Keeper) GetMarkAndMarketDetails(ctx context.Context, marketIdx uint32) (
 	return mark, md, nil
 }
 
-// classifyHealth implements the 5-level state machine.
-func classifyHealth(p types.RiskParameters) uint32 {
+// ClassifyHealth implements the 5-level state machine. Exposed as a
+// pure free function so liquidation-side callers that already hold a
+// RiskParameters (from ComputeRiskInfo / ComputeIsolatedRisk) can
+// classify locally without going through GetHealthStatus, which would
+// re-run the aggregation under the hood.
+func ClassifyHealth(p types.RiskParameters) uint32 {
 	if p.TotalAccountValue.IsNegative() {
 		return perptypes.HealthBankruptcy
 	}
@@ -157,14 +159,14 @@ func classifyHealth(p types.RiskParameters) uint32 {
 // avoid silently accepting a change that may have introduced the
 // underwater state.
 func classifyChange(pre, post types.RiskParameters, missingPre bool) bool {
-	postClass := classifyHealth(post)
+	postClass := ClassifyHealth(post)
 	if postClass == perptypes.HealthHealthy {
 		return true
 	}
 	if missingPre {
 		return false
 	}
-	preClass := classifyHealth(pre)
+	preClass := ClassifyHealth(pre)
 	if postClass > preClass {
 		return false
 	}

@@ -12,6 +12,7 @@ import (
 	perptypes "github.com/perpdex/perpdex-l1/types"
 	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
 	"github.com/perpdex/perpdex-l1/x/liquidation/types"
+	risktypes "github.com/perpdex/perpdex-l1/x/risk/types"
 )
 
 // tryLLPAbsorb implements the Lighter "LLP picks up positions in
@@ -24,11 +25,17 @@ import (
 // caller skips ADL on a true return. False return means the LLP would
 // have breached IMR or is frozen / nonexistent — caller falls back to
 // ADL for the residual size.
+//
+// `victimRP` lets the EndBlocker hand in the cross / isolated risk
+// parameters it already fetched for `victim`, sparing one
+// ComputeRiskInfo / ComputeIsolatedRisk inside the ZP computation.
+// Pass nil when the caller has no cached state.
 func (k Keeper) tryLLPAbsorb(
 	ctx context.Context,
 	victim uint64,
 	marketIdx uint32,
 	attemptsLeft *uint32,
+	victimRP *risktypes.RiskParameters,
 ) (bool, error) {
 	if attemptsLeft == nil || *attemptsLeft == 0 {
 		return false, nil
@@ -70,21 +77,41 @@ func (k Keeper) tryLLPAbsorb(
 		return false, nil
 	}
 
+	// Prefetch market state so both ZP and the takeover simulation
+	// can reuse it. Each helper call below is pure math.
+	mark, md, err := k.riskKeeper.GetMarkAndMarketDetails(ctx, marketIdx)
+	if err != nil {
+		return false, err
+	}
+	victimParams, err := k.resolveVictimRiskParams(ctx, victim, marketIdx, pos, victimRP)
+	if err != nil {
+		return false, err
+	}
+	zeroPrice := k.riskKeeper.ComputeZeroPrice(pos, mark, md, victimParams.TotalAccountValue, victimParams.MaintenanceMarginRequirement)
+
 	// LLP IMR check: simulate the takeover and require the LLP's
 	// post-state TAV >= IMR. The takeover delta is the position the
 	// LLP will inherit (opposite sign of victim, since LLP is the
 	// taker that offsets the victim's exposure).
 	llpDelta := pos.Position.Neg()
-	zeroPrice, err := k.riskKeeper.GetPositionZeroPrice(ctx, victim, marketIdx)
+	llpPos, err := k.accountKeeper.GetPosition(ctx, perptypes.InsuranceFundOperatorAccountIdx, marketIdx)
 	if err != nil {
 		return false, err
 	}
-	postRP, err := k.riskKeeper.SimulateRiskAfterTakeover(
-		ctx, perptypes.InsuranceFundOperatorAccountIdx, marketIdx, llpDelta, zeroPrice,
-	)
+	if llpPos.MarginMode == perptypes.IsolatedMargin {
+		// LLP positions are always cross; refuse rather than silently
+		// mis-simulate. The fallback is ADL.
+		return false, nil
+	}
+	llpRi, err := k.riskKeeper.ComputeRiskInfo(ctx, perptypes.InsuranceFundOperatorAccountIdx)
 	if err != nil {
 		return false, err
 	}
+	llpCurrent := risktypes.RiskParameters{}
+	if llpRi.CurrentRiskParameters != nil {
+		llpCurrent = *llpRi.CurrentRiskParameters
+	}
+	postRP := k.riskKeeper.ApplySimulatedTakeover(llpPos, llpCurrent, mark, md, llpDelta, zeroPrice)
 	if postRP.TotalAccountValue.LT(postRP.InitialMarginRequirement) {
 		// LLP would breach its initial margin; reject and let ADL
 		// handle the position.
@@ -122,20 +149,33 @@ type rankedPosition struct {
 
 // rankVictimPositionsByUPnL returns the victim's non-zero positions
 // sorted by ascending unrealized PnL (worst first), as the Lighter
-// spec requires for LLP takeover.
+// spec requires for LLP takeover. Mark prices are fetched once per
+// distinct MarketIndex encountered and reused; uPnL is derived
+// directly from the iterated position via `pos.UnrealizedPnL(mark)`,
+// avoiding a second GetPosition round-trip.
 func (k Keeper) rankVictimPositionsByUPnL(ctx context.Context, victim uint64) ([]rankedPosition, error) {
 	out := []rankedPosition{}
+	marks := map[uint32]uint32{}
 	if err := k.accountKeeper.IterateAccountPositions(ctx, victim, func(pos accounttypes.AccountPosition) bool {
 		if pos.Position.IsZero() {
 			return false
 		}
-		uPnL, err := k.riskKeeper.GetPositionUnrealizedPnL(ctx, victim, pos.MarketIndex)
-		if err != nil {
-			// Stale oracle: skip this market in the ranking, the
-			// outer EndBlocker will surface the error separately.
-			return false
+		mark, ok := marks[pos.MarketIndex]
+		if !ok {
+			m, _, err := k.riskKeeper.GetMarkAndMarketDetails(ctx, pos.MarketIndex)
+			if err != nil {
+				// Stale oracle: skip this market in the ranking,
+				// the outer EndBlocker will surface the error
+				// separately.
+				return false
+			}
+			mark = m
+			marks[pos.MarketIndex] = mark
 		}
-		out = append(out, rankedPosition{MarketIndex: pos.MarketIndex, UnrealizedPnL: uPnL})
+		out = append(out, rankedPosition{
+			MarketIndex:   pos.MarketIndex,
+			UnrealizedPnL: pos.UnrealizedPnL(mark),
+		})
 		return false
 	}); err != nil {
 		return nil, err

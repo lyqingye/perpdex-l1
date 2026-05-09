@@ -175,13 +175,19 @@ func (stubMarket) GetMarketDetails(_ context.Context, idx uint32) (markettypes.M
 
 // stubRisk fully implements types.RiskKeeper. Per-account / per-market
 // values are pre-loaded by the test; nothing is computed dynamically.
+//
+// After the dedup refactor the abci.go EndBlocker drives status from
+// `ComputeRiskInfo` + `riskkeeper.ClassifyHealth` directly, so the
+// `status` / `statuses` / `isoStat` table inputs are projected back
+// into `RiskParameters` via `riskParamsForStatus` whenever the test
+// did not seed `cross[acc]` / `iso[(acc,mkt)]` explicitly.
 type stubRisk struct {
-	status   uint32                              // global default for GetHealthStatus
+	status   uint32                              // global default
 	statuses map[uint64]uint32                   // per-account override (falls back to `status`)
 	isoStat  map[[2]uint64]uint32                // (acc, market) -> isolated status
-	zero     map[[2]uint64]uint32                // (acc, market) -> zero price
-	uPnL     map[[2]uint64]math.Int              // (acc, market) -> uPnL
-	mark     map[[2]uint64]math.Int              // (acc, market) -> mark value
+	zero     map[[2]uint64]uint32                // (acc, market) -> zero price (overrides ComputeZeroPrice)
+	marks    map[uint32]uint32                   // market -> mark price (default 100)
+	mds      map[uint32]markettypes.MarketDetails
 	cross    map[uint64]risktypes.RiskParameters
 	iso      map[[2]uint64]risktypes.RiskParameters
 	postSim  map[uint64]risktypes.RiskParameters // simulated takeover post-state per account
@@ -192,8 +198,8 @@ func newStubRisk() *stubRisk {
 		statuses: map[uint64]uint32{},
 		isoStat:  map[[2]uint64]uint32{},
 		zero:     map[[2]uint64]uint32{},
-		uPnL:     map[[2]uint64]math.Int{},
-		mark:     map[[2]uint64]math.Int{},
+		marks:    map[uint32]uint32{},
+		mds:      map[uint32]markettypes.MarketDetails{},
 		cross:    map[uint64]risktypes.RiskParameters{},
 		iso:      map[[2]uint64]risktypes.RiskParameters{},
 		postSim:  map[uint64]risktypes.RiskParameters{},
@@ -201,16 +207,10 @@ func newStubRisk() *stubRisk {
 }
 
 func (s *stubRisk) GetHealthStatus(_ context.Context, acc uint64) (uint32, error) {
-	if v, ok := s.statuses[acc]; ok {
-		return v, nil
-	}
-	return s.status, nil
+	return s.crossStatusFor(acc), nil
 }
 func (s *stubRisk) GetIsolatedHealthStatus(_ context.Context, acc uint64, mkt uint32) (uint32, error) {
-	if v, ok := s.isoStat[[2]uint64{acc, uint64(mkt)}]; ok {
-		return v, nil
-	}
-	return perptypes.HealthHealthy, nil
+	return s.isoStatusFor(acc, mkt), nil
 }
 func (s *stubRisk) GetPositionZeroPrice(_ context.Context, acc uint64, mkt uint32) (uint32, error) {
 	if v, ok := s.zero[[2]uint64{acc, uint64(mkt)}]; ok {
@@ -218,17 +218,44 @@ func (s *stubRisk) GetPositionZeroPrice(_ context.Context, acc uint64, mkt uint3
 	}
 	return 10, nil
 }
-func (s *stubRisk) GetPositionMarkValue(_ context.Context, acc uint64, mkt uint32) (math.Int, error) {
-	if v, ok := s.mark[[2]uint64{acc, uint64(mkt)}]; ok {
-		return v, nil
-	}
-	return math.ZeroInt(), nil
+func (s *stubRisk) GetMarkAndMarketDetails(_ context.Context, mkt uint32) (uint32, markettypes.MarketDetails, error) {
+	return s.markFor(mkt), s.mdFor(mkt), nil
 }
-func (s *stubRisk) GetPositionUnrealizedPnL(_ context.Context, acc uint64, mkt uint32) (math.Int, error) {
-	if v, ok := s.uPnL[[2]uint64{acc, uint64(mkt)}]; ok {
-		return v, nil
+func (s *stubRisk) ComputeZeroPrice(
+	pos accounttypes.AccountPosition,
+	mark uint32,
+	_ markettypes.MarketDetails,
+	_, _ math.Int,
+) uint32 {
+	if v, ok := s.zero[[2]uint64{pos.AccountIndex, uint64(pos.MarketIndex)}]; ok {
+		return v
 	}
-	return math.ZeroInt(), nil
+	if mark == 0 {
+		return 10
+	}
+	return mark
+}
+func (s *stubRisk) ApplySimulatedTakeover(
+	pos accounttypes.AccountPosition,
+	_ risktypes.RiskParameters,
+	_ uint32,
+	_ markettypes.MarketDetails,
+	_ math.Int,
+	_ uint32,
+) risktypes.RiskParameters {
+	if v, ok := s.postSim[pos.AccountIndex]; ok {
+		return v
+	}
+	// Default: report a healthy post-takeover RP (TAV >> IMR) so
+	// tests that don't explicitly set postSim still let LLP absorb.
+	return risktypes.RiskParameters{
+		Collateral:                   math.NewInt(1_000_000),
+		CollateralWithFunding:        math.NewInt(1_000_000),
+		TotalAccountValue:            math.NewInt(1_000_000),
+		InitialMarginRequirement:     math.ZeroInt(),
+		MaintenanceMarginRequirement: math.ZeroInt(),
+		CloseOutMarginRequirement:    math.ZeroInt(),
+	}
 }
 func (s *stubRisk) SimulateRiskAfterTakeover(
 	_ context.Context, acc uint64, _ uint32, _ math.Int, _ uint32,
@@ -236,7 +263,6 @@ func (s *stubRisk) SimulateRiskAfterTakeover(
 	if v, ok := s.postSim[acc]; ok {
 		return v, nil
 	}
-	// Default: TAV >= IMR (LLP can absorb). Tests override per-account.
 	return risktypes.RiskParameters{
 		Collateral:                   math.NewInt(1_000_000),
 		CollateralWithFunding:        math.NewInt(1_000_000),
@@ -250,28 +276,80 @@ func (s *stubRisk) ComputeRiskInfo(_ context.Context, acc uint64) (risktypes.Ris
 	if v, ok := s.cross[acc]; ok {
 		return risktypes.RiskInfo{CrossRiskParameters: &v, CurrentRiskParameters: &v}, nil
 	}
-	zero := risktypes.RiskParameters{
-		Collateral:                   math.ZeroInt(),
-		CollateralWithFunding:        math.ZeroInt(),
-		TotalAccountValue:            math.ZeroInt(),
-		InitialMarginRequirement:     math.ZeroInt(),
-		MaintenanceMarginRequirement: math.ZeroInt(),
-		CloseOutMarginRequirement:    math.ZeroInt(),
-	}
-	return risktypes.RiskInfo{CrossRiskParameters: &zero, CurrentRiskParameters: &zero}, nil
+	rp := riskParamsForStatus(s.crossStatusFor(acc))
+	return risktypes.RiskInfo{CrossRiskParameters: &rp, CurrentRiskParameters: &rp}, nil
 }
 func (s *stubRisk) ComputeIsolatedRisk(_ context.Context, acc uint64, mkt uint32) (risktypes.RiskParameters, error) {
 	if v, ok := s.iso[[2]uint64{acc, uint64(mkt)}]; ok {
 		return v, nil
 	}
-	return risktypes.RiskParameters{
-		Collateral:                   math.ZeroInt(),
-		CollateralWithFunding:        math.ZeroInt(),
-		TotalAccountValue:            math.ZeroInt(),
-		InitialMarginRequirement:     math.ZeroInt(),
-		MaintenanceMarginRequirement: math.ZeroInt(),
-		CloseOutMarginRequirement:    math.ZeroInt(),
-	}, nil
+	return riskParamsForStatus(s.isoStatusFor(acc, mkt)), nil
+}
+
+func (s *stubRisk) crossStatusFor(acc uint64) uint32 {
+	if v, ok := s.statuses[acc]; ok {
+		return v
+	}
+	return s.status
+}
+
+func (s *stubRisk) isoStatusFor(acc uint64, mkt uint32) uint32 {
+	if v, ok := s.isoStat[[2]uint64{acc, uint64(mkt)}]; ok {
+		return v
+	}
+	return perptypes.HealthHealthy
+}
+
+func (s *stubRisk) markFor(mkt uint32) uint32 {
+	if v, ok := s.marks[mkt]; ok {
+		return v
+	}
+	return 100
+}
+
+func (s *stubRisk) mdFor(mkt uint32) markettypes.MarketDetails {
+	if v, ok := s.mds[mkt]; ok {
+		return v
+	}
+	return markettypes.MarketDetails{MarketIndex: mkt}
+}
+
+// riskParamsForStatus projects a status enum into a RiskParameters that
+// `riskkeeper.ClassifyHealth` round-trips back to the same status. Used
+// by the stub when tests seed `status` / `statuses` / `isoStat` tables
+// instead of full RP fixtures.
+func riskParamsForStatus(status uint32) risktypes.RiskParameters {
+	z := math.ZeroInt()
+	rp := risktypes.RiskParameters{
+		Collateral:                   z,
+		CollateralWithFunding:        z,
+		TotalAccountValue:            z,
+		InitialMarginRequirement:     z,
+		MaintenanceMarginRequirement: z,
+		CloseOutMarginRequirement:    z,
+	}
+	switch status {
+	case perptypes.HealthBankruptcy:
+		rp.TotalAccountValue = math.NewInt(-1)
+	case perptypes.HealthFullLiquidation:
+		// TAV < CMR triggers FULL.
+		rp.TotalAccountValue = math.ZeroInt()
+		rp.InitialMarginRequirement = math.NewInt(3)
+		rp.MaintenanceMarginRequirement = math.NewInt(2)
+		rp.CloseOutMarginRequirement = math.NewInt(1)
+	case perptypes.HealthPartialLiquidation:
+		// CMR <= TAV < MMR triggers PARTIAL.
+		rp.TotalAccountValue = math.NewInt(1)
+		rp.InitialMarginRequirement = math.NewInt(3)
+		rp.MaintenanceMarginRequirement = math.NewInt(2)
+		rp.CloseOutMarginRequirement = math.ZeroInt()
+	case perptypes.HealthPreLiquidation:
+		// MMR <= TAV < IMR triggers PRE.
+		rp.TotalAccountValue = math.NewInt(1)
+		rp.InitialMarginRequirement = math.NewInt(2)
+	default: // Healthy: TAV >= IMR (all zero satisfies).
+	}
+	return rp
 }
 
 type stubTrade struct {
@@ -600,7 +678,10 @@ func TestEndBlocker_FullLiquidationPrefersLLPThenADL(t *testing.T) {
 	}
 	rk := newStubRisk()
 	rk.status = perptypes.HealthFullLiquidation
-	rk.uPnL[[2]uint64{100, 0}] = math.NewInt(-100) // worst uPnL
+	// uPnL ordering is derived from `pos.UnrealizedPnL(mark)`; victim
+	// 100 holds (Position=50, EntryQuote=5000), so at the stub default
+	// mark=100 the uPnL is -4500 (loss). Single position → trivially
+	// the worst.
 	tk := &stubTrade{}
 	matchk := newStubMatching()
 	k, ctx := newKeeper(t, ak, rk, tk, matchk)
@@ -658,8 +739,8 @@ func TestLLPAbsorb_StopsWhenLLPWouldBreachIMR(t *testing.T) {
 	}
 	rk := newStubRisk()
 	rk.status = perptypes.HealthFullLiquidation
-	rk.uPnL[[2]uint64{100, 0}] = math.NewInt(-100)
-	rk.uPnL[[2]uint64{999, 0}] = math.NewInt(50) // counterparty in profit
+	// At default mark=100: victim 100 (50, 5000) → uPnL=-4500 (worst).
+	// Cand 999 (-10, -2000) → uPnL=1000 (>0, qualifies as ADL cand).
 	rk.zero[[2]uint64{100, 0}] = 100
 	rk.zero[[2]uint64{999, 0}] = 110
 	// LLP would breach IMR: simulate post-state with TAV < IMR.
@@ -721,7 +802,7 @@ func TestEndBlocker_BankruptcyFallsThroughToADLWhenLLPBreachesIMR(t *testing.T) 
 	rk.status = perptypes.HealthBankruptcy
 	rk.zero[[2]uint64{100, 0}] = 100
 	rk.zero[[2]uint64{999, 0}] = 110
-	rk.uPnL[[2]uint64{999, 0}] = math.NewInt(50)
+	// At default mark=100, cand 999 (-10, -2000) → uPnL=1000 (>0).
 	rk.postSim[perptypes.InsuranceFundOperatorAccountIdx] = risktypes.RiskParameters{
 		Collateral:                   math.NewInt(100),
 		TotalAccountValue:            math.NewInt(50),
@@ -782,11 +863,12 @@ func TestAutoADL_RequiresZeroPriceAlignment(t *testing.T) {
 	}
 	rk := newStubRisk()
 	rk.status = perptypes.HealthBankruptcy
-	rk.zero[[2]uint64{100, 0}] = 100   // victim long ZP = 100 (need ZP_cand >= 100)
-	rk.zero[[2]uint64{201, 0}] = 90    // misaligned: ZP < victim — skip
-	rk.zero[[2]uint64{202, 0}] = 105   // aligned
-	rk.uPnL[[2]uint64{201, 0}] = math.NewInt(50)
-	rk.uPnL[[2]uint64{202, 0}] = math.NewInt(50)
+	rk.zero[[2]uint64{100, 0}] = 100 // victim long ZP = 100 (need ZP_cand >= 100)
+	rk.zero[[2]uint64{201, 0}] = 90  // misaligned: ZP < victim — skip
+	rk.zero[[2]uint64{202, 0}] = 105 // aligned
+	// At default mark=100, both shorts (Position=-10, EQ=-1500) and
+	// (Position=-20, EQ=-2500) have positive uPnL (500 each), so they
+	// both qualify as ADL candidates.
 	tk := &stubTrade{}
 	matchk := newStubMatching()
 	k, ctx := newKeeper(t, ak, rk, tk, matchk)
@@ -829,8 +911,10 @@ func TestADLQueueBuilder_LeverageAndUPnLRanking(t *testing.T) {
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	rk := newStubRisk()
-	rk.uPnL[[2]uint64{201, 0}] = math.NewInt(100)
-	rk.uPnL[[2]uint64{202, 0}] = math.NewInt(100)
+	// Set mark=110 so both candidates' positions (Pos=10, EQ=1000)
+	// realise uPnL=100 (=10*110-1000), giving an equal uPnLRatio so
+	// ranking is decided purely by leverage (higher first).
+	rk.marks[0] = 110
 	rk.cross[201] = risktypes.RiskParameters{
 		Collateral:                   math.NewInt(10_000_000),
 		TotalAccountValue:            math.NewInt(10_000_000),
@@ -1029,7 +1113,10 @@ func TestEndBlocker_BankruptResidueStaysWithVictim(t *testing.T) {
 	rk := newStubRisk()
 	rk.status = perptypes.HealthBankruptcy
 	rk.zero[[2]uint64{100, 0}] = 100
-	rk.uPnL[[2]uint64{100, 0}] = math.NewInt(-300) // worst-uPnL so LLP is offered first
+	// Single victim position; ranking is trivial. At default
+	// mark=100 the (50, -10000) long realises uPnL = +15000 (offset
+	// by entry sign convention), but only the sign matters for the
+	// "LLP first" preflight here.
 	rk.postSim[perptypes.InsuranceFundOperatorAccountIdx] = risktypes.RiskParameters{
 		Collateral:                   math.NewInt(100),
 		TotalAccountValue:            math.NewInt(50),
@@ -1148,6 +1235,12 @@ func TestDeleverage_InsufficientDeleveragerCollateral_UserADL(t *testing.T) {
 	}
 	rk := newStubRisk()
 	rk.status = perptypes.HealthFullLiquidation
+	// Force a low zeroPrice (10) for the bankrupt so closing the
+	// deleverager's short at that price realises ≈ -4500 in the
+	// engine's "Collateral += PnL" frame (deleverager has 0 cushion).
+	// Without this override the stub falls through to mark=100, at
+	// which point the close PnL is zero and the assert short-circuits.
+	rk.zero[[2]uint64{100, 0}] = 10
 	tk := &stubTrade{}
 	matchk := newStubMatching()
 	k, ctx := newKeeper(t, ak, rk, tk, matchk)
@@ -1181,14 +1274,17 @@ func TestEndBlocker_ADLCandidateInsufficientCollateral_AdvancesToNext(t *testing
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	// First candidate (highest profit rank) has zero cushion and
-	// will trip the deleverager-side collateral assert.
+	// will trip the deleverager-side collateral assert. Picks a
+	// slightly more negative EntryQuote (-2200) than 202 (-2000) so
+	// that at mark=100 its uPnL ratio (=1200/2200) exceeds 202's
+	// (=1000/2000) and it ranks first in BuildADLQueue.
 	ak.accounts[201] = accounttypes.Account{
 		AccountIndex: 201, AccountType: perptypes.MasterAccountType,
 		Collateral: math.NewInt(0),
 	}
 	ak.pos[[2]uint64{201, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 201, MarketIndex: 0,
-		Position: math.NewInt(-10), EntryQuote: math.NewInt(-2_000),
+		Position: math.NewInt(-10), EntryQuote: math.NewInt(-2_200),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	// Second candidate has a deep cushion and matches.
@@ -1206,11 +1302,6 @@ func TestEndBlocker_ADLCandidateInsufficientCollateral_AdvancesToNext(t *testing
 	// counterparties (201, 202) are healthy.
 	rk.status = perptypes.HealthHealthy
 	rk.statuses[100] = perptypes.HealthFullLiquidation
-	// Both candidates aligned + in profit; rank by uPnL — 201 ranks
-	// first (higher profit) and exercises the "advance on
-	// insufficient collateral" path.
-	rk.uPnL[[2]uint64{201, 0}] = math.NewInt(200)
-	rk.uPnL[[2]uint64{202, 0}] = math.NewInt(100)
 	rk.zero[[2]uint64{100, 0}] = 100
 	rk.zero[[2]uint64{201, 0}] = 110
 	rk.zero[[2]uint64{202, 0}] = 110

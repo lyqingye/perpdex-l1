@@ -42,13 +42,19 @@ type MarketKeeper interface {
 type RiskKeeper interface {
 	GetHealthStatus(ctx context.Context, accountIdx uint64) (uint32, error)
 	GetIsolatedHealthStatus(ctx context.Context, accountIdx uint64, marketIdx uint32) (uint32, error)
+	// GetPositionZeroPrice is retained for the gRPC query path and as
+	// a one-shot wrapper for callers that don't already hold (pos,
+	// mark, md, ri/iso). Hot-loop liquidation callers should prefer
+	// `riskkeeper.ComputeZeroPrice` directly with their cached state
+	// to avoid the wrapper's redundant fetches.
 	GetPositionZeroPrice(ctx context.Context, accountIdx uint64, marketIdx uint32) (uint32, error)
-	GetPositionMarkValue(ctx context.Context, accountIdx uint64, marketIdx uint32) (math.Int, error)
-	GetPositionUnrealizedPnL(ctx context.Context, accountIdx uint64, marketIdx uint32) (math.Int, error)
 	// SimulateRiskAfterTakeover previews the cross risk parameters
 	// the account would have if it inherited `delta` of `marketIdx`
 	// settled at `entryPrice`. Used by the LLP / insurance fund
 	// take-over routine to enforce "post.IM <= post.TAV".
+	//
+	// Hot-loop callers that already have (pos, current_rp, mark, md)
+	// should prefer `riskkeeper.ApplySimulatedTakeover` directly.
 	SimulateRiskAfterTakeover(
 		ctx context.Context,
 		accountIdx uint64,
@@ -60,6 +66,32 @@ type RiskKeeper interface {
 	// queue ranking and the LLP IMR check.
 	ComputeRiskInfo(ctx context.Context, accountIdx uint64) (risktypes.RiskInfo, error)
 	ComputeIsolatedRisk(ctx context.Context, accountIdx uint64, marketIdx uint32) (risktypes.RiskParameters, error)
+	// GetMarkAndMarketDetails returns the live mark price and
+	// MarketDetails row for `marketIdx` in a single round-trip.
+	// liquidation hot loops prefetch this once per (market) so
+	// per-candidate iterations avoid redundant oracle / market keeper
+	// reads.
+	GetMarkAndMarketDetails(ctx context.Context, marketIdx uint32) (uint32, markettypes.MarketDetails, error)
+	// ComputeZeroPrice / ApplySimulatedTakeover are pure math; they
+	// are exposed via the interface so liquidation callers reuse
+	// state already fetched by the EndBlocker (mark/md/risk-info)
+	// instead of going through the GetPositionZeroPrice /
+	// SimulateRiskAfterTakeover wrappers, which re-fetch the same
+	// inputs under the hood.
+	ComputeZeroPrice(
+		pos accounttypes.AccountPosition,
+		mark uint32,
+		md markettypes.MarketDetails,
+		tav, mmr math.Int,
+	) uint32
+	ApplySimulatedTakeover(
+		pos accounttypes.AccountPosition,
+		current risktypes.RiskParameters,
+		mark uint32,
+		md markettypes.MarketDetails,
+		delta math.Int,
+		entryPrice uint32,
+	) risktypes.RiskParameters
 }
 
 // FundingKeeper provides funding-settlement primitives. Used by the

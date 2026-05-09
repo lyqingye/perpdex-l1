@@ -11,6 +11,8 @@ import (
 	perptypes "github.com/perpdex/perpdex-l1/types"
 	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
 	"github.com/perpdex/perpdex-l1/x/liquidation/types"
+	riskkeeper "github.com/perpdex/perpdex-l1/x/risk/keeper"
+	risktypes "github.com/perpdex/perpdex-l1/x/risk/types"
 )
 
 // EndBlocker walks every account and processes liquidation in three
@@ -64,14 +66,30 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 // Cross positions are flagged / liquidated against the cross health;
 // each isolated position is flagged / liquidated against its own
 // per-market isolated health.
+//
+// Risk-info dedup: this function fetches `ComputeRiskInfo(account)`
+// (cross) and per-isolated-position `ComputeIsolatedRisk` directly
+// instead of going through `GetHealthStatus` /
+// `GetIsolatedHealthStatus` wrappers (which throw away the
+// RiskParameters and force `tryLLPAbsorb` / `autoADL` to recompute
+// them). The cached params are passed down to those callees so they
+// don't re-aggregate the account's positions per (account, market)
+// triggered.
 func (k Keeper) processAccount(
 	ctx context.Context, a accounttypes.Account, height int64, now int64,
 	attemptsLeft *uint32, candCap uint32,
 ) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
-	crossStatus, err := k.riskKeeper.GetHealthStatus(ctx, a.AccountIndex)
+	crossRi, err := k.riskKeeper.ComputeRiskInfo(ctx, a.AccountIndex)
 	if err != nil {
 		return err
+	}
+	var crossRP *risktypes.RiskParameters
+	crossStatus := perptypes.HealthHealthy
+	if crossRi.CurrentRiskParameters != nil {
+		rp := *crossRi.CurrentRiskParameters
+		crossRP = &rp
+		crossStatus = riskkeeper.ClassifyHealth(rp)
 	}
 
 	// PARTIAL+: write a flag for every CROSS market this account holds
@@ -88,17 +106,24 @@ func (k Keeper) processAccount(
 			return false
 		}
 		marketIdx := pos.MarketIndex
-		// Determine the relevant status (cross vs isolated).
+		// Determine the relevant status (cross vs isolated). For
+		// isolated, fetch the params directly so they can be reused
+		// by the LLP / ADL callees below; for cross, reuse the
+		// already-aggregated `crossRP`.
 		var posStatus uint32
+		var victimRP *risktypes.RiskParameters
 		if pos.MarginMode == perptypes.IsolatedMargin {
-			s, err := k.riskKeeper.GetIsolatedHealthStatus(ctx, a.AccountIndex, marketIdx)
+			rp, err := k.riskKeeper.ComputeIsolatedRisk(ctx, a.AccountIndex, marketIdx)
 			if err != nil {
 				iterErr = err
 				return true
 			}
-			posStatus = s
+			isoRP := rp
+			victimRP = &isoRP
+			posStatus = riskkeeper.ClassifyHealth(rp)
 		} else {
 			posStatus = crossStatus
+			victimRP = crossRP
 		}
 
 		if posStatus == perptypes.HealthHealthy || posStatus == perptypes.HealthPreLiquidation {
@@ -127,13 +152,13 @@ func (k Keeper) processAccount(
 			return false
 		}
 		if posStatus == perptypes.HealthFullLiquidation || posStatus == perptypes.HealthBankruptcy {
-			absorbed, err := k.tryLLPAbsorb(ctx, a.AccountIndex, marketIdx, attemptsLeft)
+			absorbed, err := k.tryLLPAbsorb(ctx, a.AccountIndex, marketIdx, attemptsLeft, victimRP)
 			if err != nil {
 				sdkCtx.Logger().Error("liquidation: LLP absorb failed",
 					"victim", a.AccountIndex, "market", marketIdx, "err", err)
 			}
 			if !absorbed {
-				if err := k.autoADL(ctx, a.AccountIndex, marketIdx, candCap, attemptsLeft); err != nil {
+				if err := k.autoADL(ctx, a.AccountIndex, marketIdx, candCap, attemptsLeft, victimRP); err != nil {
 					sdkCtx.Logger().Error("liquidation: auto-adl failed",
 						"victim", a.AccountIndex, "market", marketIdx, "err", err)
 				}

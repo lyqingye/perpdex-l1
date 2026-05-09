@@ -11,6 +11,7 @@ import (
 	perptypes "github.com/perpdex/perpdex-l1/types"
 	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
 	"github.com/perpdex/perpdex-l1/x/liquidation/types"
+	risktypes "github.com/perpdex/perpdex-l1/x/risk/types"
 	tradekeeper "github.com/perpdex/perpdex-l1/x/trade/keeper"
 )
 
@@ -47,6 +48,13 @@ type ADLCandidate struct {
 //
 // Cost: O(N_accounts) per call. The caller is expected to apply the
 // `MaxAdlCandidatesPerVictim` cap from Params before invoking this.
+//
+// Per-call prefetch: `mark` and `md` are fetched ONCE outside the
+// per-candidate loop so each candidate only triggers (a) GetPosition,
+// (b) ComputeRiskInfo / ComputeIsolatedRisk for leverage + ZP, and (c)
+// the pure ZP math via `riskKeeper.ComputeZeroPrice`. Previously each
+// candidate re-pulled the position three times, the mark price twice,
+// market details once, and the risk aggregate twice.
 func (k Keeper) BuildADLQueue(
 	ctx context.Context,
 	marketIdx uint32,
@@ -55,6 +63,10 @@ func (k Keeper) BuildADLQueue(
 ) ([]ADLCandidate, error) {
 	if limit == 0 {
 		return nil, nil
+	}
+	mark, md, err := k.riskKeeper.GetMarkAndMarketDetails(ctx, marketIdx)
+	if err != nil {
+		return nil, err
 	}
 
 	out := make([]ADLCandidate, 0, limit)
@@ -76,32 +88,33 @@ func (k Keeper) BuildADLQueue(
 		if pos.Position.IsPositive() != oppositeIsLong {
 			return false
 		}
-		uPnL, err := k.riskKeeper.GetPositionUnrealizedPnL(ctx, a.AccountIndex, marketIdx)
-		if err != nil || !uPnL.IsPositive() {
-			// Losing or unknown-PnL positions are not candidates.
+		uPnL := pos.UnrealizedPnL(mark)
+		if !uPnL.IsPositive() {
+			// Losing or zero-PnL positions are not candidates.
 			return false
 		}
-		// Leverage is computed on the cross aggregate.
-		ri, err := k.riskKeeper.ComputeRiskInfo(ctx, a.AccountIndex)
-		if err != nil {
-			return false
-		}
-		leverage := math.OneInt()
-		if ri.CrossRiskParameters != nil {
-			collateral := ri.CrossRiskParameters.Collateral
-			notional := ri.CrossRiskParameters.InitialMarginRequirement
-			// Approximate notional from IM: notional = IM *
-			// MarginTick / IMF. We don't know IMF here without the
-			// market, so use IM directly as a proxy — both
-			// numerator and denominator will scale by the same
-			// constant for the same account.
-			if collateral.IsNil() || !collateral.IsPositive() {
-				collateral = math.OneInt()
+
+		// Leverage + (TAV, MMR) for ZP both come from the same risk
+		// scope; pick cross or isolated based on the position's
+		// margin mode and reuse the result for both.
+		var rp risktypes.RiskParameters
+		if pos.MarginMode == perptypes.IsolatedMargin {
+			ip, err := k.riskKeeper.ComputeIsolatedRisk(ctx, a.AccountIndex, marketIdx)
+			if err != nil {
+				return false
 			}
-			if !notional.IsZero() {
-				leverage = notional.Mul(math.NewInt(int64(perptypes.MarginTick))).Quo(collateral)
+			rp = ip
+		} else {
+			ri, err := k.riskKeeper.ComputeRiskInfo(ctx, a.AccountIndex)
+			if err != nil {
+				return false
 			}
+			if ri.CrossRiskParameters == nil {
+				return false
+			}
+			rp = *ri.CrossRiskParameters
 		}
+		leverage := computeLeverage(rp)
 		// uPnL_ratio = uPnL / max(|entry_quote|, 1).
 		entryAbs := pos.EntryQuote.Abs()
 		if !entryAbs.IsPositive() {
@@ -110,10 +123,7 @@ func (k Keeper) BuildADLQueue(
 		uPnLRatio := uPnL.Mul(math.NewInt(int64(perptypes.MarginTick))).Quo(entryAbs)
 		// Score = leverage * uPnL_ratio (in MarginTick^2 units).
 		score := leverage.Mul(uPnLRatio)
-		zp, err := k.riskKeeper.GetPositionZeroPrice(ctx, a.AccountIndex, marketIdx)
-		if err != nil {
-			return false
-		}
+		zp := k.riskKeeper.ComputeZeroPrice(pos, mark, md, rp.TotalAccountValue, rp.MaintenanceMarginRequirement)
 		out = append(out, ADLCandidate{
 			AccountIndex:  a.AccountIndex,
 			PositionSize:  pos.Position,
@@ -140,6 +150,22 @@ func (k Keeper) BuildADLQueue(
 	return out, nil
 }
 
+// computeLeverage approximates an account's leverage from its risk
+// parameters. We use IM as a proxy for notional (notional = IM *
+// MarginTick / IMF), so the ratio collapses to IM/Collateral scaled by
+// MarginTick. Both numerator and denominator scale by the same
+// constant for the same account — fine for ranking purposes.
+func computeLeverage(rp risktypes.RiskParameters) math.Int {
+	collateral := rp.Collateral
+	if collateral.IsNil() || !collateral.IsPositive() {
+		collateral = math.OneInt()
+	}
+	if rp.InitialMarginRequirement.IsZero() {
+		return math.OneInt()
+	}
+	return rp.InitialMarginRequirement.Mul(math.NewInt(int64(perptypes.MarginTick))).Quo(collateral)
+}
+
 // autoADL closes a portion of the victim's `marketIdx` position against
 // the top-ranked counterparties returned by BuildADLQueue.
 //
@@ -153,12 +179,18 @@ func (k Keeper) BuildADLQueue(
 //
 // `attemptsLeft` is decremented per successful fill and shared across
 // all victims in the block.
+//
+// `victimRP` lets the EndBlocker hand in the cross / isolated risk
+// parameters it already fetched for `victim`, avoiding a redundant
+// ComputeRiskInfo / ComputeIsolatedRisk inside the ZP computation.
+// Pass nil when the caller has no cached state (msg-server entry, etc.).
 func (k Keeper) autoADL(
 	ctx context.Context,
 	victim uint64,
 	marketIdx uint32,
 	candCap uint32,
 	attemptsLeft *uint32,
+	victimRP *risktypes.RiskParameters,
 ) error {
 	if attemptsLeft == nil || *attemptsLeft == 0 {
 		return nil
@@ -170,10 +202,16 @@ func (k Keeper) autoADL(
 	if pos.Position.IsZero() {
 		return nil
 	}
-	victimZP, err := k.riskKeeper.GetPositionZeroPrice(ctx, victim, marketIdx)
+	mark, md, err := k.riskKeeper.GetMarkAndMarketDetails(ctx, marketIdx)
 	if err != nil {
 		return err
 	}
+	rp, err := k.resolveVictimRiskParams(ctx, victim, marketIdx, pos, victimRP)
+	if err != nil {
+		return err
+	}
+	victimZP := k.riskKeeper.ComputeZeroPrice(pos, mark, md, rp.TotalAccountValue, rp.MaintenanceMarginRequirement)
+
 	// Victim long  → counterparties must be short to offset.
 	// Victim short → counterparties must be long.
 	oppositeIsLong := pos.Position.IsNegative()
@@ -273,6 +311,34 @@ func (k Keeper) autoADL(
 		*attemptsLeft--
 	}
 	return nil
+}
+
+// resolveVictimRiskParams returns the cross or isolated RiskParameters
+// the ZP computation needs. When `cached` is non-nil it's used
+// verbatim, sparing a redundant ComputeRiskInfo / ComputeIsolatedRisk
+// call. Centralised so autoADL / tryLLPAbsorb / Liquidate / Deleverage
+// don't each re-implement the cross-vs-isolated branch.
+func (k Keeper) resolveVictimRiskParams(
+	ctx context.Context,
+	victim uint64,
+	marketIdx uint32,
+	pos accounttypes.AccountPosition,
+	cached *risktypes.RiskParameters,
+) (risktypes.RiskParameters, error) {
+	if cached != nil {
+		return *cached, nil
+	}
+	if pos.MarginMode == perptypes.IsolatedMargin {
+		return k.riskKeeper.ComputeIsolatedRisk(ctx, victim, marketIdx)
+	}
+	ri, err := k.riskKeeper.ComputeRiskInfo(ctx, victim)
+	if err != nil {
+		return risktypes.RiskParameters{}, err
+	}
+	if ri.CrossRiskParameters == nil {
+		return risktypes.RiskParameters{}, nil
+	}
+	return *ri.CrossRiskParameters, nil
 }
 
 // zeroPriceMid returns the integer midpoint of two zero prices. Both
