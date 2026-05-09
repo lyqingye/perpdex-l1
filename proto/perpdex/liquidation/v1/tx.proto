@@ -20,12 +20,6 @@ message MsgLiquidate {
   uint64 victim_account_index = 2;
   uint32 market_index = 3;
   uint64 base_amount = 4;
-  // Field 5 (`liquidator_account_index`) was removed when partial
-  // liquidation moved to the public-orderbook IOC flow that has no
-  // counterparty account. `reserved` blocks reuse so older clients
-  // don't get confused by the field number.
-  reserved 5;
-  reserved "liquidator_account_index";
 }
 message MsgLiquidateResponse {}
 
