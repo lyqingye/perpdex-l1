@@ -88,7 +88,7 @@ func (k Keeper) BuildADLQueue(
 			return false
 		}
 		// Only opposite-side positions can offset a victim's close-out.
-		if pos.BaseSize.IsPositive() != oppositeIsLong {
+		if pos.IsLong() != oppositeIsLong {
 			return false
 		}
 		uPnL := pos.UnrealizedPnL(snap.MarkPrice)
@@ -197,14 +197,14 @@ func (k Keeper) autoADL(
 
 	// Victim long  → counterparties must be short to offset.
 	// Victim short → counterparties must be long.
-	oppositeIsLong := pos.BaseSize.IsNegative()
+	oppositeIsLong := !pos.IsLong()
 	cands, err := k.BuildADLQueue(ctx, marketIdx, oppositeIsLong, candCap)
 	if err != nil {
 		return err
 	}
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	remaining := pos.BaseSize.Abs()
-	takerIsAsk := pos.BaseSize.IsNegative()
+	takerIsAsk := !pos.IsLong()
 	for _, c := range cands {
 		if *attemptsLeft == 0 || remaining.IsZero() {
 			break

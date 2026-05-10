@@ -221,7 +221,7 @@ func (k Keeper) Deleverage(ctx context.Context, victim uint64, marketIdx uint32,
 		if dPos.BaseSize.IsZero() {
 			return types.ErrInvalidADLCounterparty.Wrap("deleverager has no position")
 		}
-		if dPos.BaseSize.IsNegative() == pos.BaseSize.IsNegative() {
+		if dPos.IsLong() == pos.IsLong() {
 			return types.ErrInvalidADLCounterparty.Wrap("deleverager is on the same side as victim")
 		}
 		absDeleverager := dPos.BaseSize.Abs()
@@ -233,7 +233,7 @@ func (k Keeper) Deleverage(ctx context.Context, victim uint64, marketIdx uint32,
 		}
 	}
 
-	takerIsAsk := pos.BaseSize.IsNegative()
+	takerIsAsk := !pos.IsLong()
 
 	// Pre-trade collateral assert on the deleverager side only
 	// (Lighter `is_deleverager_has_enough_cross_collateral` parity).

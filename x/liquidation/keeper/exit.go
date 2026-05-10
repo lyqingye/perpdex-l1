@@ -46,7 +46,7 @@ func (k Keeper) ApplyExitPosition(ctx context.Context, marketIdx uint32) error {
 		if baseAmount == 0 {
 			return false
 		}
-		takerIsAsk := pos.BaseSize.IsNegative()
+		takerIsAsk := !pos.IsLong()
 		if err := k.tradeKeeper.ApplyPerpsMatching(ctx, tradekeeper.PerpFill{
 			MakerAccountIndex: a.AccountIndex,
 			TakerAccountIndex: perptypes.InsuranceFundOperatorAccountIdx,

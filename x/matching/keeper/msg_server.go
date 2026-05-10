@@ -325,9 +325,9 @@ func (m msgServer) reduceOnlyCompatible(ctx context.Context, accIdx uint64, mark
 	}
 	// Taker ask (seller) must be long; taker bid (buyer) must be short.
 	if isAsk {
-		return pos.BaseSize.IsPositive(), nil
+		return pos.IsLong(), nil
 	}
-	return pos.BaseSize.IsNegative(), nil
+	return !pos.IsLong(), nil
 }
 
 func (m msgServer) CancelOrder(ctx context.Context, msg *types.MsgCancelOrder) (*types.MsgCancelOrderResponse, error) {
