@@ -44,10 +44,21 @@ func (p AccountPosition) IsLong() bool {
 	return !p.BaseSize.IsNegative()
 }
 
+// IsShort reports whether the position is short. Zero base size is not short.
+func (p AccountPosition) IsShort() bool {
+	return p.BaseSize.IsNegative()
+}
+
 // OpeningIsBid reports whether opening this position uses the bid side. Zero
 // base size is treated as bid.
 func (p AccountPosition) OpeningIsBid() bool {
 	return p.IsLong()
+}
+
+// OpeningIsAsk reports whether opening this position uses the ask side. Zero
+// base size is not ask.
+func (p AccountPosition) OpeningIsAsk() bool {
+	return p.IsShort()
 }
 
 // Notional returns |base_size| * mark. Returns ZeroInt when either the base

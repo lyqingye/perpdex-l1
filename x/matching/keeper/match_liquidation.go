@@ -64,9 +64,9 @@ func (k Keeper) MatchLiquidationOrder(
 	}
 	// Long victim closes via SELL (taker ask); short victim closes
 	// via BUY (taker bid). Mirrors x/liquidation/keeper/liquidate.go
-	// `takerIsAsk := !pos.IsLong()` semantics — except here the
-	// victim is the taker, so the sign flips.
-	isAsk := pos.IsLong()
+	// `takerIsAsk := pos.OpeningIsAsk()` semantics — except here the
+	// victim is the taker, so the close side matches its opening bid side.
+	isAsk := pos.OpeningIsBid()
 	// Cap requested base by victim's |position| so the synthetic
 	// reduce-only IOC cannot ask for more than the close-out size.
 	abs := pos.BaseSize.Abs().Uint64()

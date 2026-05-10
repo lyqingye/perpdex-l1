@@ -233,7 +233,7 @@ func (k Keeper) Deleverage(ctx context.Context, victim uint64, marketIdx uint32,
 		}
 	}
 
-	takerIsAsk := !pos.IsLong()
+	takerIsAsk := pos.OpeningIsAsk()
 
 	// Pre-trade collateral assert on the deleverager side only
 	// (Lighter `is_deleverager_has_enough_cross_collateral` parity).

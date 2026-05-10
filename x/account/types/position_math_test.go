@@ -58,30 +58,32 @@ func TestAccountPosition_DirectionHelpers(t *testing.T) {
 	tests := []struct {
 		name string
 		size math.Int
-		want bool
+		long bool
 	}{
 		{
 			name: "short_size_is_not_long_and_opens_ask",
 			size: math.NewInt(-1),
-			want: false,
+			long: false,
 		},
 		{
 			name: "zero_size_is_long_and_opens_bid",
 			size: math.ZeroInt(),
-			want: true,
+			long: true,
 		},
 		{
 			name: "positive_size_is_long_and_opens_bid",
 			size: math.NewInt(1),
-			want: true,
+			long: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			p := types.AccountPosition{BaseSize: tt.size}
-			require.Equal(t, tt.want, p.IsLong())
-			require.Equal(t, tt.want, p.OpeningIsBid())
+			require.Equal(t, tt.long, p.IsLong())
+			require.Equal(t, !tt.long, p.IsShort())
+			require.Equal(t, tt.long, p.OpeningIsBid())
+			require.Equal(t, !tt.long, p.OpeningIsAsk())
 		})
 	}
 }

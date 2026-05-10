@@ -133,7 +133,7 @@ func pureComputeZeroPrice(
 	adjustment := quoTowardZero(num, denom)
 
 	var zp math.Int
-	if !pos.IsLong() {
+	if pos.IsShort() {
 		// Short: zeroPrice = mark * (1 + M·TAV/MMR).
 		zp = markBig.Add(adjustment)
 	} else {

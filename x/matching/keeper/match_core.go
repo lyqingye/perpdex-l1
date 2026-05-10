@@ -95,8 +95,8 @@ func (k Keeper) nextMaker(
 				return orderbooktypes.OrderBookEntry{}, false, err
 			}
 			if pos.BaseSize.IsZero() ||
-				(taker.IsAsk && !pos.IsLong()) ||
-				(!taker.IsAsk && pos.IsLong()) {
+				(taker.IsAsk && !pos.OpeningIsBid()) ||
+				(!taker.IsAsk && !pos.OpeningIsAsk()) {
 				return orderbooktypes.OrderBookEntry{}, false, nil
 			}
 		}
@@ -111,8 +111,8 @@ func (k Keeper) nextMaker(
 				return orderbooktypes.OrderBookEntry{}, false, err
 			}
 			if pos.BaseSize.IsZero() ||
-				(taker.IsAsk && pos.IsLong()) ||
-				(!taker.IsAsk && !pos.IsLong()) {
+				(taker.IsAsk && pos.OpeningIsBid()) ||
+				(!taker.IsAsk && pos.OpeningIsAsk()) {
 				if _, err := k.bookKeeper.EvictMakerOrder(ctx, best.OrderIndex, perptypes.OrderStatusCancelled); err != nil {
 					return orderbooktypes.OrderBookEntry{}, false, err
 				}

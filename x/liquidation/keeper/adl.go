@@ -197,14 +197,14 @@ func (k Keeper) autoADL(
 
 	// Victim long  → counterparties must be short to offset.
 	// Victim short → counterparties must be long.
-	oppositeIsLong := !pos.IsLong()
+	oppositeIsLong := pos.IsShort()
 	cands, err := k.BuildADLQueue(ctx, marketIdx, oppositeIsLong, candCap)
 	if err != nil {
 		return err
 	}
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	remaining := pos.BaseSize.Abs()
-	takerIsAsk := !pos.IsLong()
+	takerIsAsk := pos.OpeningIsAsk()
 	for _, c := range cands {
 		if *attemptsLeft == 0 || remaining.IsZero() {
 			break
