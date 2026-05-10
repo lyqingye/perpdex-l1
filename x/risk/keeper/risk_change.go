@@ -56,7 +56,7 @@ func (k Keeper) IsValidRiskChangeFrom(ctx context.Context, accountIdx uint64, pr
 		iterErr error
 	)
 	if err := k.accountKeeper.IterateAccountPositions(ctx, accountIdx, func(pos accounttypes.AccountPosition) bool {
-		if pos.Position.IsZero() || pos.MarginMode != perptypes.IsolatedMargin {
+		if pos.BaseSize.IsZero() || pos.MarginMode != perptypes.IsolatedMargin {
 			return false
 		}
 		preIso, hasPre := pre.IsolatedFor(pos.MarketIndex)
@@ -98,7 +98,7 @@ func (k Keeper) SnapshotRisk(ctx context.Context, accountIdx uint64) (types.PreR
 	}
 	var iterErr error
 	if err := k.accountKeeper.IterateAccountPositions(ctx, accountIdx, func(pos accounttypes.AccountPosition) bool {
-		if pos.Position.IsZero() || pos.MarginMode != perptypes.IsolatedMargin {
+		if pos.BaseSize.IsZero() || pos.MarginMode != perptypes.IsolatedMargin {
 			return false
 		}
 		rp, err := k.ComputeIsolatedRisk(ctx, accountIdx, pos.MarketIndex)

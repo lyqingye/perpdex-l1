@@ -72,10 +72,10 @@ func (k Keeper) tryLLPAbsorb(
 	if err != nil {
 		return false, err
 	}
-	if snap.Position.Position.IsZero() {
+	if snap.Position.BaseSize.IsZero() {
 		return false, nil
 	}
-	size := snap.Position.Position.Abs()
+	size := snap.Position.BaseSize.Abs()
 	if !size.IsPositive() {
 		return false, nil
 	}
@@ -93,7 +93,7 @@ func (k Keeper) tryLLPAbsorb(
 	// non-nil error rather than swallowing it as a silent fallback —
 	// processAccount logs the misconfiguration and still falls
 	// through to autoADL.
-	llpDelta := snap.Position.Position.Neg()
+	llpDelta := snap.Position.BaseSize.Neg()
 	postRP, err := k.riskKeeper.SimulateRiskAfterTakeover(
 		ctx, perptypes.InsuranceFundOperatorAccountIdx, marketIdx, llpDelta, snap.ZeroPrice,
 	)
@@ -148,7 +148,7 @@ func (k Keeper) rankVictimPositionsByUPnL(ctx context.Context, victim uint64) ([
 	out := []rankedPosition{}
 	marks := map[uint32]uint32{}
 	if err := k.accountKeeper.IterateAccountPositions(ctx, victim, func(pos accounttypes.AccountPosition) bool {
-		if pos.Position.IsZero() {
+		if pos.BaseSize.IsZero() {
 			return false
 		}
 		mark, ok := marks[pos.MarketIndex]

@@ -49,7 +49,7 @@ func (s *stubAccount) GetPosition(_ context.Context, acc uint64, mkt uint32) (ac
 	return accounttypes.AccountPosition{
 		AccountIndex:             acc,
 		MarketIndex:              mkt,
-		Position:                 math.ZeroInt(),
+		BaseSize:                 math.ZeroInt(),
 		EntryQuote:               math.ZeroInt(),
 		LastFundingRatePrefixSum: math.ZeroInt(),
 		AllocatedMargin:          math.ZeroInt(),
@@ -61,7 +61,7 @@ func (s *stubAccount) setPosition(acc uint64, mkt uint32, size int64) {
 	s.pos[key(acc, mkt)] = accounttypes.AccountPosition{
 		AccountIndex:             acc,
 		MarketIndex:              mkt,
-		Position:                 math.NewInt(size),
+		BaseSize:                 math.NewInt(size),
 		EntryQuote:               math.ZeroInt(),
 		LastFundingRatePrefixSum: math.ZeroInt(),
 		AllocatedMargin:          math.ZeroInt(),
@@ -162,7 +162,7 @@ type stubTrade struct {
 
 func (s *stubTrade) applyDelta(acc uint64, mkt uint32, delta int64) {
 	cur, _ := s.ak.GetPosition(context.Background(), acc, mkt)
-	cur.Position = cur.Position.Add(math.NewInt(delta))
+	cur.BaseSize = cur.BaseSize.Add(math.NewInt(delta))
 	s.ak.pos[key(acc, mkt)] = cur
 }
 

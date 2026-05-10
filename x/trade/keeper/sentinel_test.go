@@ -195,7 +195,7 @@ func TestSentinel_ApplyPerpsMatching_MakerInvalidPosition(t *testing.T) {
 	maxPos := math.NewIntFromUint64(perptypes.MaxPositionSize)
 	require.NoError(t, ak.SetPosition(ctx, accounttypes.AccountPosition{
 		AccountIndex: makerIdx, MarketIndex: 1,
-		Position:                 maxPos,
+		BaseSize:                 maxPos,
 		EntryQuote:               math.ZeroInt(),
 		LastFundingRatePrefixSum: math.ZeroInt(),
 		AllocatedMargin:          math.ZeroInt(),
@@ -232,7 +232,7 @@ func TestSentinel_ApplyPerpsMatching_TakerInvalidPosition(t *testing.T) {
 	maxPos := math.NewIntFromUint64(perptypes.MaxPositionSize)
 	require.NoError(t, ak.SetPosition(ctx, accounttypes.AccountPosition{
 		AccountIndex: takerIdx, MarketIndex: 1,
-		Position:                 maxPos,
+		BaseSize:                 maxPos,
 		EntryQuote:               math.ZeroInt(),
 		LastFundingRatePrefixSum: math.ZeroInt(),
 		AllocatedMargin:          math.ZeroInt(),
@@ -242,7 +242,7 @@ func TestSentinel_ApplyPerpsMatching_TakerInvalidPosition(t *testing.T) {
 	// big enough to absorb a +1 taker buy without itself overflowing).
 	require.NoError(t, ak.SetPosition(ctx, accounttypes.AccountPosition{
 		AccountIndex: makerIdx, MarketIndex: 1,
-		Position:                 math.NewInt(-1_000_000),
+		BaseSize:                 math.NewInt(-1_000_000),
 		EntryQuote:               math.ZeroInt(),
 		LastFundingRatePrefixSum: math.ZeroInt(),
 		AllocatedMargin:          math.ZeroInt(),
@@ -284,7 +284,7 @@ func TestSentinel_ApplyPerpsMatching_MakerInsufficientCollateral(t *testing.T) {
 	require.NoError(t, ak.SetAccount(ctx, accounttypes.Account{AccountIndex: takerIdx, Collateral: math.NewInt(1_000_000)}))
 	require.NoError(t, ak.SetPosition(ctx, accounttypes.AccountPosition{
 		AccountIndex: makerIdx, MarketIndex: 1,
-		Position:                 math.ZeroInt(),
+		BaseSize:                 math.ZeroInt(),
 		EntryQuote:               math.ZeroInt(),
 		LastFundingRatePrefixSum: math.ZeroInt(),
 		AllocatedMargin:          math.ZeroInt(),
@@ -321,7 +321,7 @@ func TestSentinel_ApplyPerpsMatching_TakerInsufficientCollateral(t *testing.T) {
 	require.NoError(t, ak.SetAccount(ctx, accounttypes.Account{AccountIndex: takerIdx, Collateral: math.NewInt(1_000_000)}))
 	require.NoError(t, ak.SetPosition(ctx, accounttypes.AccountPosition{
 		AccountIndex: takerIdx, MarketIndex: 1,
-		Position:                 math.ZeroInt(),
+		BaseSize:                 math.ZeroInt(),
 		EntryQuote:               math.ZeroInt(),
 		LastFundingRatePrefixSum: math.ZeroInt(),
 		AllocatedMargin:          math.ZeroInt(),
@@ -361,7 +361,7 @@ func TestSentinel_IsolatedMarginDelta_OpenIncreasesAllocation(t *testing.T) {
 	require.NoError(t, ak.SetAccount(ctx, accounttypes.Account{AccountIndex: takerIdx, Collateral: math.NewInt(1_000_000)}))
 	require.NoError(t, ak.SetPosition(ctx, accounttypes.AccountPosition{
 		AccountIndex: takerIdx, MarketIndex: 1,
-		Position:                 math.ZeroInt(),
+		BaseSize:                 math.ZeroInt(),
 		EntryQuote:               math.ZeroInt(),
 		LastFundingRatePrefixSum: math.ZeroInt(),
 		AllocatedMargin:          math.ZeroInt(),
@@ -403,7 +403,7 @@ func TestSentinel_IsolatedMarginDelta_CloseReleasesAllocation(t *testing.T) {
 	// Pre-load taker as a long isolated position with allocated 100.
 	require.NoError(t, ak.SetPosition(ctx, accounttypes.AccountPosition{
 		AccountIndex: takerIdx, MarketIndex: 1,
-		Position:                 math.NewInt(10),
+		BaseSize:                 math.NewInt(10),
 		EntryQuote:               math.NewInt(10 * 100), // entry = 100
 		LastFundingRatePrefixSum: math.ZeroInt(),
 		AllocatedMargin:          math.NewInt(100),
@@ -419,7 +419,7 @@ func TestSentinel_IsolatedMarginDelta_CloseReleasesAllocation(t *testing.T) {
 
 	pos, err := ak.GetPosition(ctx, takerIdx, 1)
 	require.NoError(t, err)
-	require.True(t, pos.Position.IsZero(), "position must close")
+	require.True(t, pos.BaseSize.IsZero(), "position must close")
 	require.True(t, pos.AllocatedMargin.IsZero(),
 		"all allocated_margin must release on close")
 	acc, err := ak.GetAccount(ctx, takerIdx)
@@ -449,7 +449,7 @@ func TestSentinel_IsolatedMarginDelta_DecreaseProportional(t *testing.T) {
 	require.NoError(t, ak.SetAccount(ctx, accounttypes.Account{AccountIndex: takerIdx, Collateral: math.NewInt(0)}))
 	require.NoError(t, ak.SetPosition(ctx, accounttypes.AccountPosition{
 		AccountIndex: takerIdx, MarketIndex: 1,
-		Position:                 math.NewInt(10),
+		BaseSize:                 math.NewInt(10),
 		EntryQuote:               math.NewInt(1000),
 		LastFundingRatePrefixSum: math.ZeroInt(),
 		AllocatedMargin:          math.NewInt(200),
@@ -464,7 +464,7 @@ func TestSentinel_IsolatedMarginDelta_DecreaseProportional(t *testing.T) {
 
 	pos, err := ak.GetPosition(ctx, takerIdx, 1)
 	require.NoError(t, err)
-	require.Equal(t, "5", pos.Position.String())
+	require.Equal(t, "5", pos.BaseSize.String())
 	require.Equal(t, "100", pos.AllocatedMargin.String(),
 		"50%% size reduction with no PnL should halve allocated_margin")
 	acc, err := ak.GetAccount(ctx, takerIdx)
@@ -495,7 +495,7 @@ func TestSentinel_IsolatedMarginDelta_FlipReMarginsToPositionRequirement(t *test
 	require.NoError(t, ak.SetAccount(ctx, accounttypes.Account{AccountIndex: takerIdx, Collateral: math.NewInt(0)}))
 	require.NoError(t, ak.SetPosition(ctx, accounttypes.AccountPosition{
 		AccountIndex: takerIdx, MarketIndex: 1,
-		Position:                 math.NewInt(5),
+		BaseSize:                 math.NewInt(5),
 		EntryQuote:               math.NewInt(500),
 		LastFundingRatePrefixSum: math.ZeroInt(),
 		AllocatedMargin:          math.NewInt(50),
@@ -510,7 +510,7 @@ func TestSentinel_IsolatedMarginDelta_FlipReMarginsToPositionRequirement(t *test
 
 	pos, err := ak.GetPosition(ctx, takerIdx, 1)
 	require.NoError(t, err)
-	require.Equal(t, "-5", pos.Position.String())
+	require.Equal(t, "-5", pos.BaseSize.String())
 	require.Equal(t, "50", pos.AllocatedMargin.String(),
 		"flip with zero PnL should leave allocated == position_requirement")
 	acc, err := ak.GetAccount(ctx, takerIdx)

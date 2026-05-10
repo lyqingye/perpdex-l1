@@ -8,8 +8,8 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
-	"github.com/perpdex/perpdex-l1/x/matching/types"
 	markettypes "github.com/perpdex/perpdex-l1/x/market/types"
+	"github.com/perpdex/perpdex-l1/x/matching/types"
 	orderbooktypes "github.com/perpdex/perpdex-l1/x/orderbook/types"
 )
 
@@ -320,14 +320,14 @@ func (m msgServer) reduceOnlyCompatible(ctx context.Context, accIdx uint64, mark
 	if err != nil {
 		return false, err
 	}
-	if pos.Position.IsZero() {
+	if pos.BaseSize.IsZero() {
 		return false, nil
 	}
 	// Taker ask (seller) must be long; taker bid (buyer) must be short.
 	if isAsk {
-		return pos.Position.IsPositive(), nil
+		return pos.OpeningIsBid(), nil
 	}
-	return pos.Position.IsNegative(), nil
+	return pos.OpeningIsAsk(), nil
 }
 
 func (m msgServer) CancelOrder(ctx context.Context, msg *types.MsgCancelOrder) (*types.MsgCancelOrderResponse, error) {

@@ -47,7 +47,7 @@ func (q Querier) PositionPendingFunding(ctx context.Context, req *types.QueryPos
 	if err != nil {
 		return nil, status.Error(codes.NotFound, err.Error())
 	}
-	pending := pos.Position.Mul(d.FundingRatePrefixSum.Sub(pos.LastFundingRatePrefixSum)).Quo(math.NewInt(perptypes.FundingRateTick))
+	pending := pos.BaseSize.Mul(d.FundingRatePrefixSum.Sub(pos.LastFundingRatePrefixSum)).Quo(math.NewInt(perptypes.FundingRateTick))
 	return &types.QueryPositionPendingFundingResponse{Pending: pending}, nil
 }
 

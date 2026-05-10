@@ -187,7 +187,7 @@ func (e Engine) calculateIsolatedMarginDelta(ctx context.Context, res *positionC
 	allocated := newPos.AllocatedMargin
 
 	// case 1: new position closed → release positive allocated_margin.
-	if newPos.Position.IsZero() {
+	if newPos.BaseSize.IsZero() {
 		if allocated.IsPositive() {
 			return allocated.Neg(), nil
 		}
@@ -198,7 +198,7 @@ func (e Engine) calculateIsolatedMarginDelta(ctx context.Context, res *positionC
 	if err != nil {
 		return math.ZeroInt(), err
 	}
-	posReq := md.InitialMargin(newPos.Position.Abs(), mark)
+	posReq := md.InitialMargin(newPos.BaseSize.Abs(), mark)
 
 	// case 2: side flipped → re-margin to position_requirement at the
 	// new uPnL-adjusted account state.
@@ -212,8 +212,8 @@ func (e Engine) calculateIsolatedMarginDelta(ctx context.Context, res *positionC
 		newMV := newPos.MarketValue(mark)
 
 		var targetValue math.Int
-		oldAbs := oldPos.Position.Abs()
-		newAbs := newPos.Position.Abs()
+		oldAbs := oldPos.BaseSize.Abs()
+		newAbs := newPos.BaseSize.Abs()
 		if oldMV.IsPositive() && !oldAbs.IsZero() {
 			// ceil_div(oldMV * |new|, |old|).
 			num := oldMV.Mul(newAbs)
