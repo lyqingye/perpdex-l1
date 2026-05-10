@@ -84,11 +84,11 @@ func (k Keeper) BuildADLQueue(
 			return false
 		}
 		pos := snap.Position
-		if pos.Position.IsZero() {
+		if pos.Size_.IsZero() {
 			return false
 		}
 		// Only opposite-side positions can offset a victim's close-out.
-		if pos.Position.IsPositive() != oppositeIsLong {
+		if pos.Size_.IsPositive() != oppositeIsLong {
 			return false
 		}
 		uPnL := pos.UnrealizedPnL(snap.MarkPrice)
@@ -107,7 +107,7 @@ func (k Keeper) BuildADLQueue(
 		score := leverage.Mul(uPnLRatio)
 		out = append(out, ADLCandidate{
 			AccountIndex:  a.AccountIndex,
-			PositionSize:  pos.Position,
+			PositionSize:  pos.Size_,
 			UnrealizedPnL: uPnL,
 			ZeroPrice:     snap.ZeroPrice,
 			Leverage:      leverage,
@@ -183,7 +183,7 @@ func (k Keeper) autoADL(
 		return err
 	}
 	pos := snap.Position
-	if pos.Position.IsZero() {
+	if pos.Size_.IsZero() {
 		return nil
 	}
 	if status := snap.Risk.HealthStatus(); status != perptypes.HealthFullLiquidation &&
@@ -197,14 +197,14 @@ func (k Keeper) autoADL(
 
 	// Victim long  → counterparties must be short to offset.
 	// Victim short → counterparties must be long.
-	oppositeIsLong := pos.Position.IsNegative()
+	oppositeIsLong := pos.Size_.IsNegative()
 	cands, err := k.BuildADLQueue(ctx, marketIdx, oppositeIsLong, candCap)
 	if err != nil {
 		return err
 	}
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
-	remaining := pos.Position.Abs()
-	takerIsAsk := pos.Position.IsNegative()
+	remaining := pos.Size_.Abs()
+	takerIsAsk := pos.Size_.IsNegative()
 	for _, c := range cands {
 		if *attemptsLeft == 0 || remaining.IsZero() {
 			break

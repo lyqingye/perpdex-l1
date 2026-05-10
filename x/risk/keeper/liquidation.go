@@ -63,7 +63,7 @@ func (k Keeper) GetLiquidationRiskSnapshot(
 	if err != nil {
 		return types.LiquidationRiskSnapshot{}, err
 	}
-	if pos.Position.IsZero() {
+	if pos.Size_.IsZero() {
 		return types.LiquidationRiskSnapshot{Position: pos}, nil
 	}
 	mark, md, err := k.GetMarkAndMarketDetails(ctx, marketIdx)
@@ -116,7 +116,7 @@ func pureComputeZeroPrice(
 	md markettypes.MarketDetails,
 	tav, mmr math.Int,
 ) uint32 {
-	if pos.Position.IsZero() || mark == 0 {
+	if pos.Size_.IsZero() || mark == 0 {
 		return 0
 	}
 	markBig := math.NewIntFromUint64(uint64(mark))
@@ -133,7 +133,7 @@ func pureComputeZeroPrice(
 	adjustment := quoTowardZero(num, denom)
 
 	var zp math.Int
-	if pos.Position.IsNegative() {
+	if pos.Size_.IsNegative() {
 		// Short: zeroPrice = mark * (1 + M·TAV/MMR).
 		zp = markBig.Add(adjustment)
 	} else {
@@ -184,7 +184,7 @@ func (k Keeper) GetZeroPriceSnapshot(
 	if err != nil {
 		return types.ZeroPriceSnapshot{}, err
 	}
-	if pos.Position.IsZero() {
+	if pos.Size_.IsZero() {
 		return types.ZeroPriceSnapshot{Position: pos}, nil
 	}
 	mark, md, err := k.GetMarkAndMarketDetails(ctx, marketIdx)
@@ -288,7 +288,7 @@ func pureApplySimulatedTakeover(
 	}
 	cur := current
 	// Subtract the OLD contribution of (account, market) from cur.
-	if !pos.Position.IsZero() {
+	if !pos.Size_.IsZero() {
 		cur.InitialMarginRequirement = cur.InitialMarginRequirement.Sub(pos.InitialMargin(mark, md))
 		cur.MaintenanceMarginRequirement = cur.MaintenanceMarginRequirement.Sub(pos.MaintenanceMargin(mark, md))
 		cur.CloseOutMarginRequirement = cur.CloseOutMarginRequirement.Sub(pos.CloseOutMargin(mark, md))
@@ -299,7 +299,7 @@ func pureApplySimulatedTakeover(
 	// simulation cannot drift from the actual settlement maths.
 	res := pos.ApplyFill(delta, entryPrice)
 	newPos := res.Position
-	if !newPos.Position.IsZero() {
+	if !newPos.Size_.IsZero() {
 		cur.InitialMarginRequirement = cur.InitialMarginRequirement.Add(newPos.InitialMargin(mark, md))
 		cur.MaintenanceMarginRequirement = cur.MaintenanceMarginRequirement.Add(newPos.MaintenanceMargin(mark, md))
 		cur.CloseOutMarginRequirement = cur.CloseOutMarginRequirement.Add(newPos.CloseOutMargin(mark, md))

@@ -39,14 +39,14 @@ func (k Keeper) ApplyExitPosition(ctx context.Context, marketIdx uint32) error {
 			return false
 		}
 		pos, err := k.accountKeeper.GetPosition(ctx, a.AccountIndex, marketIdx)
-		if err != nil || pos.Position.IsZero() {
+		if err != nil || pos.Size_.IsZero() {
 			return false
 		}
-		baseAmount := pos.Position.Abs().Uint64()
+		baseAmount := pos.Size_.Abs().Uint64()
 		if baseAmount == 0 {
 			return false
 		}
-		takerIsAsk := pos.Position.IsNegative()
+		takerIsAsk := pos.Size_.IsNegative()
 		if err := k.tradeKeeper.ApplyPerpsMatching(ctx, tradekeeper.PerpFill{
 			MakerAccountIndex: a.AccountIndex,
 			TakerAccountIndex: perptypes.InsuranceFundOperatorAccountIdx,

@@ -89,7 +89,7 @@ func (k Keeper) processAccount(
 	// Walk only persisted position rows.
 	var iterErr error
 	if err := k.accountKeeper.IterateAccountPositions(ctx, a.AccountIndex, func(pos accounttypes.AccountPosition) bool {
-		if pos.Position.IsZero() {
+		if pos.Size_.IsZero() {
 			return false
 		}
 		marketIdx := pos.MarketIndex

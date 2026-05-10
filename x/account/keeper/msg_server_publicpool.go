@@ -213,7 +213,7 @@ func (m msgServer) assertPoolEmpty(ctx context.Context, pool types.Account) erro
 	// Walk positions for this pool index.
 	var firstNonZero *types.AccountPosition
 	if err := m.IterateAccountPositions(ctx, pool.AccountIndex, func(p types.AccountPosition) bool {
-		if !p.Position.IsZero() {
+		if !p.Size_.IsZero() {
 			pos := p
 			firstNonZero = &pos
 			return true

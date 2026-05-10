@@ -10,8 +10,8 @@ import (
 // NormalizeIntFields rewrites every nil math.Int on the position to
 // math.ZeroInt().
 func (p *AccountPosition) NormalizeIntFields() {
-	if p.Position.IsNil() {
-		p.Position = math.ZeroInt()
+	if p.Size_.IsNil() {
+		p.Size_ = math.ZeroInt()
 	}
 	if p.EntryQuote.IsNil() {
 		p.EntryQuote = math.ZeroInt()
@@ -25,7 +25,7 @@ func (p *AccountPosition) NormalizeIntFields() {
 }
 
 // IsSameSide returns true iff `a` and `b` are both non-zero and share the
-// same sign. The perp domain uses it to classify whether `Position` and
+// same sign. The perp domain uses it to classify whether `Size` and
 // `Delta` point the same way (increase vs decrease vs flip), so a zero
 // input returns false rather than true — "no direction" is not "same
 // direction".
@@ -39,14 +39,24 @@ func IsSameSide(a, b math.Int) bool {
 	return a.IsNegative() == b.IsNegative()
 }
 
-// Notional returns |position| * mark. Returns ZeroInt when either the
-// position size is zero or `markPrice` is zero. Pure value receiver,
-// no I/O.
+// IsLong reports whether the position is long. Zero size is treated as long.
+func (p AccountPosition) IsLong() bool {
+	return !p.Size_.IsNegative()
+}
+
+// OpeningIsBid reports whether opening this position uses the bid side. Zero
+// size is treated as bid.
+func (p AccountPosition) OpeningIsBid() bool {
+	return p.IsLong()
+}
+
+// Notional returns |size| * mark. Returns ZeroInt when either the position
+// size is zero or `markPrice` is zero. Pure value receiver, no I/O.
 func (p AccountPosition) Notional(markPrice uint32) math.Int {
-	if p.Position.IsZero() || markPrice == 0 {
+	if p.Size_.IsZero() || markPrice == 0 {
 		return math.ZeroInt()
 	}
-	return p.Position.Abs().Mul(math.NewIntFromUint64(uint64(markPrice)))
+	return p.Size_.Abs().Mul(math.NewIntFromUint64(uint64(markPrice)))
 }
 
 // MarginRequirement returns Notional * fractionBps / MarginTick. `fractionBps`
@@ -73,7 +83,7 @@ func (p AccountPosition) MarginRequirement(markPrice uint32, fractionBps uint32)
 // `default_initial_margin_fraction`. Only meaningful for perp markets; spot
 // markets are settled by the spot keeper and never reach here.
 func (p AccountPosition) InitialMargin(markPrice uint32, md markettypes.MarketDetails) math.Int {
-	return md.InitialMargin(p.Position.Abs(), markPrice)
+	return md.InitialMargin(p.Size_.Abs(), markPrice)
 }
 
 // MaintenanceMargin returns the position's MM at `markPrice` using the market's
@@ -88,14 +98,14 @@ func (p AccountPosition) CloseOutMargin(markPrice uint32, md markettypes.MarketD
 	return p.MarginRequirement(markPrice, md.CloseOutMarginFraction)
 }
 
-// UnrealizedPnL returns position * mark - entry_quote at `markPrice`. Sign is
+// UnrealizedPnL returns size * mark - entry_quote at `markPrice`. Sign is
 // positive when the position is in profit. Returns ZeroInt for empty positions
 // or when the mark is zero.
 func (p AccountPosition) UnrealizedPnL(markPrice uint32) math.Int {
-	if p.Position.IsZero() || markPrice == 0 {
+	if p.Size_.IsZero() || markPrice == 0 {
 		return math.ZeroInt()
 	}
-	return p.Position.Mul(math.NewIntFromUint64(uint64(markPrice))).Sub(p.EntryQuote)
+	return p.Size_.Mul(math.NewIntFromUint64(uint64(markPrice))).Sub(p.EntryQuote)
 }
 
 // MarketValue returns AllocatedMargin + UnrealizedPnL(markPrice).
@@ -110,7 +120,7 @@ func (p AccountPosition) MarketValue(markPrice uint32) math.Int {
 // FillResult describes the post-trade snapshot produced by ApplyFill. Pure
 // value type:
 //
-//   - Position is the post-trade position (updated Position size and
+//   - Position is the post-trade position (updated Size and
 //     EntryQuote); all other fields (AccountIndex / MarketIndex /
 //     MarginMode / AllocatedMargin / …) are carried over from the input.
 //   - RealizedPnL is the PnL realised by this fill; non-zero only in the
@@ -151,7 +161,7 @@ type FillResult struct {
 // the post-state for IM/MM/CM aggregation) consume this single source of
 // truth, retiring the duplicate switch that previously lived in both.
 func (p AccountPosition) ApplyFill(delta math.Int, price uint32) FillResult {
-	curSize := p.Position
+	curSize := p.Size_
 	curEntryQuote := p.EntryQuote
 
 	priceInt := math.NewIntFromUint64(uint64(price))
@@ -200,7 +210,7 @@ func (p AccountPosition) ApplyFill(delta math.Int, price uint32) FillResult {
 	}
 
 	next := p
-	next.Position = newSize
+	next.Size_ = newSize
 	next.EntryQuote = newEntryQuote
 
 	sideFlipped := !curSize.IsZero() && !newSize.IsZero() && !IsSameSide(curSize, newSize)

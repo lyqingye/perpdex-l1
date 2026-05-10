@@ -107,7 +107,7 @@ type stubAccount struct{}
 func (stubAccount) GetPosition(_ context.Context, acc uint64, mkt uint32) (accounttypes.AccountPosition, error) {
 	return accounttypes.AccountPosition{
 		AccountIndex: acc, MarketIndex: mkt,
-		Position: math.ZeroInt(), EntryQuote: math.ZeroInt(),
+		Size_: math.ZeroInt(), EntryQuote: math.ZeroInt(),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}, nil
 }
@@ -150,7 +150,7 @@ func (s *statefulAccount) GetPosition(_ context.Context, acc uint64, mkt uint32)
 	}
 	return accounttypes.AccountPosition{
 		AccountIndex: acc, MarketIndex: mkt,
-		Position: math.ZeroInt(), EntryQuote: math.ZeroInt(),
+		Size_: math.ZeroInt(), EntryQuote: math.ZeroInt(),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}, nil
 }
@@ -269,14 +269,14 @@ func TestSettlePositionFunding_ZeroPositionSnapshotsCurrentPrefix(t *testing.T) 
 	require.NoError(t, k.SettlePositionFunding(ctx, accountIndex, marketIndex))
 	key := [2]uint64{accountIndex, uint64(marketIndex)}
 	snapshotted := ak.positions[key]
-	require.True(t, snapshotted.Position.IsZero())
+	require.True(t, snapshotted.Size_.IsZero())
 	require.EqualValues(t, 100_000_000, snapshotted.LastFundingRatePrefixSum.Int64())
 
 	// Simulate ApplyPerpsMatching opening a new position after the zero-size
 	// settle above, then advance the market prefix by only 20_000_000. The next
 	// funding settlement must charge that new delta, not the full historical
 	// 120_000_000 prefix.
-	snapshotted.Position = math.NewInt(1_000_000)
+	snapshotted.Size_ = math.NewInt(1_000_000)
 	snapshotted.EntryQuote = math.ZeroInt()
 	ak.positions[key] = snapshotted
 	d := mk.details[marketIndex]

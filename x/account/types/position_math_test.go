@@ -15,7 +15,7 @@ import (
 func TestAccountPosition_MarketValue(t *testing.T) {
 	t.Run("empty_position_returns_allocated_only", func(t *testing.T) {
 		p := types.AccountPosition{
-			Position:        math.ZeroInt(),
+			Size_:           math.ZeroInt(),
 			EntryQuote:      math.ZeroInt(),
 			AllocatedMargin: math.NewInt(500),
 		}
@@ -24,7 +24,7 @@ func TestAccountPosition_MarketValue(t *testing.T) {
 
 	t.Run("zero_mark_returns_allocated_only", func(t *testing.T) {
 		p := types.AccountPosition{
-			Position:        math.NewInt(10),
+			Size_:           math.NewInt(10),
 			EntryQuote:      math.NewInt(900),
 			AllocatedMargin: math.NewInt(500),
 		}
@@ -34,7 +34,7 @@ func TestAccountPosition_MarketValue(t *testing.T) {
 	t.Run("long_in_profit", func(t *testing.T) {
 		// uPnL = 10 * 100 - 900 = 100, MV = 500 + 100 = 600.
 		p := types.AccountPosition{
-			Position:        math.NewInt(10),
+			Size_:           math.NewInt(10),
 			EntryQuote:      math.NewInt(900),
 			AllocatedMargin: math.NewInt(500),
 		}
@@ -46,10 +46,42 @@ func TestAccountPosition_MarketValue(t *testing.T) {
 		// AllocatedMargin should not panic — MarketValue must coerce
 		// to zero.
 		p := types.AccountPosition{
-			Position:   math.NewInt(10),
+			Size_:      math.NewInt(10),
 			EntryQuote: math.NewInt(900),
 		}
 		// uPnL = 100, allocated coerced to 0, MV = 100.
 		require.Equal(t, math.NewInt(100), p.MarketValue(100))
 	})
+}
+
+func TestAccountPosition_DirectionHelpers(t *testing.T) {
+	tests := []struct {
+		name string
+		size math.Int
+		want bool
+	}{
+		{
+			name: "short_size_is_not_long_and_opens_ask",
+			size: math.NewInt(-1),
+			want: false,
+		},
+		{
+			name: "zero_size_is_long_and_opens_bid",
+			size: math.ZeroInt(),
+			want: true,
+		},
+		{
+			name: "positive_size_is_long_and_opens_bid",
+			size: math.NewInt(1),
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := types.AccountPosition{Size_: tt.size}
+			require.Equal(t, tt.want, p.IsLong())
+			require.Equal(t, tt.want, p.OpeningIsBid())
+		})
+	}
 }

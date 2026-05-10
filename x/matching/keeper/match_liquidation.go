@@ -59,17 +59,17 @@ func (k Keeper) MatchLiquidationOrder(
 	if err != nil {
 		return 0, err
 	}
-	if pos.Position.IsZero() {
+	if pos.Size_.IsZero() {
 		return 0, types.ErrInvalidOrder.Wrapf("victim=%d has no position in market=%d", victim, marketIdx)
 	}
 	// Long victim closes via SELL (taker ask); short victim closes
 	// via BUY (taker bid). Mirrors x/liquidation/keeper/liquidate.go
-	// `takerIsAsk := pos.Position.IsNegative()` semantics — except
+	// `takerIsAsk := pos.Size_.IsNegative()` semantics — except
 	// here the victim is the taker, so the sign flips.
-	isAsk := pos.Position.IsPositive()
+	isAsk := pos.Size_.IsPositive()
 	// Cap requested base by victim's |position| so the synthetic
 	// reduce-only IOC cannot ask for more than the close-out size.
-	abs := pos.Position.Abs().Uint64()
+	abs := pos.Size_.Abs().Uint64()
 	if baseAmount > abs {
 		baseAmount = abs
 	}
@@ -225,10 +225,12 @@ func (k Keeper) matchLiquidation(
 //
 //   - TakerFee / MakerFee = 0 (the only fee charged is the
 //     liquidation improvement fee computed inside the trade engine).
+//
 //   - ZeroPrice / LiquidationFeeBps / LiquidationFeeRecipient flow
 //     into the trade engine so any improvement above the zero-price
 //     floor is captured and routed to the configured recipient
 //     (Insurance Fund / LLP).
+//
 //   - Risk checks: both maker and taker are validated post-trade,
 //     mirroring Lighter `matching_engine.rs:1801,1843` where a
 //     LIQUIDATION_ORDER + IOC fill runs `is_valid_risk_change` on

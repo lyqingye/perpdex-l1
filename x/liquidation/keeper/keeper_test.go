@@ -69,10 +69,11 @@ func (s *stubAccount) GetPosition(_ context.Context, acc uint64, mkt uint32) (ac
 	}
 	return accounttypes.AccountPosition{
 		AccountIndex: acc, MarketIndex: mkt,
-		Position: math.ZeroInt(), EntryQuote: math.ZeroInt(),
+		Size_: math.ZeroInt(), EntryQuote: math.ZeroInt(),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}, nil
 }
+
 // SetPosition is the stub-only fixture helper used by the suite.
 // Production code never calls a generic position setter; the
 // liquidation AccountKeeper interface only exposes UpdatePosition.
@@ -190,16 +191,16 @@ func (stubMarket) GetMarketDetails(_ context.Context, idx uint32) (markettypes.M
 type stubRisk struct {
 	ak *stubAccount
 
-	status   uint32                               // global default cross status
-	statuses map[uint64]uint32                    // per-account override (falls back to `status`)
-	isoStat  map[[2]uint64]uint32                 // (acc, market) -> isolated status
-	zero     map[[2]uint64]uint32                 // (acc, market) -> zero price override
-	marks    map[uint32]uint32                    // market -> mark price (default 100)
-	mds      map[uint32]markettypes.MarketDetails // market -> details
-	cross    map[uint64]risktypes.RiskParameters  // account -> cross aggregate (overrides status projection)
-	iso      map[[2]uint64]risktypes.RiskParameters
-	postSim  map[uint64]risktypes.RiskParameters // takeover post-state per account
-	postSimErr error                              // forced error from SimulateRiskAfterTakeover
+	status     uint32                               // global default cross status
+	statuses   map[uint64]uint32                    // per-account override (falls back to `status`)
+	isoStat    map[[2]uint64]uint32                 // (acc, market) -> isolated status
+	zero       map[[2]uint64]uint32                 // (acc, market) -> zero price override
+	marks      map[uint32]uint32                    // market -> mark price (default 100)
+	mds        map[uint32]markettypes.MarketDetails // market -> details
+	cross      map[uint64]risktypes.RiskParameters  // account -> cross aggregate (overrides status projection)
+	iso        map[[2]uint64]risktypes.RiskParameters
+	postSim    map[uint64]risktypes.RiskParameters // takeover post-state per account
+	postSimErr error                               // forced error from SimulateRiskAfterTakeover
 
 	// snapshotCalls counts every GetLiquidationRiskSnapshot call;
 	// tests use it to assert that the waterfall takes a fresh
@@ -246,7 +247,7 @@ func (s *stubRisk) GetZeroPriceSnapshot(
 	if err != nil {
 		return risktypes.ZeroPriceSnapshot{}, err
 	}
-	if pos.Position.IsZero() {
+	if pos.Size_.IsZero() {
 		return risktypes.ZeroPriceSnapshot{Position: pos}, nil
 	}
 	zp, ok := s.zero[[2]uint64{acc, uint64(mkt)}]
@@ -283,7 +284,7 @@ func (s *stubRisk) GetLiquidationRiskSnapshot(
 	}
 	zp, ok := s.zero[[2]uint64{acc, uint64(mkt)}]
 	if !ok {
-		if pos.Position.IsZero() {
+		if pos.Size_.IsZero() {
 			zp = 0
 		} else {
 			zp = mark
@@ -528,7 +529,7 @@ func TestLiquidate_BaseAmountCappedByPosition(t *testing.T) {
 	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.ZeroInt()}
 	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 100, MarketIndex: 0,
-		Position: math.NewInt(5), EntryQuote: math.NewInt(-50),
+		Size_: math.NewInt(5), EntryQuote: math.NewInt(-50),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	rk := newStubRisk()
@@ -550,7 +551,7 @@ func TestLiquidate_ZeroBaseRejected(t *testing.T) {
 	ak := newStubAccount()
 	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.ZeroInt()}
 	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
-		AccountIndex: 100, MarketIndex: 0, Position: math.NewInt(3),
+		AccountIndex: 100, MarketIndex: 0, Size_: math.NewInt(3),
 		EntryQuote: math.NewInt(-30), LastFundingRatePrefixSum: math.ZeroInt(),
 		AllocatedMargin: math.ZeroInt(),
 	}
@@ -572,7 +573,7 @@ func TestLiquidate_RejectsFullLiquidationStatus(t *testing.T) {
 	ak := newStubAccount()
 	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.ZeroInt()}
 	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
-		AccountIndex: 100, MarketIndex: 0, Position: math.NewInt(3),
+		AccountIndex: 100, MarketIndex: 0, Size_: math.NewInt(3),
 		EntryQuote: math.NewInt(-30), LastFundingRatePrefixSum: math.ZeroInt(),
 		AllocatedMargin: math.ZeroInt(),
 	}
@@ -634,7 +635,7 @@ func TestLiquidate_CancelsVictimOpenOrders(t *testing.T) {
 	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.ZeroInt()}
 	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 100, MarketIndex: 0,
-		Position: math.NewInt(10), EntryQuote: math.NewInt(-100),
+		Size_: math.NewInt(10), EntryQuote: math.NewInt(-100),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	rk := newStubRisk()
@@ -660,7 +661,7 @@ func TestLiquidate_DelegatesToMatchingKeeperWithLLPRecipient(t *testing.T) {
 	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.ZeroInt()}
 	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 100, MarketIndex: 0,
-		Position: math.NewInt(10), EntryQuote: math.NewInt(-1000),
+		Size_: math.NewInt(10), EntryQuote: math.NewInt(-1000),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	rk := newStubRisk()
@@ -712,7 +713,7 @@ func TestEndBlocker_FullLiquidationPrefersLLPThenADL(t *testing.T) {
 	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.NewInt(10)}
 	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 100, MarketIndex: 0,
-		Position: math.NewInt(50), EntryQuote: math.NewInt(5_000),
+		Size_: math.NewInt(50), EntryQuote: math.NewInt(5_000),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	rk := newStubRisk()
@@ -762,7 +763,7 @@ func TestLLPAbsorb_StopsWhenLLPWouldBreachIMR(t *testing.T) {
 	}
 	ak.pos[[2]uint64{999, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 999, MarketIndex: 0,
-		Position: math.NewInt(-10), EntryQuote: math.NewInt(-2_000),
+		Size_: math.NewInt(-10), EntryQuote: math.NewInt(-2_000),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	// Bankrupt has a small but non-zero cushion so the autoADL pre-
@@ -773,7 +774,7 @@ func TestLLPAbsorb_StopsWhenLLPWouldBreachIMR(t *testing.T) {
 	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.NewInt(100)}
 	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 100, MarketIndex: 0,
-		Position: math.NewInt(50), EntryQuote: math.NewInt(5_000),
+		Size_: math.NewInt(50), EntryQuote: math.NewInt(5_000),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	rk := newStubRisk()
@@ -824,7 +825,7 @@ func TestEndBlocker_BankruptcyFallsThroughToADLWhenLLPBreachesIMR(t *testing.T) 
 	}
 	ak.pos[[2]uint64{999, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 999, MarketIndex: 0,
-		Position: math.NewInt(-10), EntryQuote: math.NewInt(-2_000),
+		Size_: math.NewInt(-10), EntryQuote: math.NewInt(-2_000),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	// Victim is BANKRUPT but the trade-mechanical realised PnL still
@@ -834,7 +835,7 @@ func TestEndBlocker_BankruptcyFallsThroughToADLWhenLLPBreachesIMR(t *testing.T) 
 	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.NewInt(300)}
 	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 100, MarketIndex: 0,
-		Position: math.NewInt(50), EntryQuote: math.NewInt(10_000),
+		Size_: math.NewInt(50), EntryQuote: math.NewInt(10_000),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	rk := newStubRisk()
@@ -878,7 +879,7 @@ func TestAutoADL_RequiresZeroPriceAlignment(t *testing.T) {
 	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.NewInt(200)}
 	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 100, MarketIndex: 0,
-		Position: math.NewInt(50), EntryQuote: math.NewInt(5_000),
+		Size_: math.NewInt(50), EntryQuote: math.NewInt(5_000),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	// Two opposite-side candidates, but only one has an aligned ZP.
@@ -888,7 +889,7 @@ func TestAutoADL_RequiresZeroPriceAlignment(t *testing.T) {
 	}
 	ak.pos[[2]uint64{201, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 201, MarketIndex: 0,
-		Position: math.NewInt(-10), EntryQuote: math.NewInt(-1_500),
+		Size_: math.NewInt(-10), EntryQuote: math.NewInt(-1_500),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	ak.accounts[202] = accounttypes.Account{
@@ -897,7 +898,7 @@ func TestAutoADL_RequiresZeroPriceAlignment(t *testing.T) {
 	}
 	ak.pos[[2]uint64{202, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 202, MarketIndex: 0,
-		Position: math.NewInt(-20), EntryQuote: math.NewInt(-2_500),
+		Size_: math.NewInt(-20), EntryQuote: math.NewInt(-2_500),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	rk := newStubRisk()
@@ -941,12 +942,12 @@ func TestADLQueueBuilder_LeverageAndUPnLRanking(t *testing.T) {
 	}
 	ak.pos[[2]uint64{201, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 201, MarketIndex: 0,
-		Position: math.NewInt(10), EntryQuote: math.NewInt(1_000),
+		Size_: math.NewInt(10), EntryQuote: math.NewInt(1_000),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	ak.pos[[2]uint64{202, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 202, MarketIndex: 0,
-		Position: math.NewInt(10), EntryQuote: math.NewInt(1_000),
+		Size_: math.NewInt(10), EntryQuote: math.NewInt(1_000),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	rk := newStubRisk()
@@ -989,7 +990,7 @@ func TestEndBlocker_PreLiquidationClearsFlags(t *testing.T) {
 	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.NewInt(10_000)}
 	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 100, MarketIndex: 0,
-		Position: math.NewInt(5), EntryQuote: math.NewInt(-50),
+		Size_: math.NewInt(5), EntryQuote: math.NewInt(-50),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	rk := newStubRisk()
@@ -1031,7 +1032,7 @@ func TestLiquidate_DoesNotTopUpFromIF(t *testing.T) {
 	}
 	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 100, MarketIndex: 0,
-		Position: math.NewInt(10), EntryQuote: math.NewInt(-100),
+		Size_: math.NewInt(10), EntryQuote: math.NewInt(-100),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	rk := newStubRisk()
@@ -1087,7 +1088,7 @@ func TestDeleverage_LeavesResidualOnVictim(t *testing.T) {
 	}
 	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 100, MarketIndex: 0,
-		Position: math.NewInt(20), EntryQuote: math.NewInt(2_000),
+		Size_: math.NewInt(20), EntryQuote: math.NewInt(2_000),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	rk := newStubRisk()
@@ -1146,7 +1147,7 @@ func TestEndBlocker_BankruptResidueStaysWithVictim(t *testing.T) {
 	}
 	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 100, MarketIndex: 0,
-		Position: math.NewInt(50), EntryQuote: math.NewInt(-10_000),
+		Size_: math.NewInt(50), EntryQuote: math.NewInt(-10_000),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	rk := newStubRisk()
@@ -1211,7 +1212,7 @@ func TestDeleverage_BankruptRiskRegressionRejected(t *testing.T) {
 	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.NewInt(10_000)}
 	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 100, MarketIndex: 0,
-		Position: math.NewInt(50), EntryQuote: math.NewInt(5_000),
+		Size_: math.NewInt(50), EntryQuote: math.NewInt(5_000),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	rk := newStubRisk()
@@ -1256,7 +1257,7 @@ func TestDeleverage_InsufficientDeleveragerCollateral_UserADL(t *testing.T) {
 	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.NewInt(1_000_000)}
 	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 100, MarketIndex: 0,
-		Position: math.NewInt(50), EntryQuote: math.NewInt(5_000),
+		Size_: math.NewInt(50), EntryQuote: math.NewInt(5_000),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	// User-ADL deleverager: opposite-side, but no cushion at all.
@@ -1269,7 +1270,7 @@ func TestDeleverage_InsufficientDeleveragerCollateral_UserADL(t *testing.T) {
 	}
 	ak.pos[[2]uint64{200, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 200, MarketIndex: 0,
-		Position: math.NewInt(-50), EntryQuote: math.NewInt(-5_000),
+		Size_: math.NewInt(-50), EntryQuote: math.NewInt(-5_000),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	rk := newStubRisk()
@@ -1309,7 +1310,7 @@ func TestEndBlocker_ADLCandidateInsufficientCollateral_AdvancesToNext(t *testing
 	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.NewInt(1_000)}
 	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 100, MarketIndex: 0,
-		Position: math.NewInt(50), EntryQuote: math.NewInt(5_000),
+		Size_: math.NewInt(50), EntryQuote: math.NewInt(5_000),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	// First candidate (highest profit rank) has zero cushion and
@@ -1323,7 +1324,7 @@ func TestEndBlocker_ADLCandidateInsufficientCollateral_AdvancesToNext(t *testing
 	}
 	ak.pos[[2]uint64{201, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 201, MarketIndex: 0,
-		Position: math.NewInt(-10), EntryQuote: math.NewInt(-2_200),
+		Size_: math.NewInt(-10), EntryQuote: math.NewInt(-2_200),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	// Second candidate has a deep cushion and matches.
@@ -1333,7 +1334,7 @@ func TestEndBlocker_ADLCandidateInsufficientCollateral_AdvancesToNext(t *testing
 	}
 	ak.pos[[2]uint64{202, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 202, MarketIndex: 0,
-		Position: math.NewInt(-10), EntryQuote: math.NewInt(-2_000),
+		Size_: math.NewInt(-10), EntryQuote: math.NewInt(-2_000),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	rk := newStubRisk()
@@ -1403,12 +1404,12 @@ func TestEndBlocker_CrossAggregateRefreshedAcrossMarkets(t *testing.T) {
 	// below fires before market 1 is reached.
 	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 100, MarketIndex: 0,
-		Position: math.NewInt(50), EntryQuote: math.NewInt(10_000),
+		Size_: math.NewInt(50), EntryQuote: math.NewInt(10_000),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	ak.pos[[2]uint64{100, 1}] = accounttypes.AccountPosition{
 		AccountIndex: 100, MarketIndex: 1,
-		Position: math.NewInt(5), EntryQuote: math.NewInt(1_000),
+		Size_: math.NewInt(5), EntryQuote: math.NewInt(1_000),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	rk := newStubRisk()
@@ -1489,7 +1490,7 @@ func TestAutoADL_RefusesHealedVictimViaSelfAssert(t *testing.T) {
 	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.NewInt(10)}
 	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 100, MarketIndex: 0,
-		Position: math.NewInt(50), EntryQuote: math.NewInt(10_000),
+		Size_: math.NewInt(50), EntryQuote: math.NewInt(10_000),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	// Profitable counterparty so BuildADLQueue is non-empty: without
@@ -1499,7 +1500,7 @@ func TestAutoADL_RefusesHealedVictimViaSelfAssert(t *testing.T) {
 	ak.accounts[999] = accounttypes.Account{AccountIndex: 999, Collateral: math.NewInt(1_000_000)}
 	ak.pos[[2]uint64{999, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 999, MarketIndex: 0,
-		Position: math.NewInt(-50), EntryQuote: math.NewInt(-20_000),
+		Size_: math.NewInt(-50), EntryQuote: math.NewInt(-20_000),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 

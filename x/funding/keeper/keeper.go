@@ -83,7 +83,7 @@ func (k Keeper) SettlePositionFunding(ctx context.Context, accountIndex uint64, 
 		return err
 	}
 	_, err = k.accountKeeper.UpdatePosition(ctx, accountIndex, marketIndex, func(pos *accounttypes.AccountPosition) error {
-		if pos.Position.IsZero() {
+		if pos.Size_.IsZero() {
 			pos.LastFundingRatePrefixSum = d.FundingRatePrefixSum
 			return nil
 		}
@@ -92,7 +92,7 @@ func (k Keeper) SettlePositionFunding(ctx context.Context, accountIndex uint64, 
 			pos.LastFundingRatePrefixSum = d.FundingRatePrefixSum
 			return nil
 		}
-		pay := pos.Position.Mul(delta).Quo(math.NewInt(perptypes.FundingRateTick))
+		pay := pos.Size_.Mul(delta).Quo(math.NewInt(perptypes.FundingRateTick))
 		pos.EntryQuote = pos.EntryQuote.Add(pay)
 		pos.LastFundingRatePrefixSum = d.FundingRatePrefixSum
 		return nil

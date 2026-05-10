@@ -387,7 +387,7 @@ func (m msgServer) UpdateLeverage(ctx context.Context, msg *types.MsgUpdateLever
 	if err != nil {
 		return nil, err
 	}
-	if !pos.Position.IsZero() {
+	if !pos.Size_.IsZero() {
 		return nil, types.ErrPositionNotEmpty.Wrap("must close position before updating leverage/margin mode")
 	}
 	if err := m.SetPositionLeverage(ctx, msg.AccountIndex, msg.MarketIndex, msg.NewMarginMode, msg.NewInitialMarginFraction); err != nil {

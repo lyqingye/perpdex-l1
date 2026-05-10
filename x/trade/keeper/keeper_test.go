@@ -67,7 +67,7 @@ func (s *stubAccount) GetPosition(_ context.Context, acc uint64, mkt uint32) (ac
 	return accounttypes.AccountPosition{
 		AccountIndex:             acc,
 		MarketIndex:              mkt,
-		Position:                 math.ZeroInt(),
+		Size_:                    math.ZeroInt(),
 		EntryQuote:               math.ZeroInt(),
 		LastFundingRatePrefixSum: math.ZeroInt(),
 		AllocatedMargin:          math.ZeroInt(),
