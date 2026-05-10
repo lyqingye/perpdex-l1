@@ -632,7 +632,7 @@ func (k Keeper) GetPosition(ctx context.Context, accIdx uint64, marketIdx uint32
 			return types.AccountPosition{
 				AccountIndex:             accIdx,
 				MarketIndex:              marketIdx,
-				Size_:                    math.ZeroInt(),
+				BaseSize:                 math.ZeroInt(),
 				EntryQuote:               math.ZeroInt(),
 				LastFundingRatePrefixSum: math.ZeroInt(),
 				AllocatedMargin:          math.ZeroInt(),
@@ -657,7 +657,7 @@ func (k Keeper) GetPosition(ctx context.Context, accIdx uint64, marketIdx uint32
 //
 // Callers may still see Position == 0 rows (the keeper does not delete
 // positions when they net to zero, only when funding is settled and the
-// position is closed); skip them with `pos.Size_.IsZero()` if the
+// position is closed); skip them with `pos.BaseSize.IsZero()` if the
 // caller cares about non-empty positions only.
 func (k Keeper) IterateAccountPositions(
 	ctx context.Context,

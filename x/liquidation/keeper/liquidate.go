@@ -51,7 +51,7 @@ func (k Keeper) Liquidate(ctx context.Context, victim uint64, marketIdx uint32, 
 		return err
 	}
 	pos := snap.Position
-	if pos.Size_.IsZero() {
+	if pos.BaseSize.IsZero() {
 		return types.ErrNotLiquidatable.Wrap("victim has no position")
 	}
 	// Determine the relevant health (cross account vs isolated
@@ -78,7 +78,7 @@ func (k Keeper) Liquidate(ctx context.Context, victim uint64, marketIdx uint32, 
 	// victim's remaining size would otherwise close the position *and*
 	// flip it to the opposite side, stealing collateral from the
 	// victim. Cap here (symmetrical to Deleverage).
-	absVictim := pos.Size_.Abs()
+	absVictim := pos.BaseSize.Abs()
 	if math.NewIntFromUint64(baseAmount).GT(absVictim) {
 		return types.ErrInvalidParams.Wrapf(
 			"base_amount=%d exceeds victim position size %s", baseAmount, absVictim.String(),
@@ -172,7 +172,7 @@ func (k Keeper) Deleverage(ctx context.Context, victim uint64, marketIdx uint32,
 		return err
 	}
 	pos := snap.Position
-	if pos.Size_.IsZero() {
+	if pos.BaseSize.IsZero() {
 		return types.ErrNotLiquidatable.Wrap("victim has no position")
 	}
 	status, err := k.victimHealthForPosition(ctx, victim, marketIdx, pos)
@@ -188,7 +188,7 @@ func (k Keeper) Deleverage(ctx context.Context, victim uint64, marketIdx uint32,
 	if baseAmount == 0 {
 		return types.ErrInvalidParams.Wrap("base_amount must be > 0")
 	}
-	absVictim := pos.Size_.Abs()
+	absVictim := pos.BaseSize.Abs()
 	if math.NewIntFromUint64(baseAmount).GT(absVictim) {
 		return types.ErrInvalidADLCounterparty.Wrapf(
 			"base_amount=%d exceeds victim position size %s", baseAmount, absVictim.String(),
@@ -218,13 +218,13 @@ func (k Keeper) Deleverage(ctx context.Context, victim uint64, marketIdx uint32,
 		if err != nil {
 			return err
 		}
-		if dPos.Size_.IsZero() {
+		if dPos.BaseSize.IsZero() {
 			return types.ErrInvalidADLCounterparty.Wrap("deleverager has no position")
 		}
-		if dPos.Size_.IsNegative() == pos.Size_.IsNegative() {
+		if dPos.BaseSize.IsNegative() == pos.BaseSize.IsNegative() {
 			return types.ErrInvalidADLCounterparty.Wrap("deleverager is on the same side as victim")
 		}
-		absDeleverager := dPos.Size_.Abs()
+		absDeleverager := dPos.BaseSize.Abs()
 		if math.NewIntFromUint64(baseAmount).GT(absDeleverager) {
 			return types.ErrInvalidADLCounterparty.Wrapf(
 				"base_amount=%d exceeds deleverager position size %s",
@@ -233,7 +233,7 @@ func (k Keeper) Deleverage(ctx context.Context, victim uint64, marketIdx uint32,
 		}
 	}
 
-	takerIsAsk := pos.Size_.IsNegative()
+	takerIsAsk := pos.BaseSize.IsNegative()
 
 	// Pre-trade collateral assert on the deleverager side only
 	// (Lighter `is_deleverager_has_enough_cross_collateral` parity).

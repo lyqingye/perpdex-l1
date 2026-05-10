@@ -15,7 +15,7 @@ import (
 func TestAccountPosition_MarketValue(t *testing.T) {
 	t.Run("empty_position_returns_allocated_only", func(t *testing.T) {
 		p := types.AccountPosition{
-			Size_:           math.ZeroInt(),
+			BaseSize:        math.ZeroInt(),
 			EntryQuote:      math.ZeroInt(),
 			AllocatedMargin: math.NewInt(500),
 		}
@@ -24,7 +24,7 @@ func TestAccountPosition_MarketValue(t *testing.T) {
 
 	t.Run("zero_mark_returns_allocated_only", func(t *testing.T) {
 		p := types.AccountPosition{
-			Size_:           math.NewInt(10),
+			BaseSize:        math.NewInt(10),
 			EntryQuote:      math.NewInt(900),
 			AllocatedMargin: math.NewInt(500),
 		}
@@ -34,7 +34,7 @@ func TestAccountPosition_MarketValue(t *testing.T) {
 	t.Run("long_in_profit", func(t *testing.T) {
 		// uPnL = 10 * 100 - 900 = 100, MV = 500 + 100 = 600.
 		p := types.AccountPosition{
-			Size_:           math.NewInt(10),
+			BaseSize:        math.NewInt(10),
 			EntryQuote:      math.NewInt(900),
 			AllocatedMargin: math.NewInt(500),
 		}
@@ -46,7 +46,7 @@ func TestAccountPosition_MarketValue(t *testing.T) {
 		// AllocatedMargin should not panic — MarketValue must coerce
 		// to zero.
 		p := types.AccountPosition{
-			Size_:      math.NewInt(10),
+			BaseSize:   math.NewInt(10),
 			EntryQuote: math.NewInt(900),
 		}
 		// uPnL = 100, allocated coerced to 0, MV = 100.
@@ -79,7 +79,7 @@ func TestAccountPosition_DirectionHelpers(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p := types.AccountPosition{Size_: tt.size}
+			p := types.AccountPosition{BaseSize: tt.size}
 			require.Equal(t, tt.want, p.IsLong())
 			require.Equal(t, tt.want, p.OpeningIsBid())
 		})

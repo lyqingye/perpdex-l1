@@ -94,9 +94,9 @@ func (k Keeper) nextMaker(
 			if err != nil {
 				return orderbooktypes.OrderBookEntry{}, false, err
 			}
-			if pos.Size_.IsZero() ||
-				(taker.IsAsk && !pos.Size_.IsPositive()) ||
-				(!taker.IsAsk && !pos.Size_.IsNegative()) {
+			if pos.BaseSize.IsZero() ||
+				(taker.IsAsk && !pos.BaseSize.IsPositive()) ||
+				(!taker.IsAsk && !pos.BaseSize.IsNegative()) {
 				return orderbooktypes.OrderBookEntry{}, false, nil
 			}
 		}
@@ -110,9 +110,9 @@ func (k Keeper) nextMaker(
 			if err != nil {
 				return orderbooktypes.OrderBookEntry{}, false, err
 			}
-			if pos.Size_.IsZero() ||
-				(taker.IsAsk && !pos.Size_.IsNegative()) ||
-				(!taker.IsAsk && !pos.Size_.IsPositive()) {
+			if pos.BaseSize.IsZero() ||
+				(taker.IsAsk && !pos.BaseSize.IsNegative()) ||
+				(!taker.IsAsk && !pos.BaseSize.IsPositive()) {
 				if _, err := k.bookKeeper.EvictMakerOrder(ctx, best.OrderIndex, perptypes.OrderStatusCancelled); err != nil {
 					return orderbooktypes.OrderBookEntry{}, false, err
 				}
@@ -153,7 +153,7 @@ func (k Keeper) matchSize(
 		if err != nil {
 			return 0, false, err
 		}
-		limit := pos.Size_.Abs().Uint64()
+		limit := pos.BaseSize.Abs().Uint64()
 		if limit == 0 {
 			return 0, false, nil
 		}
@@ -172,7 +172,7 @@ func (k Keeper) matchSize(
 		if err != nil {
 			return 0, false, err
 		}
-		makerLimit := pos.Size_.Abs().Uint64()
+		makerLimit := pos.BaseSize.Abs().Uint64()
 		if makerLimit == 0 {
 			return 0, false, nil
 		}

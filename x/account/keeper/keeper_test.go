@@ -144,7 +144,7 @@ func TestExportGenesis_RoundTrip(t *testing.T) {
 		types.AccountPosition{
 			AccountIndex:             perptypes.TreasuryAccountIndex,
 			MarketIndex:              0,
-			Size_:                    math.NewInt(5),
+			BaseSize:                 math.NewInt(5),
 			EntryQuote:               math.NewInt(500),
 			LastFundingRatePrefixSum: math.ZeroInt(),
 			AllocatedMargin:          math.ZeroInt(),

@@ -55,7 +55,7 @@ func (k Keeper) ComputeRiskInfo(ctx context.Context, accountIdx uint64) (types.R
 
 	var iterErr error
 	if err := k.accountKeeper.IterateAccountPositions(ctx, accountIdx, func(pos accounttypes.AccountPosition) bool {
-		if pos.Size_.IsZero() {
+		if pos.BaseSize.IsZero() {
 			return false
 		}
 		// Skip isolated positions: they have an independent risk

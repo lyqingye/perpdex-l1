@@ -54,7 +54,7 @@ func (k Keeper) GetIsolatedHealthStatus(ctx context.Context, accountIdx uint64, 
 	if err != nil {
 		return 0, err
 	}
-	if pos.Size_.IsZero() || pos.MarginMode != perptypes.IsolatedMargin {
+	if pos.BaseSize.IsZero() || pos.MarginMode != perptypes.IsolatedMargin {
 		return perptypes.HealthHealthy, nil
 	}
 	rp, err := k.ComputeIsolatedRisk(ctx, accountIdx, marketIdx)
@@ -73,7 +73,7 @@ func (k Keeper) IterateIsolatedPositions(ctx context.Context, accountIdx uint64,
 ) error {
 	var iterErr error
 	if err := k.accountKeeper.IterateAccountPositions(ctx, accountIdx, func(pos accounttypes.AccountPosition) bool {
-		if pos.Size_.IsZero() || pos.MarginMode != perptypes.IsolatedMargin {
+		if pos.BaseSize.IsZero() || pos.MarginMode != perptypes.IsolatedMargin {
 			return false
 		}
 		rp, err := k.ComputeIsolatedRisk(ctx, accountIdx, pos.MarketIndex)

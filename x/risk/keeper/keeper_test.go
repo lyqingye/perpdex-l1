@@ -42,7 +42,7 @@ func (s *stubAccountKeeper) GetPosition(_ context.Context, _ uint64, mkt uint32)
 		return s.pos, nil
 	}
 	return accounttypes.AccountPosition{
-		Size_: math.ZeroInt(), EntryQuote: math.ZeroInt(),
+		BaseSize: math.ZeroInt(), EntryQuote: math.ZeroInt(),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}, nil
 }
@@ -68,7 +68,7 @@ func (s *stubAccountKeeper) IterateAccountPositions(
 	if s.pos.AccountIndex != accountIdx {
 		return nil
 	}
-	if s.pos.Size_.IsNil() || s.pos.Size_.IsZero() {
+	if s.pos.BaseSize.IsNil() || s.pos.BaseSize.IsZero() {
 		return nil
 	}
 	cb(s.pos)
@@ -115,7 +115,7 @@ func TestComputeRiskInfo_StalePriceFailsClosed(t *testing.T) {
 		acc: accounttypes.Account{AccountIndex: 1, Collateral: math.NewInt(1000)},
 		pos: accounttypes.AccountPosition{
 			AccountIndex: 1, MarketIndex: 0,
-			Size_: math.NewInt(5), EntryQuote: math.NewInt(500),
+			BaseSize: math.NewInt(5), EntryQuote: math.NewInt(500),
 			LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 		},
 	}
@@ -134,7 +134,7 @@ func TestComputeRiskInfo_ZeroMarkPriceRejected(t *testing.T) {
 		acc: accounttypes.Account{AccountIndex: 1, Collateral: math.NewInt(1000)},
 		pos: accounttypes.AccountPosition{
 			AccountIndex: 1, MarketIndex: 0,
-			Size_: math.NewInt(5), EntryQuote: math.NewInt(500),
+			BaseSize: math.NewInt(5), EntryQuote: math.NewInt(500),
 			LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 		},
 	}
@@ -156,7 +156,7 @@ func TestIsValidRiskChangeFrom_NoPreStateFailClosed(t *testing.T) {
 		acc: accounttypes.Account{AccountIndex: 1, Collateral: math.NewInt(10)},
 		pos: accounttypes.AccountPosition{
 			AccountIndex: 1, MarketIndex: 0,
-			Size_: math.NewInt(1_000_000), EntryQuote: math.NewInt(100_000_000_000),
+			BaseSize: math.NewInt(1_000_000), EntryQuote: math.NewInt(100_000_000_000),
 			LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 		},
 	}
@@ -184,7 +184,7 @@ func TestGetPositionZeroPrice_LongMarkBased(t *testing.T) {
 		acc: accounttypes.Account{AccountIndex: 1, Collateral: math.NewInt(40)},
 		pos: accounttypes.AccountPosition{
 			AccountIndex: 1, MarketIndex: 0,
-			Size_:                    math.NewInt(10), // long
+			BaseSize:                 math.NewInt(10), // long
 			EntryQuote:               math.NewInt(-9_900),
 			LastFundingRatePrefixSum: math.ZeroInt(),
 			AllocatedMargin:          math.ZeroInt(),
@@ -228,7 +228,7 @@ func TestGetPositionZeroPrice_ShortMarkBased(t *testing.T) {
 		acc: accounttypes.Account{AccountIndex: 1, Collateral: math.NewInt(40)},
 		pos: accounttypes.AccountPosition{
 			AccountIndex: 1, MarketIndex: 0,
-			Size_:                    math.NewInt(-10), // short
+			BaseSize:                 math.NewInt(-10), // short
 			EntryQuote:               math.NewInt(-10_010),
 			LastFundingRatePrefixSum: math.ZeroInt(),
 			AllocatedMargin:          math.ZeroInt(),
@@ -261,7 +261,7 @@ func TestGetPositionZeroPrice_IsolatedUsesIsolatedTAV(t *testing.T) {
 		acc: accounttypes.Account{AccountIndex: 1, Collateral: math.NewInt(1_000_000)},
 		pos: accounttypes.AccountPosition{
 			AccountIndex: 1, MarketIndex: 0,
-			Size_:                    math.NewInt(10),
+			BaseSize:                 math.NewInt(10),
 			EntryQuote:               math.NewInt(9_990), // uPnL = 10
 			LastFundingRatePrefixSum: math.ZeroInt(),
 			AllocatedMargin:          math.NewInt(40), // isolated TAV = 50
@@ -294,7 +294,7 @@ func TestComputeRiskInfo_IsolatedDoesNotPolluteCross(t *testing.T) {
 		acc: accounttypes.Account{AccountIndex: 1, Collateral: math.NewInt(100)},
 		pos: accounttypes.AccountPosition{
 			AccountIndex: 1, MarketIndex: 0,
-			Size_:                    math.NewInt(10),
+			BaseSize:                 math.NewInt(10),
 			EntryQuote:               math.NewInt(9_000), // uPnL = 1_000 (large profit)
 			LastFundingRatePrefixSum: math.ZeroInt(),
 			AllocatedMargin:          math.NewInt(50),
@@ -325,7 +325,7 @@ func TestGetIsolatedHealthStatus_PerMarket(t *testing.T) {
 		acc: accounttypes.Account{AccountIndex: 1, Collateral: math.NewInt(1_000_000)},
 		pos: accounttypes.AccountPosition{
 			AccountIndex: 1, MarketIndex: 0,
-			Size_:                    math.NewInt(10),
+			BaseSize:                 math.NewInt(10),
 			EntryQuote:               math.NewInt(11_000), // uPnL = -1_000
 			LastFundingRatePrefixSum: math.ZeroInt(),
 			AllocatedMargin:          math.NewInt(500),
@@ -362,7 +362,7 @@ func TestIsValidRiskChangeFrom_PreLiquidationRejectsMMRGrowth(t *testing.T) {
 		acc: accounttypes.Account{AccountIndex: 1, Collateral: math.NewInt(1_000)},
 		pos: accounttypes.AccountPosition{
 			AccountIndex: 1, MarketIndex: 0,
-			Size_:                    math.NewInt(20),
+			BaseSize:                 math.NewInt(20),
 			EntryQuote:               math.NewInt(-19_900),
 			LastFundingRatePrefixSum: math.ZeroInt(),
 			AllocatedMargin:          math.ZeroInt(),
@@ -401,7 +401,7 @@ func TestIsValidRiskChangeFrom_PreLiquidationRejectsMMRGrowth(t *testing.T) {
 	// Mutate post-state by growing the position. Same mark, so MMR
 	// scales linearly with |position|. Increase position from 20 to
 	// 30 → MMR grows from 1_000 to 1_500 → must be rejected.
-	ak.pos.Size_ = math.NewInt(30)
+	ak.pos.BaseSize = math.NewInt(30)
 	// Keep TAV roughly in PRE range to isolate the MMR-growth signal.
 	// TAV must still be < IM; IM grows from 2_000 to 3_000. Choose
 	// uPnL such that TAV stays between MM(=1_500) and IM(=3_000).
@@ -422,7 +422,7 @@ func TestIsValidRiskChangeFrom_PreLiquidationAllowsReduceOnly(t *testing.T) {
 		acc: accounttypes.Account{AccountIndex: 1, Collateral: math.NewInt(1_000)},
 		pos: accounttypes.AccountPosition{
 			AccountIndex: 1, MarketIndex: 0,
-			Size_:                    math.NewInt(20),
+			BaseSize:                 math.NewInt(20),
 			EntryQuote:               math.NewInt(19_500),
 			LastFundingRatePrefixSum: math.ZeroInt(),
 			AllocatedMargin:          math.ZeroInt(),
@@ -442,7 +442,7 @@ func TestIsValidRiskChangeFrom_PreLiquidationAllowsReduceOnly(t *testing.T) {
 
 	// Post: shrink position from 20 to 10. uPnL/collateral roughly
 	// halves; TAV still > MMR; class stays at PRE or improves.
-	ak.pos.Size_ = math.NewInt(10)
+	ak.pos.BaseSize = math.NewInt(10)
 	ak.pos.EntryQuote = math.NewInt(9_750)
 	ok2, err := k.IsValidRiskChangeFrom(ctx, 1, pre)
 	require.NoError(t, err)
@@ -462,7 +462,7 @@ func TestGetLiquidationRiskSnapshot_EmptyPositionShortCircuitsOracle(t *testing.
 		acc: accounttypes.Account{AccountIndex: 1, Collateral: math.NewInt(1_000)},
 		pos: accounttypes.AccountPosition{
 			AccountIndex: 1, MarketIndex: 99, /* a different market */
-			Size_: math.ZeroInt(), EntryQuote: math.ZeroInt(),
+			BaseSize: math.ZeroInt(), EntryQuote: math.ZeroInt(),
 			LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 		},
 	}
@@ -474,7 +474,7 @@ func TestGetLiquidationRiskSnapshot_EmptyPositionShortCircuitsOracle(t *testing.
 	snap, err := k.GetLiquidationRiskSnapshot(ctx, 1, 0)
 	require.NoError(t, err,
 		"empty position must short-circuit before any oracle read")
-	require.True(t, snap.Position.Size_.IsZero())
+	require.True(t, snap.Position.BaseSize.IsZero())
 	require.Equal(t, uint32(0), snap.MarkPrice)
 	require.Equal(t, uint32(0), snap.ZeroPrice)
 

@@ -31,7 +31,7 @@ func (k Keeper) rejectPoolAccount(ctx context.Context, idx uint64) error {
 func (k Keeper) settleAllPositionFunding(ctx context.Context, accountIdx uint64) error {
 	var settleErr error
 	err := k.IterateAccountPositions(ctx, accountIdx, func(pos types.AccountPosition) bool {
-		if pos.Size_.IsZero() {
+		if pos.BaseSize.IsZero() {
 			return false
 		}
 		if err := k.fundingKeeper.SettlePositionFunding(ctx, accountIdx, pos.MarketIndex); err != nil {

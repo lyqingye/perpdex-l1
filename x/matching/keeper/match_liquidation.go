@@ -59,17 +59,17 @@ func (k Keeper) MatchLiquidationOrder(
 	if err != nil {
 		return 0, err
 	}
-	if pos.Size_.IsZero() {
+	if pos.BaseSize.IsZero() {
 		return 0, types.ErrInvalidOrder.Wrapf("victim=%d has no position in market=%d", victim, marketIdx)
 	}
 	// Long victim closes via SELL (taker ask); short victim closes
 	// via BUY (taker bid). Mirrors x/liquidation/keeper/liquidate.go
-	// `takerIsAsk := pos.Size_.IsNegative()` semantics — except
+	// `takerIsAsk := pos.BaseSize.IsNegative()` semantics — except
 	// here the victim is the taker, so the sign flips.
-	isAsk := pos.Size_.IsPositive()
+	isAsk := pos.BaseSize.IsPositive()
 	// Cap requested base by victim's |position| so the synthetic
 	// reduce-only IOC cannot ask for more than the close-out size.
-	abs := pos.Size_.Abs().Uint64()
+	abs := pos.BaseSize.Abs().Uint64()
 	if baseAmount > abs {
 		baseAmount = abs
 	}

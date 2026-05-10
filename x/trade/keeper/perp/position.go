@@ -68,22 +68,22 @@ func (e Engine) applyPositionChange(ctx context.Context, accountIdx uint64, mark
 		// pre-state by value so res.Old reflects the position as it
 		// was before this fill.
 		old = *pos
-		curSize = pos.Size_
+		curSize = pos.BaseSize
 		delta := math.NewIntFromUint64(baseAmount).MulRaw(sign)
 
 		fill := pos.ApplyFill(delta, price)
 		// ApplyFill is a pure function; we still need to mirror its
 		// new size / entry_quote into the persisted record before
 		// setPosition runs.
-		pos.Size_ = fill.Position.Size_
+		pos.BaseSize = fill.Position.BaseSize
 		pos.EntryQuote = fill.Position.EntryQuote
-		newSize = pos.Size_
+		newSize = pos.BaseSize
 		realizedPnL = fill.RealizedPnL
 		sideFlipped = fill.SideFlipped
 
 		// Bounds check ahead of persistence so we never store a
 		// position the prover circuit would reject.
-		if !isWithinPositionBounds(pos.Size_, pos.EntryQuote) {
+		if !isWithinPositionBounds(pos.BaseSize, pos.EntryQuote) {
 			return errPositionOutOfBounds
 		}
 		return nil

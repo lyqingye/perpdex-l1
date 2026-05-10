@@ -71,7 +71,7 @@ func PositionSize(
 	if err != nil {
 		return math.ZeroInt(), err
 	}
-	return p.Size_, nil
+	return p.BaseSize, nil
 }
 
 // Market returns the Market struct for a given index.

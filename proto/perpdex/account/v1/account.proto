@@ -89,12 +89,13 @@ message AccountAsset {
   uint32 margin_mode = 5;
 }
 
-// AccountPosition stores a perp position for (account, market). Size is signed:
-// size < 0 is short and opens with an ask; size >= 0 is long and opens with a bid.
+// AccountPosition stores a perp position for (account, market). Base size is
+// signed: base_size < 0 is short and opens with an ask; base_size >= 0 is long
+// and opens with a bid.
 message AccountPosition {
   uint64 account_index = 1;
   uint32 market_index = 2;
-  string size = 3 [
+  string base_size = 3 [
     (gogoproto.customtype) = "cosmossdk.io/math.Int",
     (gogoproto.nullable) = false
   ];
