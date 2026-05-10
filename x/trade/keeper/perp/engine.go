@@ -8,6 +8,7 @@ import (
 	"cosmossdk.io/math"
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
+	risktypes "github.com/perpdex/perpdex-l1/x/risk/types"
 	"github.com/perpdex/perpdex-l1/x/trade/types"
 )
 
@@ -61,21 +62,21 @@ type Fill struct {
 	TakerFee          uint32
 	MakerFee          uint32
 	NoFee             bool // liquidation/deleverage path
-	// NoRiskCheck skips the post-trade IsValidRiskChange call on
-	// BOTH taker and maker (and the matching SnapshotPreRisk pre-
-	// fill). Reserved for forced close-outs that must commit even
-	// when both sides regress (market-expiry exit; the insurance
-	// fund / ADL counterparty are willing absorbers by construction).
-	// Prefer SkipMakerRiskCheck / SkipTakerRiskCheck for
-	// finer-grained suppression; this flag is "skip everything".
+	// NoRiskCheck skips the post-trade IsValidRiskChangeFrom call on
+	// BOTH taker and maker (and the matching SnapshotRisk pre-fill).
+	// Reserved for forced close-outs that must commit even when both
+	// sides regress (market-expiry exit; the insurance fund / ADL
+	// counterparty are willing absorbers by construction). Prefer
+	// SkipMakerRiskCheck / SkipTakerRiskCheck for finer-grained
+	// suppression; this flag is "skip everything".
 	NoRiskCheck bool
 	// SkipMakerRiskCheck only skips the post-trade risk check on the
 	// MAKER side. Used to encode "the maker is the victim" patterns
 	// where the trade mechanically improves the maker (close-out at
-	// zero price) yet IsValidRiskChange would still reject because
-	// post is not HEALTHY. Modern liquidation paths instead let the
-	// engine validate both sides and rely on errMakerRejected /
-	// errTakerRejected handling in the matching loop, so this flag
+	// zero price) yet IsValidRiskChangeFrom would still reject
+	// because post is not HEALTHY. Modern liquidation paths instead
+	// let the engine validate both sides and rely on errMakerRejected
+	// / errTakerRejected handling in the matching loop, so this flag
 	// is only kept for niche "we know the maker is being closed by
 	// design" callers.
 	SkipMakerRiskCheck bool
@@ -134,7 +135,7 @@ type Fill struct {
 //     collateral (lighter `calculate_isolated_margin_change`) and pre-
 //     check `available_cross_collateral >= margin_delta`
 //  7. update OI using `|position|` deltas (both sides, divided by 2)
-//  8. validate IsValidRiskChange for BOTH taker and maker
+//  8. validate IsValidRiskChangeFrom for BOTH taker and maker
 //
 // Each per-side failure is wrapped into the corresponding maker / taker
 // sentinel so the matching loop can evict the bad maker (and continue)
@@ -148,20 +149,31 @@ func (e Engine) Apply(ctx context.Context, f Fill) error {
 		return err
 	}
 	// Snapshot pre-state risk only for sides that will actually
-	// enforce IsValidRiskChange downstream. NoRiskCheck masks both;
-	// the per-side Skip*RiskCheck flags mask just that side. This
-	// keeps the snapshot work proportional to the verification work
-	// and avoids dirtying risk caches for sides we never compare.
+	// enforce IsValidRiskChangeFrom downstream. NoRiskCheck masks
+	// both; the per-side Skip*RiskCheck flags mask just that side.
+	// This keeps the snapshot work proportional to the verification
+	// work and avoids walking position state for sides we never
+	// compare. Pre-state lives in function-local values for the rest
+	// of Apply so a later tx cannot accidentally compare against a
+	// sibling fill's pre-state.
+	var (
+		makerPre risktypes.PreRiskSnapshot
+		takerPre risktypes.PreRiskSnapshot
+	)
 	if !f.NoRiskCheck {
 		if !f.SkipMakerRiskCheck {
-			if err := e.riskKeeper.SnapshotPreRisk(ctx, f.MakerAccountIndex); err != nil {
+			pre, err := e.riskKeeper.SnapshotRisk(ctx, f.MakerAccountIndex)
+			if err != nil {
 				return err
 			}
+			makerPre = pre
 		}
 		if !f.SkipTakerRiskCheck {
-			if err := e.riskKeeper.SnapshotPreRisk(ctx, f.TakerAccountIndex); err != nil {
+			pre, err := e.riskKeeper.SnapshotRisk(ctx, f.TakerAccountIndex)
+			if err != nil {
 				return err
 			}
+			takerPre = pre
 		}
 	}
 
@@ -281,14 +293,20 @@ func (e Engine) Apply(ctx context.Context, f Fill) error {
 	//     path skips the deleverager check (relying on a separate
 	//     pre-trade collateral-sufficiency guard instead). User-ADL
 	//     keeps both flags off and runs full defense-in-depth.
-	for _, idx := range []uint64{f.TakerAccountIndex, f.MakerAccountIndex} {
-		if f.SkipMakerRiskCheck && idx == f.MakerAccountIndex {
+	for _, side := range []struct {
+		idx uint64
+		pre risktypes.PreRiskSnapshot
+	}{
+		{f.TakerAccountIndex, takerPre},
+		{f.MakerAccountIndex, makerPre},
+	} {
+		if f.SkipMakerRiskCheck && side.idx == f.MakerAccountIndex {
 			continue
 		}
-		if f.SkipTakerRiskCheck && idx == f.TakerAccountIndex {
+		if f.SkipTakerRiskCheck && side.idx == f.TakerAccountIndex {
 			continue
 		}
-		ok, err := e.riskKeeper.IsValidRiskChange(ctx, idx)
+		ok, err := e.riskKeeper.IsValidRiskChangeFrom(ctx, side.idx, side.pre)
 		if err != nil {
 			return err
 		}
@@ -297,12 +315,12 @@ func (e Engine) Apply(ctx context.Context, f Fill) error {
 			// loop can evict a bad maker (and continue) without
 			// reverting the entire taker tx, while a bad taker
 			// stops further fills but keeps the prior ones.
-			if idx == f.MakerAccountIndex {
+			if side.idx == f.MakerAccountIndex {
 				return sdkerrors.Wrapf(types.ErrMakerRiskRegression,
-					"account %d", idx)
+					"account %d", side.idx)
 			}
 			return sdkerrors.Wrapf(types.ErrTakerRiskRegression,
-				"account %d", idx)
+				"account %d", side.idx)
 		}
 	}
 	return nil

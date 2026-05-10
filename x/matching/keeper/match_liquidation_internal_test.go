@@ -68,7 +68,7 @@ func (s *stubRisk) GetIsolatedHealthStatus(_ context.Context, acc uint64, mkt ui
 //   - ZeroPrice         = forwarded from MatchLiquidationOrder arg
 //   - LiquidationFeeBps = forwarded from MatchLiquidationOrder arg
 //   - LiquidationFeeRecipient = forwarded from MatchLiquidationOrder arg
-//   - NoRiskCheck       = false; both sides go through IsValidRiskChange
+//   - NoRiskCheck       = false; both sides go through IsValidRiskChangeFrom
 //     post-trade, mirroring Lighter
 //     `matching_engine.rs:1801,1843` for liquidation orders. Recoverable
 //     rejections flow through errMakerRejected / errTakerRejected.

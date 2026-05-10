@@ -7,91 +7,125 @@ import (
 	"cosmossdk.io/math"
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
+	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
+	markettypes "github.com/perpdex/perpdex-l1/x/market/types"
 	"github.com/perpdex/perpdex-l1/x/risk/types"
 )
 
-// liquidation.go owns the math the liquidation keeper drives directly:
+// liquidation.go owns the math the liquidation keeper drives:
 //
-//   - GetPositionZeroPrice returns the partial-liquidation reference
-//     price ("zero price") that keeper-bot driven `MsgLiquidate` quotes.
-//   - SimulateRiskAfterTakeover previews the cross-account RiskParameters
-//     a pool / IF would inherit if it absorbed `delta` of `marketIdx`,
-//     so the LLP waterfall can short-circuit before submitting a Msg.
-//   - quoTowardZero is a tiny shared division helper used by both.
-//
-// Cohesive grouping with risk_change / cross / isolated would have
-// either polluted those files with liquidation-specific knowledge
-// (zero price formula, takeover simulation) or required scattering
-// liquidation entry points across all of them. Split to keep both
-// halves narrowly scoped.
+//   - GetPositionZeroPrice: gRPC entry point that returns the partial-
+//     liquidation reference price ("zero price") for one (account,
+//     market) pair. Mirrors the Lighter spec's `zero_price` formula.
+//   - SimulateRiskAfterTakeover: previews the cross RiskParameters the
+//     LLP / Insurance Fund would inherit if it absorbed `delta` of
+//     `marketIdx`, so the LLP waterfall can short-circuit before
+//     submitting a Msg.
+//   - GetLiquidationRiskSnapshot: cohesive (account, market) bundle
+//     consumed by ADL ranking and autoADL. Returns the position, mark
+//     price, market details, the position's relevant RiskParameters,
+//     the account's cross aggregate, and the pre-computed zero price.
+//   - GetZeroPriceSnapshot: lightweight companion for callers that
+//     only need (position, zero price). Used by the Liquidate /
+//     Deleverage Msg handlers and the gRPC zero-price query.
 
-// GetPositionZeroPrice returns the price at which liquidating a portion
-// of the position would leave the account's TAV/MMR ratio invariant —
-// i.e. the "zero price" defined in the Lighter spec:
+// GetLiquidationRiskSnapshot returns the cohesive (pos, mark, md, Risk,
+// CrossRisk, ZeroPrice) bundle for one (accountIdx, marketIdx) pair.
+// `Risk` is the position's targeted envelope (cross aggregate or
+// isolated per-position params); `CrossRisk` is always the account's
+// cross aggregate so ADL ranking can keep using leverage on the cross
+// aggregate even for isolated candidates.
+//
+// The snapshot represents a single CONSISTENT view of (account,
+// market) at the moment of the call: position is read first, then
+// the targeted market's mark/md, then the cross (and optionally
+// isolated) risk aggregate. Note that the cross aggregation walks
+// the account's other positions and queries each of THEIR mark
+// prices independently — the snapshot does not yet share a per-block
+// oracle cache, so a follow-up that fans those reads through a
+// shared cache is still possible. Snapshots are values and MUST be
+// re-built after any state mutation (fill, funding settlement,
+// collateral move, oracle refresh) — threading a snapshot across a
+// mutation will feed stale TAV / MMR into downstream computations.
+//
+// Empty-position short-circuit: a caller asking for a snapshot of a
+// closed position gets a zero-valued snapshot back without an oracle
+// read. This preserves the gRPC `GetPositionZeroPrice` semantics
+// (zero on empty position, regardless of oracle state) and lets the
+// liquidation msg handlers report "victim has no position" before
+// any oracle dependency can fail.
+func (k Keeper) GetLiquidationRiskSnapshot(
+	ctx context.Context,
+	accountIdx uint64,
+	marketIdx uint32,
+) (types.LiquidationRiskSnapshot, error) {
+	pos, err := k.accountKeeper.GetPosition(ctx, accountIdx, marketIdx)
+	if err != nil {
+		return types.LiquidationRiskSnapshot{}, err
+	}
+	if pos.Position.IsZero() {
+		return types.LiquidationRiskSnapshot{Position: pos}, nil
+	}
+	mark, md, err := k.GetMarkAndMarketDetails(ctx, marketIdx)
+	if err != nil {
+		return types.LiquidationRiskSnapshot{}, err
+	}
+	crossRi, err := k.ComputeRiskInfo(ctx, accountIdx)
+	if err != nil {
+		return types.LiquidationRiskSnapshot{}, err
+	}
+	var crossRP types.RiskParameters
+	if crossRi.CurrentRiskParameters != nil {
+		crossRP = *crossRi.CurrentRiskParameters
+	}
+	risk := crossRP
+	if pos.MarginMode == perptypes.IsolatedMargin {
+		rp, err := k.ComputeIsolatedRisk(ctx, accountIdx, marketIdx)
+		if err != nil {
+			return types.LiquidationRiskSnapshot{}, err
+		}
+		risk = rp
+	}
+	zp := pureComputeZeroPrice(pos, mark, md, risk.TotalAccountValue, risk.MaintenanceMarginRequirement)
+	return types.LiquidationRiskSnapshot{
+		Position:      pos,
+		MarkPrice:     mark,
+		MarketDetails: md,
+		Risk:          risk,
+		CrossRisk:     crossRP,
+		ZeroPrice:     zp,
+	}, nil
+}
+
+// pureComputeZeroPrice is the package-private zero-price formula. The
+// returned uint32 satisfies (0, MaxOrderPrice]; zero-position and
+// zero-mark short-circuit to 0 because the caller is expected to
+// detect those cases before quoting a price.
+//
+// The formula is:
 //
 //	zeroPrice_long  = mark * (1 - sign(pos) * M_i * TAV / MMR)
 //	zeroPrice_short = mark * (1 + |sign(pos)| * M_i * TAV / MMR)
 //
-// where:
-//
-//   - `mark` is the live mark price for the market;
-//   - `M_i` is the maintenance margin fraction (basis points / MarginTick);
-//   - `TAV` is the total account value of the relevant scope (cross
-//     account aggregate for cross positions; AllocatedMargin + uPnL of
-//     the isolated position for isolated positions);
-//   - `MMR` is the corresponding maintenance margin requirement.
-//
-// The return is the unsigned uint32 price used by the orderbook engine.
-// Bankrupt accounts (TAV < 0) are not partially liquidatable; callers
-// must short-circuit before invoking this.
-func (k Keeper) GetPositionZeroPrice(ctx context.Context, accountIdx uint64, marketIdx uint32) (uint32, error) {
-	pos, err := k.accountKeeper.GetPosition(ctx, accountIdx, marketIdx)
-	if err != nil {
-		return 0, err
+// where `M_i` is `md.MaintenanceMarginFraction` (basis points /
+// MarginTick) and `tav` / `mmr` are the relevant scope's totals
+// (cross aggregate or isolated per-position).
+func pureComputeZeroPrice(
+	pos accounttypes.AccountPosition,
+	mark uint32,
+	md markettypes.MarketDetails,
+	tav, mmr math.Int,
+) uint32 {
+	if pos.Position.IsZero() || mark == 0 {
+		return 0
 	}
-	if pos.Position.IsZero() {
-		return 0, nil
-	}
-	mark, err := k.resolveMarkPrice(ctx, marketIdx)
-	if err != nil {
-		return 0, err
-	}
-	md, err := k.marketKeeper.GetMarketDetails(ctx, marketIdx)
-	if err != nil {
-		return 0, err
-	}
-
-	var tav, mmr math.Int
-	if pos.MarginMode == perptypes.IsolatedMargin {
-		rp, err := k.ComputeIsolatedRisk(ctx, accountIdx, marketIdx)
-		if err != nil {
-			return 0, err
-		}
-		tav = rp.TotalAccountValue
-		mmr = rp.MaintenanceMarginRequirement
-	} else {
-		ri, err := k.ComputeRiskInfo(ctx, accountIdx)
-		if err != nil {
-			return 0, err
-		}
-		if ri.CrossRiskParameters == nil {
-			return mark, nil
-		}
-		tav = ri.CrossRiskParameters.TotalAccountValue
-		mmr = ri.CrossRiskParameters.MaintenanceMarginRequirement
-	}
-
 	markBig := math.NewIntFromUint64(uint64(mark))
 	// Degenerate case: no maintenance requirement (only happens when
-	// the position has been fully closed — not reachable here since
-	// pos.Position.IsZero is guarded above — or for malformed market
-	// configs). Fall back to the mark.
+	// the position has been fully closed — guarded above — or for
+	// malformed market configs). Fall back to the mark.
 	if mmr.IsZero() {
-		return mark, nil
+		return mark
 	}
-	// adjustment = mark * M_i * TAV / (MMR * MarginTick).
-	// adjustment carries the SIGN of TAV; we then add or subtract it
-	// based on the position direction.
 	mi := math.NewIntFromUint64(uint64(md.MaintenanceMarginFraction))
 	tickBig := math.NewIntFromUint64(uint64(perptypes.MarginTick))
 	num := markBig.Mul(mi).Mul(tav)
@@ -107,13 +141,74 @@ func (k Keeper) GetPositionZeroPrice(ctx context.Context, accountIdx uint64, mar
 		zp = markBig.Sub(adjustment)
 	}
 	if zp.IsNegative() || zp.IsZero() {
-		return 1, nil
+		return 1
 	}
 	maxPrice := math.NewIntFromUint64(uint64(perptypes.MaxOrderPrice))
 	if zp.GT(maxPrice) {
-		return perptypes.MaxOrderPrice, nil
+		return perptypes.MaxOrderPrice
 	}
-	return uint32(zp.Uint64()), nil
+	return uint32(zp.Uint64())
+}
+
+// GetPositionZeroPrice returns the price at which liquidating a
+// portion of the position would leave the account's TAV/MMR ratio
+// invariant — the "zero price" defined in the Lighter spec. Bankrupt
+// accounts (TAV < 0) are not partially liquidatable; callers must
+// short-circuit before invoking this.
+//
+// Public entry point used by the gRPC query path. The ADL hot loops
+// use `GetLiquidationRiskSnapshot` instead so the snapshot's other
+// fields (Risk / CrossRisk / mark / md) are not thrown away.
+func (k Keeper) GetPositionZeroPrice(ctx context.Context, accountIdx uint64, marketIdx uint32) (uint32, error) {
+	snap, err := k.GetZeroPriceSnapshot(ctx, accountIdx, marketIdx)
+	if err != nil {
+		return 0, err
+	}
+	return snap.ZeroPrice, nil
+}
+
+// GetZeroPriceSnapshot is the lightweight companion to
+// GetLiquidationRiskSnapshot for callers that only need the position
+// and its zero price (the gRPC zero-price query, the Liquidate /
+// Deleverage Msg handlers). It fans the same cross / isolated risk
+// aggregation the full snapshot does — but only for the relevant
+// scope — and skips the field bookkeeping (CrossRisk, MarketDetails)
+// that ADL ranking needs. Empty positions short-circuit to ZP=0
+// without touching the oracle, matching the full snapshot.
+func (k Keeper) GetZeroPriceSnapshot(
+	ctx context.Context,
+	accountIdx uint64,
+	marketIdx uint32,
+) (types.ZeroPriceSnapshot, error) {
+	pos, err := k.accountKeeper.GetPosition(ctx, accountIdx, marketIdx)
+	if err != nil {
+		return types.ZeroPriceSnapshot{}, err
+	}
+	if pos.Position.IsZero() {
+		return types.ZeroPriceSnapshot{Position: pos}, nil
+	}
+	mark, md, err := k.GetMarkAndMarketDetails(ctx, marketIdx)
+	if err != nil {
+		return types.ZeroPriceSnapshot{}, err
+	}
+	var risk types.RiskParameters
+	if pos.MarginMode == perptypes.IsolatedMargin {
+		rp, err := k.ComputeIsolatedRisk(ctx, accountIdx, marketIdx)
+		if err != nil {
+			return types.ZeroPriceSnapshot{}, err
+		}
+		risk = rp
+	} else {
+		ri, err := k.ComputeRiskInfo(ctx, accountIdx)
+		if err != nil {
+			return types.ZeroPriceSnapshot{}, err
+		}
+		if ri.CurrentRiskParameters != nil {
+			risk = *ri.CurrentRiskParameters
+		}
+	}
+	zp := pureComputeZeroPrice(pos, mark, md, risk.TotalAccountValue, risk.MaintenanceMarginRequirement)
+	return types.ZeroPriceSnapshot{Position: pos, ZeroPrice: zp}, nil
 }
 
 // quoTowardZero divides `num/denom` rounding toward zero so that signed
@@ -128,23 +223,21 @@ func quoTowardZero(num, denom math.Int) math.Int {
 }
 
 // SimulateRiskAfterTakeover computes what the account's CROSS risk
-// parameters would look like if `delta` (signed base size) of `marketIdx`
-// were ADDED to the account's existing position at `entryPrice`. This
-// is used by the LLP/insurance-fund take-over routine to preview
-// whether absorbing a victim's position would push the LLP below its
-// initial margin requirement.
+// parameters would look like if `delta` (signed base size) of
+// `marketIdx` were ADDED to the account's existing position at
+// `entryPrice`. Used by the LLP / insurance-fund take-over routine to
+// preview whether absorbing a victim's position would push the LLP
+// below its initial-margin requirement.
 //
 // `entryPrice` is the price at which the takeover would be settled
-// (typically the victim's zero price). `delta` carries the sign of the
-// position the LLP would inherit.
+// (typically the victim's zero price). `delta` carries the sign of
+// the position the LLP would inherit.
 //
-// The simulation ONLY updates the targeted position's |size| and
-// entry_quote contribution to IM/MM/CM/uPnL; it does NOT mutate any
-// state. Returned RiskParameters are the would-be cross aggregates.
-//
-// Internally we drive the post-state through `pos.ApplyFill` so the
-// four-quadrant entry_quote arithmetic stays in lockstep with
-// `applyPositionChange` (single source of truth on lighter parity).
+// Refusing isolated targets here is intentional: LLP and Insurance
+// Fund positions MUST be cross-margined (the pool acts as the cross
+// counterparty by mandate). An isolated position on the LLP indicates
+// a misconfiguration upstream; we surface it as an error so the
+// EndBlocker logs it instead of silently mis-simulating the takeover.
 func (k Keeper) SimulateRiskAfterTakeover(
 	ctx context.Context,
 	accountIdx uint64,
@@ -168,19 +261,32 @@ func (k Keeper) SimulateRiskAfterTakeover(
 		return types.RiskParameters{}, err
 	}
 	if pos.MarginMode == perptypes.IsolatedMargin {
-		// LLP / IF positions are always cross-margined; refusing here
-		// surfaces the misconfiguration.
 		return types.RiskParameters{}, fmt.Errorf("simulate_takeover: account %d market %d is isolated", accountIdx, marketIdx)
 	}
-	mark, err := k.resolveMarkPrice(ctx, marketIdx)
+	mark, md, err := k.GetMarkAndMarketDetails(ctx, marketIdx)
 	if err != nil {
 		return types.RiskParameters{}, err
 	}
-	md, err := k.marketKeeper.GetMarketDetails(ctx, marketIdx)
-	if err != nil {
-		return types.RiskParameters{}, err
-	}
+	return pureApplySimulatedTakeover(pos, cur, mark, md, delta, entryPrice), nil
+}
 
+// pureApplySimulatedTakeover folds `delta` of `pos` (settled at
+// `entryPrice`) into a starting cross aggregate `current` and returns
+// the would-be post-takeover RiskParameters. No state is mutated; the
+// post-state is driven through the canonical `pos.ApplyFill` so the
+// simulation cannot drift from the engine's settlement maths.
+func pureApplySimulatedTakeover(
+	pos accounttypes.AccountPosition,
+	current types.RiskParameters,
+	mark uint32,
+	md markettypes.MarketDetails,
+	delta math.Int,
+	entryPrice uint32,
+) types.RiskParameters {
+	if delta.IsZero() {
+		return current
+	}
+	cur := current
 	// Subtract the OLD contribution of (account, market) from cur.
 	if !pos.Position.IsZero() {
 		cur.InitialMarginRequirement = cur.InitialMarginRequirement.Sub(pos.InitialMargin(mark, md))
@@ -199,5 +305,5 @@ func (k Keeper) SimulateRiskAfterTakeover(
 		cur.CloseOutMarginRequirement = cur.CloseOutMarginRequirement.Add(newPos.CloseOutMargin(mark, md))
 		cur.TotalAccountValue = cur.TotalAccountValue.Add(newPos.UnrealizedPnL(mark))
 	}
-	return cur, nil
+	return cur
 }

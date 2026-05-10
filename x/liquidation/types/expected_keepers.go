@@ -42,13 +42,13 @@ type MarketKeeper interface {
 type RiskKeeper interface {
 	GetHealthStatus(ctx context.Context, accountIdx uint64) (uint32, error)
 	GetIsolatedHealthStatus(ctx context.Context, accountIdx uint64, marketIdx uint32) (uint32, error)
-	GetPositionZeroPrice(ctx context.Context, accountIdx uint64, marketIdx uint32) (uint32, error)
-	GetPositionMarkValue(ctx context.Context, accountIdx uint64, marketIdx uint32) (math.Int, error)
-	GetPositionUnrealizedPnL(ctx context.Context, accountIdx uint64, marketIdx uint32) (math.Int, error)
 	// SimulateRiskAfterTakeover previews the cross risk parameters
 	// the account would have if it inherited `delta` of `marketIdx`
 	// settled at `entryPrice`. Used by the LLP / insurance fund
-	// take-over routine to enforce "post.IM <= post.TAV".
+	// take-over routine to enforce "post.IM <= post.TAV". Refuses
+	// isolated targets with an error so an LLP/IF position
+	// misconfigured as isolated is surfaced rather than silently
+	// mis-simulated.
 	SimulateRiskAfterTakeover(
 		ctx context.Context,
 		accountIdx uint64,
@@ -56,10 +56,38 @@ type RiskKeeper interface {
 		delta math.Int,
 		entryPrice uint32,
 	) (risktypes.RiskParameters, error)
-	// ComputeRiskInfo / ComputeIsolatedRisk are needed by the ADL
-	// queue ranking and the LLP IMR check.
-	ComputeRiskInfo(ctx context.Context, accountIdx uint64) (risktypes.RiskInfo, error)
-	ComputeIsolatedRisk(ctx context.Context, accountIdx uint64, marketIdx uint32) (risktypes.RiskParameters, error)
+	// GetLiquidationRiskSnapshot returns the cohesive (pos, mark,
+	// md, Risk, CrossRisk, ZeroPrice) bundle for one (account,
+	// market) pair. Scoped to ADL ranking and autoADL — those
+	// callers consume `snap.Risk` / `snap.CrossRisk` for leverage
+	// scoring and the FULL/BANKRUPTCY self-gate. Liquidate /
+	// Deleverage use GetZeroPriceSnapshot instead because they only
+	// need the position and zero price.
+	//
+	// Snapshots are values: they represent the state at the moment
+	// of the call and MUST be re-built after any state mutation.
+	// Threading a snapshot across a fill / settlement boundary will
+	// feed stale TAV / MMR into downstream computations.
+	GetLiquidationRiskSnapshot(
+		ctx context.Context,
+		accountIdx uint64,
+		marketIdx uint32,
+	) (risktypes.LiquidationRiskSnapshot, error)
+	// GetZeroPriceSnapshot is the lightweight (pos, ZeroPrice)
+	// counterpart used by the Liquidate and Deleverage Msg handlers
+	// (and the gRPC zero-price query) where the Risk / CrossRisk
+	// envelopes from the full snapshot would just be discarded.
+	GetZeroPriceSnapshot(
+		ctx context.Context,
+		accountIdx uint64,
+		marketIdx uint32,
+	) (risktypes.ZeroPriceSnapshot, error)
+	// GetMarkAndMarketDetails returns the live mark price and
+	// MarketDetails row for `marketIdx` in a single round-trip. Used
+	// by `rankVictimPositionsByUPnL` which only needs the mark for
+	// ascending-uPnL ordering and would otherwise have to build a full
+	// snapshot per ranked position.
+	GetMarkAndMarketDetails(ctx context.Context, marketIdx uint32) (uint32, markettypes.MarketDetails, error)
 }
 
 // FundingKeeper provides funding-settlement primitives. Used by the

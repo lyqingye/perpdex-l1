@@ -31,8 +31,9 @@ type stubAccountKeeper struct {
 }
 
 // Pointer receivers so the test can mutate `acc`/`pos` AFTER
-// constructing the keeper (e.g. for pre/post-state IsValidRiskChange
-// scenarios) without rebuilding the whole keeper instance.
+// constructing the keeper (e.g. for pre/post-state
+// IsValidRiskChangeFrom scenarios) without rebuilding the whole
+// keeper instance.
 func (s *stubAccountKeeper) GetAccount(_ context.Context, _ uint64) (accounttypes.Account, error) {
 	return s.acc, nil
 }
@@ -145,9 +146,10 @@ func TestComputeRiskInfo_ZeroMarkPriceRejected(t *testing.T) {
 	require.ErrorIs(t, err, risktypes.ErrZeroMarkPrice)
 }
 
-// TestIsValidRiskChange_NoPreStateFailClosed verifies that an unhealthy post
-// state without a pre-state snapshot fails closed (audit Blocker risk-3).
-func TestIsValidRiskChange_NoPreStateFailClosed(t *testing.T) {
+// TestIsValidRiskChangeFrom_NoPreStateFailClosed verifies that an
+// unhealthy post state without a pre-state snapshot fails closed
+// (audit Blocker risk-3).
+func TestIsValidRiskChangeFrom_NoPreStateFailClosed(t *testing.T) {
 	// Position bought at 100_000 but mark is 10_000, so the account is
 	// deeply under water → BANKRUPTCY in the post-state.
 	ak := stubAccountKeeper{
@@ -165,30 +167,9 @@ func TestIsValidRiskChange_NoPreStateFailClosed(t *testing.T) {
 	ok := stubOracleKeeper{price: oracletypes.OraclePrice{MarkPrice: 10_000}}
 	k, ctx := makeKeeper(t, &ak, mk, ok)
 
-	ok2, err := k.IsValidRiskChange(ctx, 1)
+	ok2, err := k.IsValidRiskChangeFrom(ctx, 1, risktypes.PreRiskSnapshot{})
 	require.NoError(t, err)
 	require.False(t, ok2)
-}
-
-// TestGetPositionMarkValue_ZeroForEmptyPosition is a sanity check: empty
-// positions should not require a live oracle.
-func TestGetPositionMarkValue_ZeroForEmptyPosition(t *testing.T) {
-	ak := stubAccountKeeper{
-		acc: accounttypes.Account{AccountIndex: 1, Collateral: math.ZeroInt()},
-		pos: accounttypes.AccountPosition{
-			AccountIndex: 1, MarketIndex: 0,
-			Position:                 math.ZeroInt(),
-			EntryQuote:               math.ZeroInt(),
-			LastFundingRatePrefixSum: math.ZeroInt(),
-			AllocatedMargin:          math.ZeroInt(),
-		},
-	}
-	ok := stubOracleKeeper{err: oracletypes.ErrStalePrice}
-	k, ctx := makeKeeper(t, &ak, stubMarketKeeper{}, ok)
-
-	v, err := k.GetPositionMarkValue(ctx, 1, 0)
-	require.NoError(t, err)
-	require.True(t, v.IsZero())
 }
 
 // TestGetPositionZeroPrice_LongMarkBased verifies the new mark-based
@@ -372,11 +353,11 @@ func TestGetIsolatedHealthStatus_PerMarket(t *testing.T) {
 		"isolated TAV<0 must classify as BANKRUPTCY independently")
 }
 
-// TestIsValidRiskChange_PreLiquidationRejectsMMRGrowth verifies the
-// Lighter PRE rule. With pre.MMR snapshotted, a post-state with
+// TestIsValidRiskChangeFrom_PreLiquidationRejectsMMRGrowth verifies
+// the Lighter PRE rule. With pre.MMR snapshotted, a post-state with
 // strictly larger MMR (i.e. account opened a new position) must be
 // rejected even if post is still PRE_LIQUIDATION.
-func TestIsValidRiskChange_PreLiquidationRejectsMMRGrowth(t *testing.T) {
+func TestIsValidRiskChangeFrom_PreLiquidationRejectsMMRGrowth(t *testing.T) {
 	ak := stubAccountKeeper{
 		acc: accounttypes.Account{AccountIndex: 1, Collateral: math.NewInt(1_000)},
 		pos: accounttypes.AccountPosition{
@@ -410,7 +391,8 @@ func TestIsValidRiskChange_PreLiquidationRejectsMMRGrowth(t *testing.T) {
 	k, ctx := makeKeeper(t, &ak, mk, ok)
 
 	// Snapshot pre-state: PRE class.
-	require.NoError(t, k.SnapshotPreRisk(ctx, 1))
+	pre, err := k.SnapshotRisk(ctx, 1)
+	require.NoError(t, err)
 	// Sanity: pre is PRE.
 	preStatus, err := k.GetHealthStatus(ctx, 1)
 	require.NoError(t, err)
@@ -426,15 +408,16 @@ func TestIsValidRiskChange_PreLiquidationRejectsMMRGrowth(t *testing.T) {
 	// collateral=1000, uPnL=1500 → TAV=2500 (PRE). uPnL=pos*mark -
 	// entry ⇒ entry = 30_000 - 1500 = 28_500.
 	ak.pos.EntryQuote = math.NewInt(28_500)
-	ok2, err := k.IsValidRiskChange(ctx, 1)
+	ok2, err := k.IsValidRiskChangeFrom(ctx, 1, pre)
 	require.NoError(t, err)
 	require.False(t, ok2,
 		"PRE → PRE with larger MMR must be rejected (Lighter no-size-up rule)")
 }
 
-// TestIsValidRiskChange_PreLiquidationAllowsReduceOnly verifies the
-// inverse: if MMR shrinks while still in PRE, the change is accepted.
-func TestIsValidRiskChange_PreLiquidationAllowsReduceOnly(t *testing.T) {
+// TestIsValidRiskChangeFrom_PreLiquidationAllowsReduceOnly verifies
+// the inverse: if MMR shrinks while still in PRE, the change is
+// accepted.
+func TestIsValidRiskChangeFrom_PreLiquidationAllowsReduceOnly(t *testing.T) {
 	ak := stubAccountKeeper{
 		acc: accounttypes.Account{AccountIndex: 1, Collateral: math.NewInt(1_000)},
 		pos: accounttypes.AccountPosition{
@@ -454,13 +437,50 @@ func TestIsValidRiskChange_PreLiquidationAllowsReduceOnly(t *testing.T) {
 	ok := stubOracleKeeper{price: oracletypes.OraclePrice{MarkPrice: 1000}}
 	k, ctx := makeKeeper(t, &ak, mk, ok)
 
-	require.NoError(t, k.SnapshotPreRisk(ctx, 1))
+	pre, err := k.SnapshotRisk(ctx, 1)
+	require.NoError(t, err)
 
 	// Post: shrink position from 20 to 10. uPnL/collateral roughly
 	// halves; TAV still > MMR; class stays at PRE or improves.
 	ak.pos.Position = math.NewInt(10)
 	ak.pos.EntryQuote = math.NewInt(9_750)
-	ok2, err := k.IsValidRiskChange(ctx, 1)
+	ok2, err := k.IsValidRiskChangeFrom(ctx, 1, pre)
 	require.NoError(t, err)
 	require.True(t, ok2, "shrinking position in PRE must be allowed")
+}
+
+// TestGetLiquidationRiskSnapshot_EmptyPositionShortCircuitsOracle
+// pins the invariant that a snapshot for an empty position must not
+// depend on oracle health: callers (gRPC GetPositionZeroPrice,
+// Liquidate, Deleverage) only want the "no position" short-circuit
+// and must not surface oracle errors. We intentionally configure the
+// oracle to error so a leak would surface as a non-nil error.
+func TestGetLiquidationRiskSnapshot_EmptyPositionShortCircuitsOracle(t *testing.T) {
+	// Account holds NO position in market 0; stub returns the
+	// zero-valued AccountPosition for that lookup.
+	ak := stubAccountKeeper{
+		acc: accounttypes.Account{AccountIndex: 1, Collateral: math.NewInt(1_000)},
+		pos: accounttypes.AccountPosition{
+			AccountIndex: 1, MarketIndex: 99 /* a different market */,
+			Position: math.ZeroInt(), EntryQuote: math.ZeroInt(),
+			LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
+		},
+	}
+	mk := stubMarketKeeper{md: markettypes.MarketDetails{}}
+	// Oracle would fail if asked. The snapshot must not ask.
+	ok := stubOracleKeeper{err: oracletypes.ErrStalePrice}
+	k, ctx := makeKeeper(t, &ak, mk, ok)
+
+	snap, err := k.GetLiquidationRiskSnapshot(ctx, 1, 0)
+	require.NoError(t, err,
+		"empty position must short-circuit before any oracle read")
+	require.True(t, snap.Position.Position.IsZero())
+	require.Equal(t, uint32(0), snap.MarkPrice)
+	require.Equal(t, uint32(0), snap.ZeroPrice)
+
+	// gRPC entry point must mirror the snapshot's short-circuit.
+	zp, err := k.GetPositionZeroPrice(ctx, 1, 0)
+	require.NoError(t, err,
+		"GetPositionZeroPrice must keep the empty-position semantics: 0 regardless of oracle health")
+	require.Equal(t, uint32(0), zp)
 }

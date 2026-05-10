@@ -3,8 +3,6 @@ package types
 import (
 	"context"
 
-	"cosmossdk.io/math"
-
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	assettypes "github.com/perpdex/perpdex-l1/x/asset/types"
@@ -38,19 +36,9 @@ type MarketKeeper interface {
 	GetMarket(ctx context.Context, index uint32) (markettypes.Market, error)
 }
 
-// RiskKeeper is consulted to ensure each state change leaves the account
-// healthy or strictly improving.
-type RiskKeeper interface {
-	IsValidRiskChange(ctx context.Context, accountIndex uint64) (bool, error)
-	GetAvailableCollateral(ctx context.Context, accountIndex uint64) (math.Int, error)
-	// GetTotalAccountValue returns TAV (collateral + signed unrealized PnL)
-	// across every market. Used for share NAV calculations.
-	GetTotalAccountValue(ctx context.Context, accountIndex uint64) (math.Int, error)
-	// GetHealthStatus mirrors x/risk health classification used by the
-	// freeze invariants (freeze requires HEALTHY).
-	GetHealthStatus(ctx context.Context, accountIndex uint64) (uint32, error)
-	// SnapshotPreRisk caches the current risk parameters for an account
-	// so a later IsValidRiskChange call can compare against them rather
-	// than only accepting strictly-healthy post-states.
-	SnapshotPreRisk(ctx context.Context, accountIndex uint64) error
-}
+// The RiskKeeper expected interface lives in x/account/keeper:
+// keeping it here would force x/account/types to import x/risk/types
+// (for PreRiskSnapshot), which would create a cycle because
+// x/risk/types already imports x/account/types for AccountPosition
+// in the LiquidationRiskSnapshot. Per Go idiom, the interface lives
+// next to the consumer (x/account/keeper) anyway.

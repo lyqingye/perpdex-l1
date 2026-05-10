@@ -22,8 +22,11 @@ import (
 //
 // Returns true iff the targeted position was fully absorbed; the
 // caller skips ADL on a true return. False return means the LLP would
-// have breached IMR or is frozen / nonexistent — caller falls back to
-// ADL for the residual size.
+// have breached IMR, is frozen / nonexistent, or the targeted
+// position is not the worst one yet — caller falls back to ADL for
+// the residual size. A non-nil error indicates an upstream invariant
+// violation (e.g., LLP / IF position misconfigured as isolated); the
+// EndBlocker logs and still falls through to autoADL.
 func (k Keeper) tryLLPAbsorb(
 	ctx context.Context,
 	victim uint64,
@@ -61,11 +64,18 @@ func (k Keeper) tryLLPAbsorb(
 		return false, nil
 	}
 
-	pos, err := k.accountKeeper.GetPosition(ctx, victim, marketIdx)
-	if err != nil || pos.Position.IsZero() {
+	// Snapshot the victim's targeted position fresh: any earlier
+	// LLP/ADL fill in this account's iteration may have shifted the
+	// cross aggregate, and the snapshot's ZeroPrice MUST come from
+	// the post-mutation TAV/MMR.
+	snap, err := k.riskKeeper.GetLiquidationRiskSnapshot(ctx, victim, marketIdx)
+	if err != nil {
 		return false, err
 	}
-	size := pos.Position.Abs()
+	if snap.Position.Position.IsZero() {
+		return false, nil
+	}
+	size := snap.Position.Position.Abs()
 	if !size.IsPositive() {
 		return false, nil
 	}
@@ -73,14 +83,19 @@ func (k Keeper) tryLLPAbsorb(
 	// LLP IMR check: simulate the takeover and require the LLP's
 	// post-state TAV >= IMR. The takeover delta is the position the
 	// LLP will inherit (opposite sign of victim, since LLP is the
-	// taker that offsets the victim's exposure).
-	llpDelta := pos.Position.Neg()
-	zeroPrice, err := k.riskKeeper.GetPositionZeroPrice(ctx, victim, marketIdx)
-	if err != nil {
-		return false, err
-	}
+	// taker that offsets the victim's exposure). The wrapper
+	// re-reads the LLP's cross state, so even if a sibling market
+	// just absorbed against the LLP earlier in this account's
+	// iteration the gate still uses fresh TAV / IMR.
+	//
+	// SimulateRiskAfterTakeover refuses isolated targets with an
+	// error (LLP / IF positions MUST be cross). We surface that as a
+	// non-nil error rather than swallowing it as a silent fallback —
+	// processAccount logs the misconfiguration and still falls
+	// through to autoADL.
+	llpDelta := snap.Position.Position.Neg()
 	postRP, err := k.riskKeeper.SimulateRiskAfterTakeover(
-		ctx, perptypes.InsuranceFundOperatorAccountIdx, marketIdx, llpDelta, zeroPrice,
+		ctx, perptypes.InsuranceFundOperatorAccountIdx, marketIdx, llpDelta, snap.ZeroPrice,
 	)
 	if err != nil {
 		return false, err
@@ -122,20 +137,36 @@ type rankedPosition struct {
 
 // rankVictimPositionsByUPnL returns the victim's non-zero positions
 // sorted by ascending unrealized PnL (worst first), as the Lighter
-// spec requires for LLP takeover.
+// spec requires for LLP takeover. Mark prices are fetched once per
+// distinct MarketIndex encountered and reused; uPnL is derived
+// directly from the iterated position via `pos.UnrealizedPnL(mark)`.
+//
+// Ranking does NOT materialise a full risk snapshot per position —
+// only the mark is needed to score uPnL, and a snapshot's extra cross
+// aggregation would be O(positions^2) for the same victim.
 func (k Keeper) rankVictimPositionsByUPnL(ctx context.Context, victim uint64) ([]rankedPosition, error) {
 	out := []rankedPosition{}
+	marks := map[uint32]uint32{}
 	if err := k.accountKeeper.IterateAccountPositions(ctx, victim, func(pos accounttypes.AccountPosition) bool {
 		if pos.Position.IsZero() {
 			return false
 		}
-		uPnL, err := k.riskKeeper.GetPositionUnrealizedPnL(ctx, victim, pos.MarketIndex)
-		if err != nil {
-			// Stale oracle: skip this market in the ranking, the
-			// outer EndBlocker will surface the error separately.
-			return false
+		mark, ok := marks[pos.MarketIndex]
+		if !ok {
+			m, _, err := k.riskKeeper.GetMarkAndMarketDetails(ctx, pos.MarketIndex)
+			if err != nil {
+				// Stale oracle: skip this market in the ranking,
+				// the outer EndBlocker will surface the error
+				// separately.
+				return false
+			}
+			mark = m
+			marks[pos.MarketIndex] = mark
 		}
-		out = append(out, rankedPosition{MarketIndex: pos.MarketIndex, UnrealizedPnL: uPnL})
+		out = append(out, rankedPosition{
+			MarketIndex:   pos.MarketIndex,
+			UnrealizedPnL: pos.UnrealizedPnL(mark),
+		})
 		return false
 	}); err != nil {
 		return nil, err

@@ -46,10 +46,11 @@ import (
 // `tryLLPAbsorb` IMR simulation), not via a silent collateral
 // transfer.
 func (k Keeper) Liquidate(ctx context.Context, victim uint64, marketIdx uint32, baseAmount uint64) error {
-	pos, err := k.accountKeeper.GetPosition(ctx, victim, marketIdx)
+	snap, err := k.riskKeeper.GetZeroPriceSnapshot(ctx, victim, marketIdx)
 	if err != nil {
 		return err
 	}
+	pos := snap.Position
 	if pos.Position.IsZero() {
 		return types.ErrNotLiquidatable.Wrap("victim has no position")
 	}
@@ -92,10 +93,7 @@ func (k Keeper) Liquidate(ctx context.Context, victim uint64, marketIdx uint32, 
 			return err
 		}
 	}
-	zeroPrice, err := k.riskKeeper.GetPositionZeroPrice(ctx, victim, marketIdx)
-	if err != nil {
-		return err
-	}
+	zeroPrice := snap.ZeroPrice
 	market, err := k.marketKeeper.GetMarket(ctx, marketIdx)
 	if err != nil {
 		return err
@@ -134,7 +132,7 @@ func (k Keeper) Liquidate(ctx context.Context, victim uint64, marketIdx uint32, 
 // Risk-check policy (Lighter `InternalDeleverageTx` parity, with
 // perpdex defense-in-depth on the deleverager side):
 //
-//   - Bankrupt (maker) post-trade `IsValidRiskChange` is ALWAYS run.
+//   - Bankrupt (maker) post-trade `IsValidRiskChangeFrom` is ALWAYS run.
 //   - LLP / Insurance Fund deleveragers (PUBLIC_POOL / INSURANCE_FUND
 //     account types, or the canonical InsuranceFundOperator account)
 //     SKIP the post-trade risk check on the deleverager side — they
@@ -170,10 +168,11 @@ func (k Keeper) Liquidate(ctx context.Context, victim uint64, marketIdx uint32, 
 // non-negative (it gains collateral from the trade) the check is
 // trivially satisfied.
 func (k Keeper) Deleverage(ctx context.Context, victim uint64, marketIdx uint32, deleverager uint64, baseAmount uint64) error {
-	pos, err := k.accountKeeper.GetPosition(ctx, victim, marketIdx)
+	snap, err := k.riskKeeper.GetZeroPriceSnapshot(ctx, victim, marketIdx)
 	if err != nil {
 		return err
 	}
+	pos := snap.Position
 	if pos.Position.IsZero() {
 		return types.ErrNotLiquidatable.Wrap("victim has no position")
 	}
@@ -196,10 +195,7 @@ func (k Keeper) Deleverage(ctx context.Context, victim uint64, marketIdx uint32,
 			"base_amount=%d exceeds victim position size %s", baseAmount, absVictim.String(),
 		)
 	}
-	zeroPrice, err := k.riskKeeper.GetPositionZeroPrice(ctx, victim, marketIdx)
-	if err != nil {
-		return err
-	}
+	zeroPrice := snap.ZeroPrice
 
 	dAcc, err := k.accountKeeper.GetAccount(ctx, deleverager)
 	if err != nil {
@@ -268,7 +264,7 @@ func (k Keeper) Deleverage(ctx context.Context, victim uint64, marketIdx uint32,
 		// depth on perpdex's side):
 		//
 		//   * Bankrupt (maker in our convention) is ALWAYS subject
-		//     to `IsValidRiskChange` — the trade is supposed to
+		//     to `IsValidRiskChangeFrom` — the trade is supposed to
 		//     mechanically improve their TAV/MMR ratio, and the
 		//     check guards against pathological pricing/funding
 		//     interactions that would silently regress them.

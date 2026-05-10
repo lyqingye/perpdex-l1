@@ -11,6 +11,7 @@ import (
 	perptypes "github.com/perpdex/perpdex-l1/types"
 	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
 	"github.com/perpdex/perpdex-l1/x/liquidation/types"
+	risktypes "github.com/perpdex/perpdex-l1/x/risk/types"
 	tradekeeper "github.com/perpdex/perpdex-l1/x/trade/keeper"
 )
 
@@ -27,11 +28,13 @@ type ADLCandidate struct {
 	// UnrealizedPnL of the position at the current mark price.
 	// Strictly positive — losing positions are filtered out.
 	UnrealizedPnL math.Int
-	// ZeroPrice cached from x/risk so autoADL can enforce zero-
-	// price alignment without re-querying.
+	// ZeroPrice cached from the snapshot so autoADL can enforce
+	// zero-price alignment without re-querying.
 	ZeroPrice uint32
 	// Leverage is the cross account leverage at rank time (notional /
-	// max(collateral, 1)), expressed in MarginTick units.
+	// max(collateral, 1)), expressed in MarginTick units. Always the
+	// CROSS aggregate, even for isolated candidates, per the Lighter
+	// spec ("highly-leveraged winners come first").
 	Leverage math.Int
 	// Score = leverage * uPnL_ratio. uPnL_ratio is approximated by
 	// uPnL * MarginTick / max(|entry_quote|, 1). Higher = closer to
@@ -41,12 +44,20 @@ type ADLCandidate struct {
 
 // BuildADLQueue scans every account, picks those that hold an opposing
 // non-zero position in `marketIdx` AND are currently profitable on it,
-// computes the per-Lighter ADL score and returns the top `limit`
-// candidates sorted by score descending. `oppositeIsLong = true` means
-// the victim is short, so the ADL queue must be longs (PositionSize > 0).
+// computes the per-Lighter ADL score, and returns the top `limit`
+// candidates sorted by score descending. `oppositeIsLong = true`
+// means the victim is short, so the ADL queue must be longs
+// (PositionSize > 0).
 //
 // Cost: O(N_accounts) per call. The caller is expected to apply the
 // `MaxAdlCandidatesPerVictim` cap from Params before invoking this.
+//
+// Each candidate is read through one `GetLiquidationRiskSnapshot` call
+// so the (pos, mark, md, Risk, CrossRisk, ZeroPrice) bundle stays
+// internally consistent — uPnL is computed from the same mark the
+// snapshot's ZeroPrice was anchored to. ADL ranking deliberately uses
+// `snap.CrossRisk` even when the candidate's targeted position is
+// isolated.
 func (k Keeper) BuildADLQueue(
 	ctx context.Context,
 	marketIdx uint32,
@@ -68,40 +79,24 @@ func (k Keeper) BuildADLQueue(
 			a.IsPoolType() {
 			return false
 		}
-		pos, err := k.accountKeeper.GetPosition(ctx, a.AccountIndex, marketIdx)
-		if err != nil || pos.Position.IsZero() {
+		snap, err := k.riskKeeper.GetLiquidationRiskSnapshot(ctx, a.AccountIndex, marketIdx)
+		if err != nil {
+			return false
+		}
+		pos := snap.Position
+		if pos.Position.IsZero() {
 			return false
 		}
 		// Only opposite-side positions can offset a victim's close-out.
 		if pos.Position.IsPositive() != oppositeIsLong {
 			return false
 		}
-		uPnL, err := k.riskKeeper.GetPositionUnrealizedPnL(ctx, a.AccountIndex, marketIdx)
-		if err != nil || !uPnL.IsPositive() {
-			// Losing or unknown-PnL positions are not candidates.
+		uPnL := pos.UnrealizedPnL(snap.MarkPrice)
+		if !uPnL.IsPositive() {
+			// Losing or zero-PnL positions are not candidates.
 			return false
 		}
-		// Leverage is computed on the cross aggregate.
-		ri, err := k.riskKeeper.ComputeRiskInfo(ctx, a.AccountIndex)
-		if err != nil {
-			return false
-		}
-		leverage := math.OneInt()
-		if ri.CrossRiskParameters != nil {
-			collateral := ri.CrossRiskParameters.Collateral
-			notional := ri.CrossRiskParameters.InitialMarginRequirement
-			// Approximate notional from IM: notional = IM *
-			// MarginTick / IMF. We don't know IMF here without the
-			// market, so use IM directly as a proxy — both
-			// numerator and denominator will scale by the same
-			// constant for the same account.
-			if collateral.IsNil() || !collateral.IsPositive() {
-				collateral = math.OneInt()
-			}
-			if !notional.IsZero() {
-				leverage = notional.Mul(math.NewInt(int64(perptypes.MarginTick))).Quo(collateral)
-			}
-		}
+		leverage := computeLeverage(snap.CrossRisk)
 		// uPnL_ratio = uPnL / max(|entry_quote|, 1).
 		entryAbs := pos.EntryQuote.Abs()
 		if !entryAbs.IsPositive() {
@@ -110,15 +105,11 @@ func (k Keeper) BuildADLQueue(
 		uPnLRatio := uPnL.Mul(math.NewInt(int64(perptypes.MarginTick))).Quo(entryAbs)
 		// Score = leverage * uPnL_ratio (in MarginTick^2 units).
 		score := leverage.Mul(uPnLRatio)
-		zp, err := k.riskKeeper.GetPositionZeroPrice(ctx, a.AccountIndex, marketIdx)
-		if err != nil {
-			return false
-		}
 		out = append(out, ADLCandidate{
 			AccountIndex:  a.AccountIndex,
 			PositionSize:  pos.Position,
 			UnrealizedPnL: uPnL,
-			ZeroPrice:     zp,
+			ZeroPrice:     snap.ZeroPrice,
 			Leverage:      leverage,
 			Score:         score,
 		})
@@ -140,8 +131,24 @@ func (k Keeper) BuildADLQueue(
 	return out, nil
 }
 
-// autoADL closes a portion of the victim's `marketIdx` position against
-// the top-ranked counterparties returned by BuildADLQueue.
+// computeLeverage approximates an account's leverage from its risk
+// parameters. We use IM as a proxy for notional (notional = IM *
+// MarginTick / IMF), so the ratio collapses to IM/Collateral scaled by
+// MarginTick. Both numerator and denominator scale by the same
+// constant for the same account — fine for ranking purposes.
+func computeLeverage(rp risktypes.RiskParameters) math.Int {
+	collateral := rp.Collateral
+	if collateral.IsNil() || !collateral.IsPositive() {
+		collateral = math.OneInt()
+	}
+	if rp.InitialMarginRequirement.IsZero() {
+		return math.OneInt()
+	}
+	return rp.InitialMarginRequirement.Mul(math.NewInt(int64(perptypes.MarginTick))).Quo(collateral)
+}
+
+// autoADL closes a portion of the victim's `marketIdx` position
+// against the top-ranked counterparties returned by BuildADLQueue.
 //
 // Per the Lighter spec the trade between the bankrupt account and an
 // opposite-side counterparty MUST happen at a price where the two
@@ -153,6 +160,14 @@ func (k Keeper) BuildADLQueue(
 //
 // `attemptsLeft` is decremented per successful fill and shared across
 // all victims in the block.
+//
+// The victim's snapshot is rebuilt INSIDE this call so victim TAV/MMR
+// reflect any state mutation that happened earlier in the same
+// EndBlocker iteration. autoADL also self-asserts that the victim is
+// still FULL_LIQUIDATION / BANKRUPTCY against that fresh snapshot —
+// the trade engine does not enforce victim health on the deleverage
+// path, so this routine is the canonical "no ADL on a recovered
+// account" gate.
 func (k Keeper) autoADL(
 	ctx context.Context,
 	victim uint64,
@@ -163,17 +178,23 @@ func (k Keeper) autoADL(
 	if attemptsLeft == nil || *attemptsLeft == 0 {
 		return nil
 	}
-	pos, err := k.accountKeeper.GetPosition(ctx, victim, marketIdx)
+	snap, err := k.riskKeeper.GetLiquidationRiskSnapshot(ctx, victim, marketIdx)
 	if err != nil {
 		return err
 	}
+	pos := snap.Position
 	if pos.Position.IsZero() {
 		return nil
 	}
-	victimZP, err := k.riskKeeper.GetPositionZeroPrice(ctx, victim, marketIdx)
-	if err != nil {
-		return err
+	if status := snap.Risk.HealthStatus(); status != perptypes.HealthFullLiquidation &&
+		status != perptypes.HealthBankruptcy {
+		// Victim recovered (e.g., a sibling market's LLP fill
+		// earlier in this block). ADL is reserved for FULL /
+		// BANKRUPTCY victims; refuse the fill.
+		return nil
 	}
+	victimZP := snap.ZeroPrice
+
 	// Victim long  → counterparties must be short to offset.
 	// Victim short → counterparties must be long.
 	oppositeIsLong := pos.Position.IsNegative()
@@ -224,7 +245,7 @@ func (k Keeper) autoADL(
 			NoFee:             true,
 			// User-ADL: defense-in-depth — both bankrupt (maker)
 			// and counterparty (taker) go through
-			// IsValidRiskChange. The bankrupt check mirrors
+			// IsValidRiskChangeFrom. The bankrupt check mirrors
 			// Lighter's `is_valid_risk_change` on bankrupt; the
 			// counterparty check is perpdex-stricter than Lighter
 			// (which does only a collateral-sufficiency assert on

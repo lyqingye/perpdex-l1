@@ -50,8 +50,8 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 		}
 		// We process cross and isolated health independently. Cross
 		// status drives the per-account flag housekeeping; per
-		// isolated position is then handled via the same routine
-		// against ComputeIsolatedRisk.
+		// isolated position is then handled via its own per-market
+		// isolated health envelope inside processAccount.
 		if err := k.processAccount(ctx, a, height, now, &attemptsLeft, candCap); err != nil {
 			sdkCtx.Logger().Error("liquidation: process account failed",
 				"account", a.AccountIndex, "err", err)
@@ -64,6 +64,12 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 // Cross positions are flagged / liquidated against the cross health;
 // each isolated position is flagged / liquidated against its own
 // per-market isolated health.
+//
+// Health is re-read inside the FULL/BANKRUPTCY branch right before
+// the LLP/ADL waterfall fires so a sibling-market fill that already
+// healed the account in this iteration short-circuits before any
+// (now-bogus) liquidation fill is quoted. autoADL also self-asserts
+// FULL/BANKRUPTCY against its own fresh snapshot.
 func (k Keeper) processAccount(
 	ctx context.Context, a accounttypes.Account, height int64, now int64,
 	attemptsLeft *uint32, candCap uint32,
@@ -80,15 +86,13 @@ func (k Keeper) processAccount(
 	// positions.
 	healthyCross := crossStatus == perptypes.HealthHealthy || crossStatus == perptypes.HealthPreLiquidation
 
-	// Walk only persisted position rows; the legacy 0..MaxPerpsMarketIndex
-	// scan generated up to 256 GetPosition reads per liquidation pass.
+	// Walk only persisted position rows.
 	var iterErr error
 	if err := k.accountKeeper.IterateAccountPositions(ctx, a.AccountIndex, func(pos accounttypes.AccountPosition) bool {
 		if pos.Position.IsZero() {
 			return false
 		}
 		marketIdx := pos.MarketIndex
-		// Determine the relevant status (cross vs isolated).
 		var posStatus uint32
 		if pos.MarginMode == perptypes.IsolatedMargin {
 			s, err := k.riskKeeper.GetIsolatedHealthStatus(ctx, a.AccountIndex, marketIdx)
@@ -122,11 +126,26 @@ func (k Keeper) processAccount(
 		// Lighter spec ("LLP closes all of the user's positions by
 		// taking them over"), gated by SimulateRiskAfterTakeover so
 		// the LLP never breaches its IMR. Anything the LLP refuses
-		// falls through to ADL.
+		// falls through to ADL. Each callee re-snapshots the victim
+		// internally so the post-mutation state is what drives the
+		// next market's decision.
 		if attemptsLeft == nil || *attemptsLeft == 0 {
 			return false
 		}
 		if posStatus == perptypes.HealthFullLiquidation || posStatus == perptypes.HealthBankruptcy {
+			fresh, err := k.refreshHealth(ctx, a.AccountIndex, marketIdx, pos.MarginMode)
+			if err != nil {
+				iterErr = err
+				return true
+			}
+			if fresh != perptypes.HealthFullLiquidation && fresh != perptypes.HealthBankruptcy {
+				// A sibling fill in this account already healed
+				// the envelope; do not quote a fill, and drop
+				// the flag we just wrote so keeper bots do not
+				// chase a recovered account for one extra block.
+				_ = k.Flags.Remove(ctx, collections.Join(a.AccountIndex, marketIdx))
+				return false
+			}
 			absorbed, err := k.tryLLPAbsorb(ctx, a.AccountIndex, marketIdx, attemptsLeft)
 			if err != nil {
 				sdkCtx.Logger().Error("liquidation: LLP absorb failed",
@@ -141,10 +160,10 @@ func (k Keeper) processAccount(
 		}
 		// No silent IF top-up of residual negative collateral.
 		// "Absorption" is the LLP/IF deleverage trade itself; if
-		// `tryLLPAbsorb` rejected (IMR breach) and `autoADL` could not
-		// find counterparties, the position simply remains and is re-
-		// evaluated next block — Lighter's design has no analogue of
-		// the previous `absorbNegativeCollateral` post-block sweep.
+		// `tryLLPAbsorb` rejected (IMR breach) and `autoADL` could
+		// not find counterparties, the position simply remains and
+		// is re-evaluated next block — Lighter has no analogue of
+		// a silent IF top-up sweep.
 		return false
 	}); err != nil {
 		return err
@@ -159,14 +178,44 @@ func (k Keeper) processAccount(
 		// removes entries we still iterate over).
 		_ = k.clearCrossFlags(ctx, a.AccountIndex)
 	}
+	// Re-read the cross status before emitting the flag event: an
+	// LLP / ADL fill earlier in this iteration may have already
+	// lifted the account back to HEALTHY, in which case the event
+	// would otherwise carry the stale pre-iteration status — and any
+	// cross flag we already wrote for an EARLIER market in this same
+	// iteration would otherwise linger one extra block (the per-loop
+	// healed-mid-iter branch only removes the CURRENT market's flag,
+	// not earlier ones).
 	if crossStatus != perptypes.HealthHealthy {
-		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
-			types.EventTypeLiquidationFlagged,
-			sdk.NewAttribute(types.AttributeKeyAccountIndex, strconv.FormatUint(a.AccountIndex, 10)),
-			sdk.NewAttribute(types.AttributeKeyStatus, strconv.FormatUint(uint64(crossStatus), 10)),
-		))
+		finalCross, err := k.riskKeeper.GetHealthStatus(ctx, a.AccountIndex)
+		if err != nil {
+			return err
+		}
+		if finalCross == perptypes.HealthHealthy {
+			_ = k.clearCrossFlags(ctx, a.AccountIndex)
+		} else {
+			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
+				types.EventTypeLiquidationFlagged,
+				sdk.NewAttribute(types.AttributeKeyAccountIndex, strconv.FormatUint(a.AccountIndex, 10)),
+				sdk.NewAttribute(types.AttributeKeyStatus, strconv.FormatUint(uint64(finalCross), 10)),
+			))
+		}
 	}
 	return nil
+}
+
+// refreshHealth re-reads the account's relevant health envelope
+// (cross or isolated) for `(accIdx, marketIdx)`. Used right before
+// the LLP / ADL waterfall fires so prior fills in the same
+// processAccount iteration cannot leave the trigger pointing at a
+// stale FULL / BANKRUPTCY status.
+func (k Keeper) refreshHealth(
+	ctx context.Context, accIdx uint64, marketIdx uint32, marginMode uint32,
+) (uint32, error) {
+	if marginMode == perptypes.IsolatedMargin {
+		return k.riskKeeper.GetIsolatedHealthStatus(ctx, accIdx, marketIdx)
+	}
+	return k.riskKeeper.GetHealthStatus(ctx, accIdx)
 }
 
 // clearCrossFlags removes every (account, market) flag whose first key

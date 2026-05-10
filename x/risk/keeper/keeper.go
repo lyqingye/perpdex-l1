@@ -15,35 +15,35 @@ import (
 )
 
 // Keeper implements the pure risk computations described in 16-risk.md and
-// the Lighter "Liquidations & LLP" specification. It owns no state outside
-// of the pre-state risk caches used to short-circuit IsValidRiskChange.
-//
-// Two independent caches are kept:
-//
-//   - Cache: cross risk parameters keyed by accountIndex.
-//   - IsolatedCache: isolated risk parameters keyed by (accountIndex,
-//     marketIndex). Each isolated position is a distinct sub-account from
-//     a risk standpoint, so its pre-state is snapshotted separately.
+// the Lighter "Liquidations & LLP" specification. The keeper owns
+// only the module Params; pre-state RiskParameters used by the
+// post-state regression check live in a function-local
+// `types.PreRiskSnapshot` value threaded through by the caller.
 //
 // The keeper code is split across several files for navigability:
 //
 //   - keeper.go   : Keeper struct + constructor + universally-shared
-//                   helpers (Authority, classifyHealth / classifyChange,
-//                   resolveMarkPrice).
+//                   helpers (Authority, classifyChange, resolveMarkPrice,
+//                   GetMarkAndMarketDetails). Per-RP health classification
+//                   lives on RiskParameters itself in x/risk/types so
+//                   liquidation-side callers can classify locally without
+//                   re-aggregating state.
 //   - cross.go    : cross-margin aggregation (ComputeRiskInfo,
 //                   GetHealthStatus, GetTotalAccountValue,
 //                   GetAvailableCollateral, GetAvailableUsdcCollateral)
-//                   and the per-cross half of IsValidRiskChange.
+//                   and the per-cross half of IsValidRiskChangeFrom.
 //   - isolated.go : isolated-margin per-position equivalents
 //                   (ComputeIsolatedRisk, GetIsolatedHealthStatus,
 //                   IterateIsolatedPositions, isIsolatedRiskChangeValid).
-//   - risk_change.go : IsValidRiskChange + SnapshotPreRisk drivers that
-//                      stitch cross + isolated together.
-//   - position.go : per-position query helpers consumed by liquidation
-//                   (GetPositionMarkValue, GetPositionUnrealizedPnL).
+//   - risk_change.go : IsValidRiskChangeFrom + SnapshotRisk drivers
+//                      that stitch cross + isolated together.
 //   - liquidation.go : liquidation-specific math
 //                      (GetPositionZeroPrice, SimulateRiskAfterTakeover,
-//                      quoTowardZero).
+//                      GetLiquidationRiskSnapshot, GetZeroPriceSnapshot).
+//
+// Schema byte prefixes 0x01 / 0x02 were used for the now-removed
+// pre-state KV caches; future schema additions MUST pick a fresh
+// byte to avoid colliding with any historical state.
 type Keeper struct {
 	cdc           codec.BinaryCodec
 	storeService  store.KVStoreService
@@ -54,14 +54,6 @@ type Keeper struct {
 
 	Schema collections.Schema
 	Params collections.Item[types.Params]
-	// Cache holds the pre-state CROSS risk parameters for an account
-	// during a transaction so the post-state can be compared against
-	// it efficiently.
-	Cache collections.Map[uint64, types.RiskParameters]
-	// IsolatedCache holds the pre-state ISOLATED risk parameters for
-	// each (account, market) pair so per-isolated post-state checks
-	// can compare deltas independently from the cross account.
-	IsolatedCache collections.Map[collections.Pair[uint64, uint32], types.RiskParameters]
 }
 
 func NewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, authority string,
@@ -77,12 +69,6 @@ func NewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, authori
 		oracleKeeper:  ok,
 
 		Params: collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
-		Cache:  collections.NewMap(sb, []byte{0x01}, "cache", collections.Uint64Key, codec.CollValue[types.RiskParameters](cdc)),
-		IsolatedCache: collections.NewMap(
-			sb, []byte{0x02}, "isolated_cache",
-			collections.PairKeyCodec(collections.Uint64Key, collections.Uint32Key),
-			codec.CollValue[types.RiskParameters](cdc),
-		),
 	}
 	schema, err := sb.Build()
 	if err != nil {
@@ -106,7 +92,6 @@ func (k Keeper) Authority() string { return k.authority }
 //
 // Centralised here to retire the identical guards previously inlined in
 // ComputeRiskInfo / ComputeIsolatedRisk / GetPositionZeroPrice /
-// GetPositionMarkValue / GetPositionUnrealizedPnL /
 // SimulateRiskAfterTakeover. Callers that need to attach extra account
 // context can wrap the returned error with errors.Wrapf themselves.
 func (k Keeper) resolveMarkPrice(ctx context.Context, marketIdx uint32) (uint32, error) {
@@ -134,37 +119,20 @@ func (k Keeper) GetMarkAndMarketDetails(ctx context.Context, marketIdx uint32) (
 	return mark, md, nil
 }
 
-// classifyHealth implements the 5-level state machine.
-func classifyHealth(p types.RiskParameters) uint32 {
-	if p.TotalAccountValue.IsNegative() {
-		return perptypes.HealthBankruptcy
-	}
-	if p.TotalAccountValue.LT(p.CloseOutMarginRequirement) {
-		return perptypes.HealthFullLiquidation
-	}
-	if p.TotalAccountValue.LT(p.MaintenanceMarginRequirement) {
-		return perptypes.HealthPartialLiquidation
-	}
-	if p.TotalAccountValue.LT(p.InitialMarginRequirement) {
-		return perptypes.HealthPreLiquidation
-	}
-	return perptypes.HealthHealthy
-}
-
 // classifyChange centralises the pre-vs-post risk decision used by both
 // the cross and isolated paths. `missingPre` signals that no pre-state
 // snapshot exists; in that case we reject any unhealthy post-state to
 // avoid silently accepting a change that may have introduced the
 // underwater state.
 func classifyChange(pre, post types.RiskParameters, missingPre bool) bool {
-	postClass := classifyHealth(post)
+	postClass := post.HealthStatus()
 	if postClass == perptypes.HealthHealthy {
 		return true
 	}
 	if missingPre {
 		return false
 	}
-	preClass := classifyHealth(pre)
+	preClass := pre.HealthStatus()
 	if postClass > preClass {
 		return false
 	}

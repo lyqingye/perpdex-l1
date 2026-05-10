@@ -7,6 +7,7 @@ import (
 
 	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
 	markettypes "github.com/perpdex/perpdex-l1/x/market/types"
+	risktypes "github.com/perpdex/perpdex-l1/x/risk/types"
 )
 
 type AccountKeeper interface {
@@ -49,11 +50,15 @@ type FundingKeeper interface {
 }
 
 type RiskKeeper interface {
-	IsValidRiskChange(ctx context.Context, accountIndex uint64) (bool, error)
-	// SnapshotPreRisk caches pre-state RiskParameters for an account so
-	// IsValidRiskChange can require strict improvement on unhealthy
-	// post-states.
-	SnapshotPreRisk(ctx context.Context, accountIndex uint64) error
+	// SnapshotRisk computes the pre-state risk envelope for an account
+	// and returns it by value. The caller threads the returned
+	// snapshot into IsValidRiskChangeFrom after performing the state
+	// mutation; the keeper does not persist pre-state across handlers.
+	SnapshotRisk(ctx context.Context, accountIndex uint64) (risktypes.PreRiskSnapshot, error)
+	// IsValidRiskChangeFrom enforces the post-state vs pre-state risk
+	// invariants. `pre` MUST be the value returned by SnapshotRisk at
+	// the start of the same handler.
+	IsValidRiskChangeFrom(ctx context.Context, accountIndex uint64, pre risktypes.PreRiskSnapshot) (bool, error)
 	// GetAvailableUsdcCollateral returns the amount of cross USDC
 	// collateral free to fund an isolated margin allocation. Returns
 	// zero when the account is not HEALTHY or `collateral_with_funding`
