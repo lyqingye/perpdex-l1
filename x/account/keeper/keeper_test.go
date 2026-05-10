@@ -25,6 +25,7 @@ import (
 	assetkeeper "github.com/perpdex/perpdex-l1/x/asset/keeper"
 	assettypes "github.com/perpdex/perpdex-l1/x/asset/types"
 	markettypes "github.com/perpdex/perpdex-l1/x/market/types"
+	risktypes "github.com/perpdex/perpdex-l1/x/risk/types"
 )
 
 // fakeBankKeeper is a no-op bank stub sufficient for keeper-level tests
@@ -41,13 +42,13 @@ func (fakeBankKeeper) GetBalance(_ context.Context, _ sdk.AccAddress, _ string) 
 	return sdk.Coin{}
 }
 
-// fakeRiskKeeper lets a test decide whether IsValidRiskChange should pass.
+// fakeRiskKeeper lets a test decide whether IsValidRiskChangeFrom should pass.
 type fakeRiskKeeper struct {
 	risky        bool
 	snapshotHits int
 }
 
-func (f *fakeRiskKeeper) IsValidRiskChange(_ context.Context, _ uint64) (bool, error) {
+func (f *fakeRiskKeeper) IsValidRiskChangeFrom(_ context.Context, _ uint64, _ risktypes.PreRiskSnapshot) (bool, error) {
 	return !f.risky, nil
 }
 func (f *fakeRiskKeeper) GetAvailableCollateral(_ context.Context, _ uint64) (math.Int, error) {
@@ -59,9 +60,9 @@ func (f *fakeRiskKeeper) GetTotalAccountValue(_ context.Context, _ uint64) (math
 func (f *fakeRiskKeeper) GetHealthStatus(_ context.Context, _ uint64) (uint32, error) {
 	return perptypes.HealthHealthy, nil
 }
-func (f *fakeRiskKeeper) SnapshotPreRisk(_ context.Context, _ uint64) error {
+func (f *fakeRiskKeeper) SnapshotRisk(_ context.Context, _ uint64) (risktypes.PreRiskSnapshot, error) {
 	f.snapshotHits++
-	return nil
+	return risktypes.PreRiskSnapshot{}, nil
 }
 
 // fakeMarketKeeper returns deterministic market rows regardless of index.

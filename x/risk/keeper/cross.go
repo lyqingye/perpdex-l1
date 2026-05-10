@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 
-	"cosmossdk.io/collections"
 	"cosmossdk.io/math"
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
@@ -17,10 +16,10 @@ import (
 // ComputeRiskInfo walk + the *pure read* helpers that surface its
 // outputs (GetHealthStatus / GetTotalAccountValue /
 // GetAvailableCollateral / GetAvailableUsdcCollateral). The
-// per-account half of IsValidRiskChange (isCrossRiskChangeValid) lives
-// here too because it consumes the same aggregates; SnapshotPreRisk +
-// IsValidRiskChange themselves orchestrate cross + isolated together
-// and live in risk_change.go.
+// per-account half of IsValidRiskChangeFrom (isCrossRiskChangeValid)
+// lives here too because it consumes the same aggregates; the
+// cross + isolated driver IsValidRiskChangeFrom and SnapshotRisk live
+// in risk_change.go.
 
 // ComputeRiskInfo iterates all CROSS positions of an account and aggregates
 // their risk contributions into a RiskInfo struct.
@@ -189,21 +188,19 @@ func (k Keeper) GetAvailableUsdcCollateral(ctx context.Context, accountIdx uint6
 	return avail, nil
 }
 
-// isCrossRiskChangeValid is the cross-half of IsValidRiskChange (in
-// risk_change.go). It compares the post-state cross aggregate against
-// the snapshotted pre-state, deferring the decision to classifyChange.
-func (k Keeper) isCrossRiskChangeValid(ctx context.Context, accountIdx uint64) (bool, error) {
+// isCrossRiskChangeValid is the cross-half of IsValidRiskChangeFrom
+// (in risk_change.go). It compares the post-state cross aggregate
+// against the caller-provided pre-state and defers the decision to
+// classifyChange. A nil `pre` is treated as "no pre-state" and
+// forces the post-state to be HEALTHY.
+func (k Keeper) isCrossRiskChangeValid(ctx context.Context, accountIdx uint64, pre *types.RiskParameters) (bool, error) {
 	post, err := k.ComputeRiskInfo(ctx, accountIdx)
 	if err != nil {
 		return false, err
 	}
 	postP := post.CurrentRiskParameters
-	pre, err := k.Cache.Get(ctx, accountIdx)
-	if err != nil {
-		if errors.Is(err, collections.ErrNotFound) {
-			return classifyChange(types.RiskParameters{}, *postP, true /*missingPre*/), nil
-		}
-		return false, err
+	if pre == nil {
+		return classifyChange(types.RiskParameters{}, *postP, true /*missingPre*/), nil
 	}
-	return classifyChange(pre, *postP, false), nil
+	return classifyChange(*pre, *postP, false), nil
 }

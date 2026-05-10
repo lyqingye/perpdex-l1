@@ -245,7 +245,7 @@ func (k Keeper) autoADL(
 			NoFee:             true,
 			// User-ADL: defense-in-depth — both bankrupt (maker)
 			// and counterparty (taker) go through
-			// IsValidRiskChange. The bankrupt check mirrors
+			// IsValidRiskChangeFrom. The bankrupt check mirrors
 			// Lighter's `is_valid_risk_change` on bankrupt; the
 			// counterparty check is perpdex-stricter than Lighter
 			// (which does only a collateral-sufficiency assert on

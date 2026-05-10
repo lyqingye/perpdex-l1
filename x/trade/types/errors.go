@@ -12,10 +12,10 @@ import "cosmossdk.io/errors"
 // whole block. We mirror that with sentinels that the matching loop
 // inspects via errors.Is.
 var (
-	// ErrMakerRiskRegression: maker side fails IsValidRiskChange after
-	// the would-be fill (e.g. maker drained collateral after resting).
-	// Soft: matchOrder evicts the maker and continues with the next
-	// price level.
+	// ErrMakerRiskRegression: maker side fails IsValidRiskChangeFrom
+	// after the would-be fill (e.g. maker drained collateral after
+	// resting). Soft: matchOrder evicts the maker and continues with
+	// the next price level.
 	ErrMakerRiskRegression = errors.Register(ModuleName, 2, "maker post-trade risk regression")
 
 	// ErrMakerInsufficientBalance: maker side cannot satisfy a spot
@@ -24,7 +24,7 @@ var (
 	// enforced, but kept as a defensive fallback.
 	ErrMakerInsufficientBalance = errors.Register(ModuleName, 3, "maker insufficient balance for fill")
 
-	// ErrTakerRiskRegression: taker side fails IsValidRiskChange.
+	// ErrTakerRiskRegression: taker side fails IsValidRiskChangeFrom.
 	// Soft: matchOrder stops the taker (already-applied fills via
 	// writeCache are preserved); remaining base is cancelled.
 	ErrTakerRiskRegression = errors.Register(ModuleName, 4, "taker post-trade risk regression")

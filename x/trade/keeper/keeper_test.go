@@ -20,6 +20,7 @@ import (
 	perptypes "github.com/perpdex/perpdex-l1/types"
 	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
 	markettypes "github.com/perpdex/perpdex-l1/x/market/types"
+	risktypes "github.com/perpdex/perpdex-l1/x/risk/types"
 	tradekeeper "github.com/perpdex/perpdex-l1/x/trade/keeper"
 	tradetypes "github.com/perpdex/perpdex-l1/x/trade/types"
 )
@@ -241,16 +242,16 @@ type stubRisk struct {
 	imfBps    uint64
 }
 
-func (s *stubRisk) IsValidRiskChange(_ context.Context, _ uint64) (bool, error) {
+func (s *stubRisk) IsValidRiskChangeFrom(_ context.Context, _ uint64, _ risktypes.PreRiskSnapshot) (bool, error) {
 	s.riskChecks++
 	if s.rejectOnCall > 0 && s.riskChecks == s.rejectOnCall {
 		return false, nil
 	}
 	return !s.reject, nil
 }
-func (s *stubRisk) SnapshotPreRisk(_ context.Context, _ uint64) error {
+func (s *stubRisk) SnapshotRisk(_ context.Context, _ uint64) (risktypes.PreRiskSnapshot, error) {
 	s.snapshots++
-	return nil
+	return risktypes.PreRiskSnapshot{}, nil
 }
 
 func (s *stubRisk) GetAvailableUsdcCollateral(_ context.Context, accountIdx uint64) (math.Int, error) {
@@ -496,7 +497,7 @@ func TestApplyPerpsMatching_LiquidationFeeNoneAtZeroPrice(t *testing.T) {
 // TestApplyPerpsMatching_SkipTakerRiskCheck verifies the Lighter-parity
 // flag introduced for `Deleverage`'s LLP / IF path: when the taker is
 // the IF/LLP absorber, both the pre-trade snapshot and the post-trade
-// `IsValidRiskChange` on the taker must be skipped (the absorber's
+// `IsValidRiskChangeFrom` on the taker must be skipped (the absorber's
 // collateral sufficiency is gated by `tryLLPAbsorb`'s pre-trade
 // `SimulateRiskAfterTakeover`/IMR check and Lighter's
 // `is_*_has_enough_cross_collateral` assert instead). The maker side
@@ -525,7 +526,7 @@ func TestApplyPerpsMatching_SkipTakerRiskCheck(t *testing.T) {
 	require.Equal(t, 1, rk.snapshots,
 		"taker pre-snapshot must be skipped under SkipTakerRiskCheck")
 	require.Equal(t, 1, rk.riskChecks,
-		"only the maker should run IsValidRiskChange under SkipTakerRiskCheck")
+		"only the maker should run IsValidRiskChangeFrom under SkipTakerRiskCheck")
 
 	// SkipMakerRiskCheck stays independent: turning ON SkipMaker as
 	// well drops the post-check count to 0 (we still snapshot
@@ -551,7 +552,7 @@ func TestApplyPerpsMatching_SkipTakerRiskCheck(t *testing.T) {
 	require.Equal(t, 0, rk2.snapshots,
 		"both flags on => no snapshots at all")
 	require.Equal(t, 0, rk2.riskChecks,
-		"both flags on => no IsValidRiskChange")
+		"both flags on => no IsValidRiskChangeFrom")
 
 	// Sanity: with SkipTakerRiskCheck OFF (default), a forced taker
 	// rejection (rejectOnCall=1, the for-loop iterates [Taker, Maker])

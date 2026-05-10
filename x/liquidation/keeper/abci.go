@@ -86,8 +86,7 @@ func (k Keeper) processAccount(
 	// positions.
 	healthyCross := crossStatus == perptypes.HealthHealthy || crossStatus == perptypes.HealthPreLiquidation
 
-	// Walk only persisted position rows; the legacy 0..MaxPerpsMarketIndex
-	// scan generated up to 256 GetPosition reads per liquidation pass.
+	// Walk only persisted position rows.
 	var iterErr error
 	if err := k.accountKeeper.IterateAccountPositions(ctx, a.AccountIndex, func(pos accounttypes.AccountPosition) bool {
 		if pos.Position.IsZero() {
@@ -161,10 +160,10 @@ func (k Keeper) processAccount(
 		}
 		// No silent IF top-up of residual negative collateral.
 		// "Absorption" is the LLP/IF deleverage trade itself; if
-		// `tryLLPAbsorb` rejected (IMR breach) and `autoADL` could not
-		// find counterparties, the position simply remains and is re-
-		// evaluated next block — Lighter's design has no analogue of
-		// the previous `absorbNegativeCollateral` post-block sweep.
+		// `tryLLPAbsorb` rejected (IMR breach) and `autoADL` could
+		// not find counterparties, the position simply remains and
+		// is re-evaluated next block — Lighter has no analogue of
+		// a silent IF top-up sweep.
 		return false
 	}); err != nil {
 		return err

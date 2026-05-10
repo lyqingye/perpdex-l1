@@ -2,10 +2,7 @@ package keeper
 
 import (
 	"context"
-	"errors"
 	"fmt"
-
-	"cosmossdk.io/collections"
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
 	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
@@ -16,9 +13,9 @@ import (
 // has its own collateral envelope: the AllocatedMargin pool of an
 // isolated position is fenced from cross collateral, so the health
 // machine evaluates each isolated position independently. The
-// per-position half of IsValidRiskChange (isIsolatedRiskChangeValid)
+// per-position half of IsValidRiskChangeFrom (isIsolatedRiskChangeValid)
 // also lives here because it consumes ComputeIsolatedRisk directly;
-// the cross + isolated driver IsValidRiskChange itself sits in
+// the cross + isolated driver IsValidRiskChangeFrom itself sits in
 // risk_change.go.
 
 // ComputeIsolatedRisk returns risk parameters for one isolated position.
@@ -92,20 +89,23 @@ func (k Keeper) IterateIsolatedPositions(ctx context.Context, accountIdx uint64,
 }
 
 // isIsolatedRiskChangeValid is the per-position half of
-// IsValidRiskChange (in risk_change.go). It compares the post-state
-// isolated parameters for one (account, market) against the
-// snapshotted pre-state.
-func (k Keeper) isIsolatedRiskChangeValid(ctx context.Context, accountIdx uint64, marketIdx uint32) (bool, error) {
+// IsValidRiskChangeFrom (in risk_change.go). It compares the
+// post-state isolated parameters for one (account, market) against
+// the caller-provided pre-state. `hasPre == false` is treated as
+// "no pre-state" and forces the post-state to be HEALTHY.
+func (k Keeper) isIsolatedRiskChangeValid(
+	ctx context.Context,
+	accountIdx uint64,
+	marketIdx uint32,
+	pre types.RiskParameters,
+	hasPre bool,
+) (bool, error) {
 	postRP, err := k.ComputeIsolatedRisk(ctx, accountIdx, marketIdx)
 	if err != nil {
 		return false, err
 	}
-	pre, err := k.IsolatedCache.Get(ctx, collections.Join(accountIdx, marketIdx))
-	if err != nil {
-		if errors.Is(err, collections.ErrNotFound) {
-			return classifyChange(types.RiskParameters{}, postRP, true), nil
-		}
-		return false, err
+	if !hasPre {
+		return classifyChange(types.RiskParameters{}, postRP, true), nil
 	}
 	return classifyChange(pre, postRP, false), nil
 }

@@ -116,10 +116,11 @@ func (m msgServer) Withdraw(ctx context.Context, msg *types.MsgWithdraw) (*types
 	if err := m.settleAllPositionFunding(ctx, msg.AccountIndex); err != nil {
 		return nil, err
 	}
-	// Capture pre-state risk so IsValidRiskChange can enforce the
+	// Capture pre-state risk so requireRiskOKFrom can enforce the
 	// "strict improvement" rule for accounts that are already
 	// unhealthy (e.g. returning collateral to a HEALTHY state).
-	if err := m.snapshotPreRisk(ctx, msg.AccountIndex); err != nil {
+	pre, err := m.snapshotPreRisk(ctx, msg.AccountIndex)
+	if err != nil {
 		return nil, err
 	}
 
@@ -144,7 +145,7 @@ func (m msgServer) Withdraw(ctx context.Context, msg *types.MsgWithdraw) (*types
 		return nil, types.ErrInvalidRoute
 	}
 
-	if err := m.requireRiskOK(ctx, msg.AccountIndex); err != nil {
+	if err := m.requireRiskOKFrom(ctx, msg.AccountIndex, pre); err != nil {
 		return nil, err
 	}
 
@@ -253,7 +254,8 @@ func (m msgServer) Transfer(ctx context.Context, msg *types.MsgTransfer) (*types
 	if err := m.settleAllPositionFunding(ctx, msg.FromAccountIndex); err != nil {
 		return nil, err
 	}
-	if err := m.snapshotPreRisk(ctx, msg.FromAccountIndex); err != nil {
+	pre, err := m.snapshotPreRisk(ctx, msg.FromAccountIndex)
+	if err != nil {
 		return nil, err
 	}
 	delta := math.NewIntFromUint64(msg.Amount).Mul(math.NewIntFromUint64(asset.ExtensionMultiplier))
@@ -276,7 +278,7 @@ func (m msgServer) Transfer(ctx context.Context, msg *types.MsgTransfer) (*types
 		}
 	}
 
-	if err := m.requireRiskOK(ctx, msg.FromAccountIndex); err != nil {
+	if err := m.requireRiskOKFrom(ctx, msg.FromAccountIndex, pre); err != nil {
 		return nil, err
 	}
 	return &types.MsgTransferResponse{}, nil
@@ -300,7 +302,8 @@ func (m msgServer) UpdateMargin(ctx context.Context, msg *types.MsgUpdateMargin)
 	if err := m.fundingKeeper.SettlePositionFunding(ctx, msg.AccountIndex, msg.MarketIndex); err != nil {
 		return nil, err
 	}
-	if err := m.snapshotPreRisk(ctx, msg.AccountIndex); err != nil {
+	pre, err := m.snapshotPreRisk(ctx, msg.AccountIndex)
+	if err != nil {
 		return nil, err
 	}
 	pos, err := m.GetPosition(ctx, msg.AccountIndex, msg.MarketIndex)
@@ -344,7 +347,7 @@ func (m msgServer) UpdateMargin(ctx context.Context, msg *types.MsgUpdateMargin)
 		}
 	}
 
-	if err := m.requireRiskOK(ctx, msg.AccountIndex); err != nil {
+	if err := m.requireRiskOKFrom(ctx, msg.AccountIndex, pre); err != nil {
 		return nil, err
 	}
 	return &types.MsgUpdateMarginResponse{}, nil

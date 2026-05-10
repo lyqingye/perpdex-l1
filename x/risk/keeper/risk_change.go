@@ -3,10 +3,9 @@ package keeper
 import (
 	"context"
 
-	"cosmossdk.io/collections"
-
 	perptypes "github.com/perpdex/perpdex-l1/types"
 	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
+	"github.com/perpdex/perpdex-l1/x/risk/types"
 )
 
 // risk_change.go drives the cross + isolated pre/post-state risk
@@ -14,8 +13,13 @@ import (
 // cross.go (isCrossRiskChangeValid) and isolated.go
 // (isIsolatedRiskChangeValid); this file just stitches them together
 // across both account-wide and per-isolated-market scopes.
+//
+// Pre-state lives in a function-local `types.PreRiskSnapshot` value
+// threaded through by the caller (engine.Apply, account msg-server).
+// There is no chain-level KV cache: a pre-state that outlived its
+// handler would silently leak into the next Msg's regression check.
 
-// IsValidRiskChange enforces the post-state vs pre-state risk
+// IsValidRiskChangeFrom enforces the post-state vs pre-state risk
 // invariants. It walks both the cross account and each isolated
 // position the account holds; if either side regresses the change is
 // rejected.
@@ -35,8 +39,12 @@ import (
 //     pre.class AND TAV/IM ratio cannot decrease. Routine user trades
 //     in these states are rejected up-front by the matching layer; the
 //     check here is the safety net for liquidation-initiated fills.
-func (k Keeper) IsValidRiskChange(ctx context.Context, accountIdx uint64) (bool, error) {
-	if ok, err := k.isCrossRiskChangeValid(ctx, accountIdx); err != nil || !ok {
+//
+// `pre` MUST be the value returned by SnapshotRisk at the start of
+// the same handler. A zero-value snapshot is treated as "no pre-state"
+// and forces the post-state to be HEALTHY (Lighter fail-closed rule).
+func (k Keeper) IsValidRiskChangeFrom(ctx context.Context, accountIdx uint64, pre types.PreRiskSnapshot) (bool, error) {
+	if ok, err := k.isCrossRiskChangeValid(ctx, accountIdx, pre.Cross); err != nil || !ok {
 		return ok, err
 	}
 	// Walk each isolated position and require it to satisfy the same
@@ -51,7 +59,8 @@ func (k Keeper) IsValidRiskChange(ctx context.Context, accountIdx uint64) (bool,
 		if pos.Position.IsZero() || pos.MarginMode != perptypes.IsolatedMargin {
 			return false
 		}
-		valid, err := k.isIsolatedRiskChangeValid(ctx, accountIdx, pos.MarketIndex)
+		preIso, hasPre := pre.IsolatedFor(pos.MarketIndex)
+		valid, err := k.isIsolatedRiskChangeValid(ctx, accountIdx, pos.MarketIndex, preIso, hasPre)
 		if err != nil {
 			iterErr = err
 			ok = false
@@ -71,18 +80,21 @@ func (k Keeper) IsValidRiskChange(ctx context.Context, accountIdx uint64) (bool,
 	return ok, nil
 }
 
-// SnapshotPreRisk caches the pre-state RiskParameters for an account so
-// IsValidRiskChange can compare after handlers run. Both the cross
-// aggregate and every isolated position are snapshotted.
-func (k Keeper) SnapshotPreRisk(ctx context.Context, accountIdx uint64) error {
-	post, err := k.ComputeRiskInfo(ctx, accountIdx)
+// SnapshotRisk computes the pre-state RiskParameters for an account
+// and returns them by value. Both the cross aggregate and every
+// isolated position are captured; an isolated market that the account
+// does not currently hold a non-zero position in is not recorded so
+// IsValidRiskChangeFrom falls back to "post must be HEALTHY" if the
+// position is opened during the handler.
+func (k Keeper) SnapshotRisk(ctx context.Context, accountIdx uint64) (types.PreRiskSnapshot, error) {
+	snap := types.PreRiskSnapshot{}
+	cross, err := k.ComputeRiskInfo(ctx, accountIdx)
 	if err != nil {
-		return err
+		return types.PreRiskSnapshot{}, err
 	}
-	if post.CurrentRiskParameters != nil {
-		if err := k.Cache.Set(ctx, accountIdx, *post.CurrentRiskParameters); err != nil {
-			return err
-		}
+	if cross.CurrentRiskParameters != nil {
+		rp := *cross.CurrentRiskParameters
+		snap.Cross = &rp
 	}
 	var iterErr error
 	if err := k.accountKeeper.IterateAccountPositions(ctx, accountIdx, func(pos accounttypes.AccountPosition) bool {
@@ -94,13 +106,16 @@ func (k Keeper) SnapshotPreRisk(ctx context.Context, accountIdx uint64) error {
 			iterErr = err
 			return true
 		}
-		if err := k.IsolatedCache.Set(ctx, collections.Join(accountIdx, pos.MarketIndex), rp); err != nil {
-			iterErr = err
-			return true
+		if snap.Isolated == nil {
+			snap.Isolated = map[uint32]types.RiskParameters{}
 		}
+		snap.Isolated[pos.MarketIndex] = rp
 		return false
 	}); err != nil {
-		return err
+		return types.PreRiskSnapshot{}, err
 	}
-	return iterErr
+	if iterErr != nil {
+		return types.PreRiskSnapshot{}, iterErr
+	}
+	return snap, nil
 }

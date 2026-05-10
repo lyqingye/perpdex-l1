@@ -22,11 +22,12 @@ import (
 //     `marketIdx`, so the LLP waterfall can short-circuit before
 //     submitting a Msg.
 //   - GetLiquidationRiskSnapshot: cohesive (account, market) bundle
-//     consumed by the liquidation keeper's hot loops. Returns the
-//     position, mark price, market details, the position's relevant
-//     RiskParameters, the account's cross aggregate, and the pre-
-//     computed zero price — everything those loops need without
-//     re-querying or seeing the underlying formula.
+//     consumed by ADL ranking and autoADL. Returns the position, mark
+//     price, market details, the position's relevant RiskParameters,
+//     the account's cross aggregate, and the pre-computed zero price.
+//   - GetZeroPriceSnapshot: lightweight companion for callers that
+//     only need (position, zero price). Used by the Liquidate /
+//     Deleverage Msg handlers and the gRPC zero-price query.
 
 // GetLiquidationRiskSnapshot returns the cohesive (pos, mark, md, Risk,
 // CrossRisk, ZeroPrice) bundle for one (accountIdx, marketIdx) pair.
@@ -155,15 +156,59 @@ func pureComputeZeroPrice(
 // accounts (TAV < 0) are not partially liquidatable; callers must
 // short-circuit before invoking this.
 //
-// Public entry point used by the gRPC query path. The hot liquidation
-// loops use `GetLiquidationRiskSnapshot` instead so the snapshot's
-// other fields (Risk / CrossRisk / mark / md) are not thrown away.
+// Public entry point used by the gRPC query path. The ADL hot loops
+// use `GetLiquidationRiskSnapshot` instead so the snapshot's other
+// fields (Risk / CrossRisk / mark / md) are not thrown away.
 func (k Keeper) GetPositionZeroPrice(ctx context.Context, accountIdx uint64, marketIdx uint32) (uint32, error) {
-	snap, err := k.GetLiquidationRiskSnapshot(ctx, accountIdx, marketIdx)
+	snap, err := k.GetZeroPriceSnapshot(ctx, accountIdx, marketIdx)
 	if err != nil {
 		return 0, err
 	}
 	return snap.ZeroPrice, nil
+}
+
+// GetZeroPriceSnapshot is the lightweight companion to
+// GetLiquidationRiskSnapshot for callers that only need the position
+// and its zero price (the gRPC zero-price query, the Liquidate /
+// Deleverage Msg handlers). It fans the same cross / isolated risk
+// aggregation the full snapshot does — but only for the relevant
+// scope — and skips the field bookkeeping (CrossRisk, MarketDetails)
+// that ADL ranking needs. Empty positions short-circuit to ZP=0
+// without touching the oracle, matching the full snapshot.
+func (k Keeper) GetZeroPriceSnapshot(
+	ctx context.Context,
+	accountIdx uint64,
+	marketIdx uint32,
+) (types.ZeroPriceSnapshot, error) {
+	pos, err := k.accountKeeper.GetPosition(ctx, accountIdx, marketIdx)
+	if err != nil {
+		return types.ZeroPriceSnapshot{}, err
+	}
+	if pos.Position.IsZero() {
+		return types.ZeroPriceSnapshot{Position: pos}, nil
+	}
+	mark, md, err := k.GetMarkAndMarketDetails(ctx, marketIdx)
+	if err != nil {
+		return types.ZeroPriceSnapshot{}, err
+	}
+	var risk types.RiskParameters
+	if pos.MarginMode == perptypes.IsolatedMargin {
+		rp, err := k.ComputeIsolatedRisk(ctx, accountIdx, marketIdx)
+		if err != nil {
+			return types.ZeroPriceSnapshot{}, err
+		}
+		risk = rp
+	} else {
+		ri, err := k.ComputeRiskInfo(ctx, accountIdx)
+		if err != nil {
+			return types.ZeroPriceSnapshot{}, err
+		}
+		if ri.CurrentRiskParameters != nil {
+			risk = *ri.CurrentRiskParameters
+		}
+	}
+	zp := pureComputeZeroPrice(pos, mark, md, risk.TotalAccountValue, risk.MaintenanceMarginRequirement)
+	return types.ZeroPriceSnapshot{Position: pos, ZeroPrice: zp}, nil
 }
 
 // quoTowardZero divides `num/denom` rounding toward zero so that signed

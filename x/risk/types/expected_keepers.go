@@ -34,5 +34,6 @@ type OracleKeeper interface {
 type RiskCalc interface {
 	ComputeRiskInfo(ctx context.Context, accountIdx uint64) (RiskInfo, error)
 	GetAvailableCollateral(ctx context.Context, accountIdx uint64) (math.Int, error)
-	IsValidRiskChange(ctx context.Context, accountIdx uint64) (bool, error)
+	SnapshotRisk(ctx context.Context, accountIdx uint64) (PreRiskSnapshot, error)
+	IsValidRiskChangeFrom(ctx context.Context, accountIdx uint64, pre PreRiskSnapshot) (bool, error)
 }

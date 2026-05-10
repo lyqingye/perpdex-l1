@@ -3,11 +3,11 @@ package types
 import "cosmossdk.io/errors"
 
 var (
-	// ErrMissingPrice indicates an attempt to compute risk for a
-	// non-zero position whose oracle price could not be resolved. The
-	// previous implementation silently skipped such positions, which
-	// let a regression where the oracle becomes unavailable make
-	// every account look HEALTHY.
+	// ErrMissingPrice fires when risk evaluation hits a non-zero
+	// position whose oracle price cannot be resolved. The invariant
+	// is that such a position MUST surface this error: silently
+	// treating it as "skip" would let an oracle outage make every
+	// affected account look HEALTHY.
 	ErrMissingPrice = errors.Register(ModuleName, 2, "oracle price missing for position")
 
 	// ErrStalePrice fires when an oracle price is older than

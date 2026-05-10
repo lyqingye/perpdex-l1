@@ -232,14 +232,28 @@ func (s *stubRisk) GetHealthStatus(_ context.Context, acc uint64) (uint32, error
 func (s *stubRisk) GetIsolatedHealthStatus(_ context.Context, acc uint64, mkt uint32) (uint32, error) {
 	return s.isoStatusFor(acc, mkt), nil
 }
-func (s *stubRisk) GetPositionZeroPrice(_ context.Context, acc uint64, mkt uint32) (uint32, error) {
-	if v, ok := s.zero[[2]uint64{acc, uint64(mkt)}]; ok {
-		return v, nil
-	}
-	return s.markFor(mkt), nil
-}
 func (s *stubRisk) GetMarkAndMarketDetails(_ context.Context, mkt uint32) (uint32, markettypes.MarketDetails, error) {
 	return s.markFor(mkt), s.mdFor(mkt), nil
+}
+
+// GetZeroPriceSnapshot mirrors the production lightweight snapshot:
+// reads the position, short-circuits empty positions, and otherwise
+// returns the test-seeded zero price (or `mark` as the default).
+func (s *stubRisk) GetZeroPriceSnapshot(
+	ctx context.Context, acc uint64, mkt uint32,
+) (risktypes.ZeroPriceSnapshot, error) {
+	pos, err := s.ak.GetPosition(ctx, acc, mkt)
+	if err != nil {
+		return risktypes.ZeroPriceSnapshot{}, err
+	}
+	if pos.Position.IsZero() {
+		return risktypes.ZeroPriceSnapshot{Position: pos}, nil
+	}
+	zp, ok := s.zero[[2]uint64{acc, uint64(mkt)}]
+	if !ok {
+		zp = s.markFor(mkt)
+	}
+	return risktypes.ZeroPriceSnapshot{Position: pos, ZeroPrice: zp}, nil
 }
 
 func (s *stubRisk) GetLiquidationRiskSnapshot(
@@ -505,8 +519,6 @@ func newKeeperWithFunding(
 	}
 	return k, ctx
 }
-
-// ----------- legacy tests retained verbatim (semantics unchanged) -----------
 
 // TestLiquidate_BaseAmountCappedByPosition ensures that passing a
 // base_amount greater than the victim's position is rejected rather than
@@ -1175,7 +1187,7 @@ func TestEndBlocker_BankruptResidueStaysWithVictim(t *testing.T) {
 }
 
 // TestDeleverage_BankruptRiskRegressionRejected covers Gap B: when the
-// bankrupt's post-trade IsValidRiskChange rejects (e.g., a pricing
+// bankrupt's post-trade IsValidRiskChangeFrom rejects (e.g., a pricing
 // pathology that worsens TAV/MMR despite the close-out being
 // supposedly improving), the entire deleverage trade is aborted —
 // previously perpdex skipped the bankrupt check on the LLP path
@@ -1354,11 +1366,10 @@ func TestEndBlocker_ADLCandidateInsufficientCollateral_AdvancesToNext(t *testing
 	require.Equal(t, uint64(202), tk.calls[0].TakerAccountIndex)
 }
 
-// TestEndBlocker_CrossAggregateRefreshedAcrossMarkets is the regression
-// test for the cross-aggregate staleness audit (PR review P1):
-// processAccount must NOT carry pre-mutation cross RiskParameters or
-// status across markets when the previous market's fill has just
-// shifted them.
+// TestEndBlocker_CrossAggregateRefreshedAcrossMarkets pins the
+// cross-aggregate staleness invariant: processAccount must NOT carry
+// pre-mutation cross RiskParameters or status across markets when
+// the previous market's fill has just shifted them.
 //
 // Setup: account 100 holds two cross positions (markets 0 and 1) and
 // is FULL_LIQUIDATION at the start of the block. The LLP can absorb
@@ -1423,8 +1434,8 @@ func TestEndBlocker_CrossAggregateRefreshedAcrossMarkets(t *testing.T) {
 	require.Len(t, tk.calls, 1,
 		"only market 0 should fill: market 1 must observe the post-mutation HEALTHY status and skip")
 	require.Equal(t, uint32(0), tk.calls[0].MarketIndex)
-	require.GreaterOrEqual(t, rk.snapshotCalls, 2,
-		"each per-market LLP/ADL invocation must build its own fresh risk snapshot")
+	require.GreaterOrEqual(t, rk.snapshotCalls, 1,
+		"market 0's LLP path must build at least one fresh risk snapshot before the fill")
 	// processAccount must leave NO cross flag for this account once
 	// the iteration ends with a HEALTHY post-state, regardless of
 	// whether the flag was written before (market 0, written then
@@ -1448,15 +1459,14 @@ func TestEndBlocker_CrossAggregateRefreshedAcrossMarkets(t *testing.T) {
 	}
 }
 
-// TestAutoADL_RefusesHealedVictimViaSelfAssert is the defense-in-depth
-// regression for the same staleness audit (PR review P1) targeted at
-// autoADL itself: even if processAccount has already decided the
-// victim is FULL_LIQUIDATION and tryLLPAbsorb has rejected the
-// absorption, autoADL must re-classify the victim's envelope from
-// its OWN fresh snapshot. The engine's IsValidRiskChange is
-// permissive on HEALTHY post-state, so without this self-assertion
-// a recovered victim could be ADL'd against the engine's permissive
-// path.
+// TestAutoADL_RefusesHealedVictimViaSelfAssert pins the autoADL
+// self-gate invariant: even if processAccount has already decided
+// the victim is FULL_LIQUIDATION and tryLLPAbsorb has rejected the
+// absorption, autoADL MUST re-classify the victim's envelope from
+// its OWN fresh snapshot. The trade engine's IsValidRiskChangeFrom
+// accepts HEALTHY post-state unconditionally, so without this
+// self-assertion a recovered victim could still be ADL'd against
+// the engine's permissive path.
 //
 // We model an LLP-absorption FAILURE (postSim breach IMR) so the
 // EndBlocker drops into the autoADL branch even though the victim

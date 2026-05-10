@@ -22,9 +22,12 @@ import (
 // the cross aggregation that backs `Risk` / `CrossRisk` walks the
 // account's other positions and queries each of THEIR mark prices
 // independently. The snapshot does not yet share a per-block oracle
-// cache, so a builder that fans those reads through a shared cache
-// would shave additional oracle round-trips. That is a future
-// optimisation; correctness is unaffected.
+// cache, so the same (mark, market_details) row can be re-read
+// multiple times within one EndBlocker pass. The canonical follow-up
+// to deduplicate those reads is a per-block oracle / market-details
+// read cache wired through the risk keeper; the snapshot type would
+// then become the natural consumer. Correctness is unaffected — only
+// IO budget shrinks.
 //
 // Field semantics:
 //
@@ -47,4 +50,20 @@ type LiquidationRiskSnapshot struct {
 	Risk          RiskParameters
 	CrossRisk     RiskParameters
 	ZeroPrice     uint32
+}
+
+// ZeroPriceSnapshot is the lightweight (position, ZeroPrice) bundle
+// the non-ADL liquidation paths and the gRPC zero-price query consume.
+// It does NOT carry the Risk / CrossRisk envelopes — callers that
+// need those (ADL ranking, autoADL self-gate, LLP simulation) MUST
+// use LiquidationRiskSnapshot instead, otherwise they would silently
+// re-walk the cross aggregate to recover what they need.
+//
+// Empty-position semantics mirror LiquidationRiskSnapshot: a closed
+// position short-circuits to ZeroPrice == 0 without touching the
+// oracle so callers can detect "no position" before any oracle
+// dependency has a chance to fail.
+type ZeroPriceSnapshot struct {
+	Position  accounttypes.AccountPosition
+	ZeroPrice uint32
 }

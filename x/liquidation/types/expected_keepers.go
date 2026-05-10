@@ -42,11 +42,6 @@ type MarketKeeper interface {
 type RiskKeeper interface {
 	GetHealthStatus(ctx context.Context, accountIdx uint64) (uint32, error)
 	GetIsolatedHealthStatus(ctx context.Context, accountIdx uint64, marketIdx uint32) (uint32, error)
-	// GetPositionZeroPrice is the gRPC query entry point. Hot
-	// liquidation loops use GetLiquidationRiskSnapshot below so the
-	// snapshot's other fields (mark / md / Risk / CrossRisk) are not
-	// thrown away.
-	GetPositionZeroPrice(ctx context.Context, accountIdx uint64, marketIdx uint32) (uint32, error)
 	// SimulateRiskAfterTakeover previews the cross risk parameters
 	// the account would have if it inherited `delta` of `marketIdx`
 	// settled at `entryPrice`. Used by the LLP / insurance fund
@@ -63,20 +58,30 @@ type RiskKeeper interface {
 	) (risktypes.RiskParameters, error)
 	// GetLiquidationRiskSnapshot returns the cohesive (pos, mark,
 	// md, Risk, CrossRisk, ZeroPrice) bundle for one (account,
-	// market) pair. It is the primary access the hot liquidation
-	// loops use in place of fetching pos / mark / md / risk-info
-	// individually; callers that previously had to re-fetch in order
-	// to compute a zero price now read `snap.ZeroPrice` directly.
+	// market) pair. Scoped to ADL ranking and autoADL — those
+	// callers consume `snap.Risk` / `snap.CrossRisk` for leverage
+	// scoring and the FULL/BANKRUPTCY self-gate. Liquidate /
+	// Deleverage use GetZeroPriceSnapshot instead because they only
+	// need the position and zero price.
 	//
-	// Snapshots are values: they represent the state at the moment of
-	// the call and MUST be re-built after any state mutation. Threading
-	// a snapshot across a fill / settlement boundary will feed stale
-	// TAV / MMR into downstream computations.
+	// Snapshots are values: they represent the state at the moment
+	// of the call and MUST be re-built after any state mutation.
+	// Threading a snapshot across a fill / settlement boundary will
+	// feed stale TAV / MMR into downstream computations.
 	GetLiquidationRiskSnapshot(
 		ctx context.Context,
 		accountIdx uint64,
 		marketIdx uint32,
 	) (risktypes.LiquidationRiskSnapshot, error)
+	// GetZeroPriceSnapshot is the lightweight (pos, ZeroPrice)
+	// counterpart used by the Liquidate and Deleverage Msg handlers
+	// (and the gRPC zero-price query) where the Risk / CrossRisk
+	// envelopes from the full snapshot would just be discarded.
+	GetZeroPriceSnapshot(
+		ctx context.Context,
+		accountIdx uint64,
+		marketIdx uint32,
+	) (risktypes.ZeroPriceSnapshot, error)
 	// GetMarkAndMarketDetails returns the live mark price and
 	// MarketDetails row for `marketIdx` in a single round-trip. Used
 	// by `rankVictimPositionsByUPnL` which only needs the mark for

@@ -31,8 +31,9 @@ type stubAccountKeeper struct {
 }
 
 // Pointer receivers so the test can mutate `acc`/`pos` AFTER
-// constructing the keeper (e.g. for pre/post-state IsValidRiskChange
-// scenarios) without rebuilding the whole keeper instance.
+// constructing the keeper (e.g. for pre/post-state
+// IsValidRiskChangeFrom scenarios) without rebuilding the whole
+// keeper instance.
 func (s *stubAccountKeeper) GetAccount(_ context.Context, _ uint64) (accounttypes.Account, error) {
 	return s.acc, nil
 }
@@ -145,9 +146,10 @@ func TestComputeRiskInfo_ZeroMarkPriceRejected(t *testing.T) {
 	require.ErrorIs(t, err, risktypes.ErrZeroMarkPrice)
 }
 
-// TestIsValidRiskChange_NoPreStateFailClosed verifies that an unhealthy post
-// state without a pre-state snapshot fails closed (audit Blocker risk-3).
-func TestIsValidRiskChange_NoPreStateFailClosed(t *testing.T) {
+// TestIsValidRiskChangeFrom_NoPreStateFailClosed verifies that an
+// unhealthy post state without a pre-state snapshot fails closed
+// (audit Blocker risk-3).
+func TestIsValidRiskChangeFrom_NoPreStateFailClosed(t *testing.T) {
 	// Position bought at 100_000 but mark is 10_000, so the account is
 	// deeply under water → BANKRUPTCY in the post-state.
 	ak := stubAccountKeeper{
@@ -165,7 +167,7 @@ func TestIsValidRiskChange_NoPreStateFailClosed(t *testing.T) {
 	ok := stubOracleKeeper{price: oracletypes.OraclePrice{MarkPrice: 10_000}}
 	k, ctx := makeKeeper(t, &ak, mk, ok)
 
-	ok2, err := k.IsValidRiskChange(ctx, 1)
+	ok2, err := k.IsValidRiskChangeFrom(ctx, 1, risktypes.PreRiskSnapshot{})
 	require.NoError(t, err)
 	require.False(t, ok2)
 }
@@ -351,11 +353,11 @@ func TestGetIsolatedHealthStatus_PerMarket(t *testing.T) {
 		"isolated TAV<0 must classify as BANKRUPTCY independently")
 }
 
-// TestIsValidRiskChange_PreLiquidationRejectsMMRGrowth verifies the
-// Lighter PRE rule. With pre.MMR snapshotted, a post-state with
+// TestIsValidRiskChangeFrom_PreLiquidationRejectsMMRGrowth verifies
+// the Lighter PRE rule. With pre.MMR snapshotted, a post-state with
 // strictly larger MMR (i.e. account opened a new position) must be
 // rejected even if post is still PRE_LIQUIDATION.
-func TestIsValidRiskChange_PreLiquidationRejectsMMRGrowth(t *testing.T) {
+func TestIsValidRiskChangeFrom_PreLiquidationRejectsMMRGrowth(t *testing.T) {
 	ak := stubAccountKeeper{
 		acc: accounttypes.Account{AccountIndex: 1, Collateral: math.NewInt(1_000)},
 		pos: accounttypes.AccountPosition{
@@ -389,7 +391,8 @@ func TestIsValidRiskChange_PreLiquidationRejectsMMRGrowth(t *testing.T) {
 	k, ctx := makeKeeper(t, &ak, mk, ok)
 
 	// Snapshot pre-state: PRE class.
-	require.NoError(t, k.SnapshotPreRisk(ctx, 1))
+	pre, err := k.SnapshotRisk(ctx, 1)
+	require.NoError(t, err)
 	// Sanity: pre is PRE.
 	preStatus, err := k.GetHealthStatus(ctx, 1)
 	require.NoError(t, err)
@@ -405,15 +408,16 @@ func TestIsValidRiskChange_PreLiquidationRejectsMMRGrowth(t *testing.T) {
 	// collateral=1000, uPnL=1500 → TAV=2500 (PRE). uPnL=pos*mark -
 	// entry ⇒ entry = 30_000 - 1500 = 28_500.
 	ak.pos.EntryQuote = math.NewInt(28_500)
-	ok2, err := k.IsValidRiskChange(ctx, 1)
+	ok2, err := k.IsValidRiskChangeFrom(ctx, 1, pre)
 	require.NoError(t, err)
 	require.False(t, ok2,
 		"PRE → PRE with larger MMR must be rejected (Lighter no-size-up rule)")
 }
 
-// TestIsValidRiskChange_PreLiquidationAllowsReduceOnly verifies the
-// inverse: if MMR shrinks while still in PRE, the change is accepted.
-func TestIsValidRiskChange_PreLiquidationAllowsReduceOnly(t *testing.T) {
+// TestIsValidRiskChangeFrom_PreLiquidationAllowsReduceOnly verifies
+// the inverse: if MMR shrinks while still in PRE, the change is
+// accepted.
+func TestIsValidRiskChangeFrom_PreLiquidationAllowsReduceOnly(t *testing.T) {
 	ak := stubAccountKeeper{
 		acc: accounttypes.Account{AccountIndex: 1, Collateral: math.NewInt(1_000)},
 		pos: accounttypes.AccountPosition{
@@ -433,25 +437,24 @@ func TestIsValidRiskChange_PreLiquidationAllowsReduceOnly(t *testing.T) {
 	ok := stubOracleKeeper{price: oracletypes.OraclePrice{MarkPrice: 1000}}
 	k, ctx := makeKeeper(t, &ak, mk, ok)
 
-	require.NoError(t, k.SnapshotPreRisk(ctx, 1))
+	pre, err := k.SnapshotRisk(ctx, 1)
+	require.NoError(t, err)
 
 	// Post: shrink position from 20 to 10. uPnL/collateral roughly
 	// halves; TAV still > MMR; class stays at PRE or improves.
 	ak.pos.Position = math.NewInt(10)
 	ak.pos.EntryQuote = math.NewInt(9_750)
-	ok2, err := k.IsValidRiskChange(ctx, 1)
+	ok2, err := k.IsValidRiskChangeFrom(ctx, 1, pre)
 	require.NoError(t, err)
 	require.True(t, ok2, "shrinking position in PRE must be allowed")
 }
 
-// TestGetLiquidationRiskSnapshot_EmptyPositionShortCircuitsOracle is
-// the regression test for PR review P2 (error-priority audit): the
-// snapshot builder must NOT reach the oracle for an empty position.
-// Prior to the fix, an account with no position in `marketIdx` would
-// surface an `ErrStalePrice` from the oracle even though the caller
-// (gRPC GetPositionZeroPrice, Liquidate, Deleverage) only wants the
-// "no position" short-circuit. We intentionally configure the oracle
-// to error so a leak would surface as a non-nil error.
+// TestGetLiquidationRiskSnapshot_EmptyPositionShortCircuitsOracle
+// pins the invariant that a snapshot for an empty position must not
+// depend on oracle health: callers (gRPC GetPositionZeroPrice,
+// Liquidate, Deleverage) only want the "no position" short-circuit
+// and must not surface oracle errors. We intentionally configure the
+// oracle to error so a leak would surface as a non-nil error.
 func TestGetLiquidationRiskSnapshot_EmptyPositionShortCircuitsOracle(t *testing.T) {
 	// Account holds NO position in market 0; stub returns the
 	// zero-valued AccountPosition for that lookup.
