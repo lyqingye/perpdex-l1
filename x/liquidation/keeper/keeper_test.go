@@ -10,6 +10,7 @@ import (
 
 	cmtprototypes "github.com/cometbft/cometbft/proto/tendermint/types"
 
+	"cosmossdk.io/collections"
 	"cosmossdk.io/log"
 	"cosmossdk.io/math"
 	storetypes "cosmossdk.io/store/types"
@@ -1424,6 +1425,22 @@ func TestEndBlocker_CrossAggregateRefreshedAcrossMarkets(t *testing.T) {
 	require.Equal(t, uint32(0), tk.calls[0].MarketIndex)
 	require.GreaterOrEqual(t, rk.snapshotCalls, 2,
 		"each per-market LLP/ADL invocation must build its own fresh risk snapshot")
+	// processAccount removes the flag it just wrote when refreshHealth
+	// finds the position has been healed mid-iteration; otherwise
+	// keeper bots would chase a recovered (account, market) for one
+	// extra block.
+	hasFlagMarket1, err := k.Flags.Has(ctx, collections.Join[uint64, uint32](100, 1))
+	require.NoError(t, err)
+	require.False(t, hasFlagMarket1,
+		"flag for the healed market 1 must be removed once refreshHealth reports HEALTHY")
+	// processAccount must re-read the cross status before emitting
+	// LiquidationFlagged. The account started FULL_LIQ but a fill
+	// healed it to HEALTHY; the event must NOT carry the stale
+	// pre-iteration status (or fire at all).
+	for _, e := range ctx.EventManager().Events() {
+		require.NotEqual(t, liqtypes.EventTypeLiquidationFlagged, e.Type,
+			"no LiquidationFlagged event should be emitted for an account that healed mid-iteration")
+	}
 }
 
 // TestAutoADL_RefusesHealedVictimViaSelfAssert is the defense-in-depth

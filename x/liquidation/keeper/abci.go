@@ -65,18 +65,11 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 // each isolated position is flagged / liquidated against its own
 // per-market isolated health.
 //
-// Cross status is read once at the top of the function as the
-// flag-bookkeeping driver, but a SECOND fresh status read happens
-// inside the FULL/BANKRUPTCY branch right before the LLP/ADL
-// waterfall fires: a sibling-market fill earlier in this account's
-// iteration may have already lifted the cross account back to
-// HEALTHY. Without the refresh `tryLLPAbsorb` would still be invoked
-// (Deleverage's inner health gate would reject it with
-// `ErrNotBankrupt`), and `autoADL` — which only enforces zero-price
-// alignment, not victim health — would happily quote a fill against a
-// healed account because the engine's `IsValidRiskChange` is
-// permissive on HEALTHY post-states. autoADL also self-asserts on
-// the snapshot's risk envelope as defense-in-depth.
+// Health is re-read inside the FULL/BANKRUPTCY branch right before
+// the LLP/ADL waterfall fires so a sibling-market fill that already
+// healed the account in this iteration short-circuits before any
+// (now-bogus) liquidation fill is quoted. autoADL also self-asserts
+// FULL/BANKRUPTCY against its own fresh snapshot.
 func (k Keeper) processAccount(
 	ctx context.Context, a accounttypes.Account, height int64, now int64,
 	attemptsLeft *uint32, candCap uint32,
@@ -148,9 +141,10 @@ func (k Keeper) processAccount(
 			}
 			if fresh != perptypes.HealthFullLiquidation && fresh != perptypes.HealthBankruptcy {
 				// A sibling fill in this account already healed
-				// the envelope; do not quote a fill against a
-				// recovered account. Flag stays — bookkeeping
-				// self-corrects on the next block.
+				// the envelope; do not quote a fill, and drop
+				// the flag we just wrote so keeper bots do not
+				// chase a recovered account for one extra block.
+				_ = k.Flags.Remove(ctx, collections.Join(a.AccountIndex, marketIdx))
 				return false
 			}
 			absorbed, err := k.tryLLPAbsorb(ctx, a.AccountIndex, marketIdx, attemptsLeft)
@@ -185,12 +179,22 @@ func (k Keeper) processAccount(
 		// removes entries we still iterate over).
 		_ = k.clearCrossFlags(ctx, a.AccountIndex)
 	}
+	// Re-read the cross status before emitting the flag event: an
+	// LLP / ADL fill earlier in this iteration may have already
+	// lifted the account back to HEALTHY, in which case the event
+	// would otherwise carry the stale pre-iteration status.
 	if crossStatus != perptypes.HealthHealthy {
-		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
-			types.EventTypeLiquidationFlagged,
-			sdk.NewAttribute(types.AttributeKeyAccountIndex, strconv.FormatUint(a.AccountIndex, 10)),
-			sdk.NewAttribute(types.AttributeKeyStatus, strconv.FormatUint(uint64(crossStatus), 10)),
-		))
+		finalCross, err := k.riskKeeper.GetHealthStatus(ctx, a.AccountIndex)
+		if err != nil {
+			return err
+		}
+		if finalCross != perptypes.HealthHealthy {
+			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
+				types.EventTypeLiquidationFlagged,
+				sdk.NewAttribute(types.AttributeKeyAccountIndex, strconv.FormatUint(a.AccountIndex, 10)),
+				sdk.NewAttribute(types.AttributeKeyStatus, strconv.FormatUint(uint64(finalCross), 10)),
+			))
+		}
 	}
 	return nil
 }

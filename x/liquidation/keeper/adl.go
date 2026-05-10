@@ -163,14 +163,11 @@ func computeLeverage(rp risktypes.RiskParameters) math.Int {
 //
 // The victim's snapshot is rebuilt INSIDE this call so victim TAV/MMR
 // reflect any state mutation that happened earlier in the same
-// EndBlocker iteration (e.g., an LLP absorption against a sibling
-// market for the same cross account). autoADL self-asserts that the
-// victim is still FULL_LIQUIDATION / BANKRUPTCY against its fresh
-// snapshot before quoting any fill: the engine's `IsValidRiskChange`
-// is permissive on HEALTHY post-states, so a recovered victim could
-// otherwise be ADL'd by a stale processAccount trigger or by a
-// `tryLLPAbsorb` fall-through that landed here only because
-// `Deleverage` had rejected the LLP fill with `ErrNotBankrupt`.
+// EndBlocker iteration. autoADL also self-asserts that the victim is
+// still FULL_LIQUIDATION / BANKRUPTCY against that fresh snapshot —
+// the trade engine does not enforce victim health on the deleverage
+// path, so this routine is the canonical "no ADL on a recovered
+// account" gate.
 func (k Keeper) autoADL(
 	ctx context.Context,
 	victim uint64,
