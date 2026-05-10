@@ -182,13 +182,19 @@ func (k Keeper) processAccount(
 	// Re-read the cross status before emitting the flag event: an
 	// LLP / ADL fill earlier in this iteration may have already
 	// lifted the account back to HEALTHY, in which case the event
-	// would otherwise carry the stale pre-iteration status.
+	// would otherwise carry the stale pre-iteration status — and any
+	// cross flag we already wrote for an EARLIER market in this same
+	// iteration would otherwise linger one extra block (the per-loop
+	// healed-mid-iter branch only removes the CURRENT market's flag,
+	// not earlier ones).
 	if crossStatus != perptypes.HealthHealthy {
 		finalCross, err := k.riskKeeper.GetHealthStatus(ctx, a.AccountIndex)
 		if err != nil {
 			return err
 		}
-		if finalCross != perptypes.HealthHealthy {
+		if finalCross == perptypes.HealthHealthy {
+			_ = k.clearCrossFlags(ctx, a.AccountIndex)
+		} else {
 			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
 				types.EventTypeLiquidationFlagged,
 				sdk.NewAttribute(types.AttributeKeyAccountIndex, strconv.FormatUint(a.AccountIndex, 10)),

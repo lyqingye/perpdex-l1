@@ -1425,14 +1425,19 @@ func TestEndBlocker_CrossAggregateRefreshedAcrossMarkets(t *testing.T) {
 	require.Equal(t, uint32(0), tk.calls[0].MarketIndex)
 	require.GreaterOrEqual(t, rk.snapshotCalls, 2,
 		"each per-market LLP/ADL invocation must build its own fresh risk snapshot")
-	// processAccount removes the flag it just wrote when refreshHealth
-	// finds the position has been healed mid-iteration; otherwise
-	// keeper bots would chase a recovered (account, market) for one
-	// extra block.
-	hasFlagMarket1, err := k.Flags.Has(ctx, collections.Join[uint64, uint32](100, 1))
-	require.NoError(t, err)
-	require.False(t, hasFlagMarket1,
-		"flag for the healed market 1 must be removed once refreshHealth reports HEALTHY")
+	// processAccount must leave NO cross flag for this account once
+	// the iteration ends with a HEALTHY post-state, regardless of
+	// whether the flag was written before (market 0, written then
+	// the LLP fill rescued the account) or after (market 1, written
+	// by the per-loop branch and removed once refreshHealth caught
+	// the heal). The end-of-iteration sweep covers the former; the
+	// per-loop refreshHealth branch covers the latter.
+	for _, market := range []uint32{0, 1} {
+		has, err := k.Flags.Has(ctx, collections.Join[uint64, uint32](100, market))
+		require.NoError(t, err)
+		require.False(t, has,
+			"no cross flag should remain for market %d once the account ended HEALTHY", market)
+	}
 	// processAccount must re-read the cross status before emitting
 	// LiquidationFlagged. The account started FULL_LIQ but a fill
 	// healed it to HEALTHY; the event must NOT carry the stale
