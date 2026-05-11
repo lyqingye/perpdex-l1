@@ -11,7 +11,7 @@ import (
 	"github.com/perpdex/perpdex-l1/x/liquidation/types"
 )
 
-// Keeper implements the Lighter liquidations & LLP waterfall:
+// Keeper implements the liquidations & LLP waterfall:
 //
 //  1. PRE_LIQUIDATION  - flag-only; no engine action. The matching gate
 //     (x/matching) restricts the user to reduce-only orders.
@@ -20,9 +20,9 @@ import (
 //     `LIQUIDATION_ORDER + IOC + reduce_only` at the zero price for
 //     matching against the open book. Improvements above the zero
 //     price are taxed at `min(market.LiquidationFee, price_diff_rate)`
-//     (Lighter parity) and routed to the LLP / Insurance Fund. The
-//     matching loop short-circuits the moment the victim is no
-//     longer in liquidation, mirroring Lighter's
+//     and routed to the LLP / Insurance Fund. The matching loop
+//     short-circuits the moment the victim is no longer in
+//     liquidation, mirroring the
 //     `is_not_in_liquidation_and_is_liquidation_order` guard.
 //  3. FULL_LIQUIDATION - EndBlocker hands the victim's positions to
 //     the LLP one at a time, ranked by ascending unrealized PnL,
@@ -33,7 +33,7 @@ import (
 //     BANKRUPTCY are end-block-only because they require the LLP IMR
 //     gate before the LLP can take over.
 //  4. BANKRUPTCY - same waterfall as FULL_LIQUIDATION. The deleverage
-//     transaction in Lighter (`internal_deleverage.rs`) accepts both
+//     transaction (`internal_deleverage.rs`) accepts both
 //     `FULL_LIQUIDATION` and `BANKRUPTCY` indistinctly; only the
 //     deleverager type is filtered (IF vs user). EndBlocker therefore
 //     also tries `tryLLPAbsorb` first for BANKRUPTCY victims and

@@ -17,9 +17,9 @@ import (
 
 // ADLCandidate is a counterparty considered for auto-deleveraging on a
 // (market, side) pair. Candidates are ranked by `Score`, descending; the
-// first entry is the most "ADL-able" — Lighter spec ranks by leverage
-// AND unrealized profit jointly so highly-leveraged winners get pulled
-// in before low-leverage winners with the same uPnL.
+// first entry is the most "ADL-able" — the spec ranks by leverage AND
+// unrealized profit jointly so highly-leveraged winners get pulled in
+// before low-leverage winners with the same uPnL.
 type ADLCandidate struct {
 	AccountIndex uint64
 	// PositionSize is the candidate's signed perp position. It is
@@ -33,8 +33,8 @@ type ADLCandidate struct {
 	ZeroPrice uint32
 	// Leverage is the cross account leverage at rank time (notional /
 	// max(collateral, 1)), expressed in MarginTick units. Always the
-	// CROSS aggregate, even for isolated candidates, per the Lighter
-	// spec ("highly-leveraged winners come first").
+	// CROSS aggregate, even for isolated candidates, per the spec
+	// ("highly-leveraged winners come first").
 	Leverage math.Int
 	// Score = leverage * uPnL_ratio. uPnL_ratio is approximated by
 	// uPnL * MarginTick / max(|entry_quote|, 1). Higher = closer to
@@ -44,10 +44,9 @@ type ADLCandidate struct {
 
 // BuildADLQueue scans every account, picks those that hold an opposing
 // non-zero position in `marketIdx` AND are currently profitable on it,
-// computes the per-Lighter ADL score, and returns the top `limit`
-// candidates sorted by score descending. `oppositeIsLong = true`
-// means the victim is short, so the ADL queue must be longs
-// (PositionSize > 0).
+// computes the ADL score, and returns the top `limit` candidates
+// sorted by score descending. `oppositeIsLong = true` means the victim
+// is short, so the ADL queue must be longs (PositionSize > 0).
 //
 // Cost: O(N_accounts) per call. The caller is expected to apply the
 // `MaxAdlCandidatesPerVictim` cap from Params before invoking this.
@@ -150,7 +149,7 @@ func computeLeverage(rp risktypes.RiskParameters) math.Int {
 // autoADL closes a portion of the victim's `marketIdx` position
 // against the top-ranked counterparties returned by BuildADLQueue.
 //
-// Per the Lighter spec the trade between the bankrupt account and an
+// Per the spec the trade between the bankrupt account and an
 // opposite-side counterparty MUST happen at a price where the two
 // "zero prices" align — i.e. the execution price is at least as good
 // as either side's zero price. The exact midpoint
@@ -246,13 +245,13 @@ func (k Keeper) autoADL(
 			// User-ADL: defense-in-depth — both bankrupt (maker)
 			// and counterparty (taker) go through
 			// IsValidRiskChangeFrom. The bankrupt check mirrors
-			// Lighter's `is_valid_risk_change` on bankrupt; the
-			// counterparty check is perpdex-stricter than Lighter
-			// (which does only a collateral-sufficiency assert on
-			// ADL deleveragers). The settlement at zeroPriceMid
-			// guarantees the counterparty's TAV/MMR cannot
-			// regress, so the check passes in normal flow but
-			// still catches pathological pricing. Both flags
+			// `is_valid_risk_change` on bankrupt; the
+			// counterparty check is perpdex-stricter than the
+			// spec (which does only a collateral-sufficiency
+			// assert on ADL deleveragers). The settlement at
+			// zeroPriceMid guarantees the counterparty's TAV/MMR
+			// cannot regress, so the check passes in normal flow
+			// but still catches pathological pricing. Both flags
 			// default to false here because we DO want both risk
 			// checks under user-ADL.
 		}

@@ -16,10 +16,10 @@ import (
 
 // errTakerRejected is the sentinel returned by `applyPerpFill` /
 // `applySpotFill` when the trade engine rejects a fill with a
-// recoverable taker-side error (Lighter parity with
-// `cancel_taker_order` in matching_engine.rs). The outer loop must
-// preserve already-committed fills, terminate, and (for the user
-// path) force-cancel the residue rather than rest it on the book.
+// recoverable taker-side error (matches `cancel_taker_order` in
+// matching_engine.rs). The outer loop must preserve already-committed
+// fills, terminate, and (for the user path) force-cancel the residue
+// rather than rest it on the book.
 var errTakerRejected = errors.New("matching: taker recoverable rejection")
 
 // nextMaker peeks the best opposite resting order for `taker` and
@@ -285,7 +285,7 @@ func (k Keeper) classifyApplyError(
 		// is force-cancelled by the outer loop — the taker just
 		// proved it cannot satisfy further fills, so resting it on
 		// the book would only re-trigger the same failure for
-		// downstream takers. Lighter parity: `cancel_taker_order`
+		// downstream takers. Matches `cancel_taker_order`, which
 		// pops the taker register regardless of TIF.
 		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
 			types.EventTypeTakerAbortedBadState,

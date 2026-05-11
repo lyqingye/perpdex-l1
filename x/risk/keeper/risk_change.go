@@ -24,7 +24,7 @@ import (
 // position the account holds; if either side regresses the change is
 // rejected.
 //
-// Per-side semantics (Lighter parity):
+// Per-side semantics:
 //
 //   - HEALTHY post-state is accepted unconditionally.
 //   - PRE_LIQUIDATION pre-state: post must remain at most PRE,
@@ -42,7 +42,7 @@ import (
 //
 // `pre` MUST be the value returned by SnapshotRisk at the start of
 // the same handler. A zero-value snapshot is treated as "no pre-state"
-// and forces the post-state to be HEALTHY (Lighter fail-closed rule).
+// and forces the post-state to be HEALTHY (fail-closed rule).
 func (k Keeper) IsValidRiskChangeFrom(ctx context.Context, accountIdx uint64, pre types.PreRiskSnapshot) (bool, error) {
 	if ok, err := k.isCrossRiskChangeValid(ctx, accountIdx, pre.Cross); err != nil || !ok {
 		return ok, err

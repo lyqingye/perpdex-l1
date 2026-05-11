@@ -567,8 +567,8 @@ func TestLiquidate_ZeroBaseRejected(t *testing.T) {
 
 // TestLiquidate_RejectsFullLiquidationStatus verifies that MsgLiquidate
 // only services PARTIAL_LIQUIDATION; FULL/BANKRUPTCY accounts must
-// fall through to the EndBlocker LLP→ADL waterfall (Lighter
-// `InternalDeleverageTx` path).
+// fall through to the EndBlocker LLP→ADL waterfall
+// (`InternalDeleverageTx` path).
 func TestLiquidate_RejectsFullLiquidationStatus(t *testing.T) {
 	ak := newStubAccount()
 	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.ZeroInt()}
@@ -624,11 +624,11 @@ func TestDeleverage_RejectsUnauthorizedUserSender(t *testing.T) {
 	_ = authority
 }
 
-// ----------- new Lighter-parity tests -----------
+// ----------- spec-parity tests -----------
 
 // TestLiquidate_CancelsVictimOpenOrders verifies the spec rule "first
 // cancel all open orders of the user" before submitting the
-// liquidation IOC to the matching keeper. Lighter parity:
+// liquidation IOC to the matching keeper, matching
 // `InternalCancelAllOrdersTx → InternalLiquidatePositionTx`.
 func TestLiquidate_CancelsVictimOpenOrders(t *testing.T) {
 	ak := newStubAccount()
@@ -734,7 +734,7 @@ func TestEndBlocker_FullLiquidationPrefersLLPThenADL(t *testing.T) {
 		"counterparty must be the insurance fund operator")
 	require.True(t, tk.calls[0].NoFee, "LLP takeover is a fee-less close")
 	require.True(t, tk.calls[0].SkipTakerRiskCheck,
-		"LLP / IF deleverager bypasses post-trade taker risk check (Lighter parity)")
+		"LLP / IF deleverager bypasses post-trade taker risk check")
 	require.False(t, tk.calls[0].SkipMakerRiskCheck,
 		"bankrupt (maker) post-trade risk check must remain enabled")
 }
@@ -767,7 +767,7 @@ func TestLLPAbsorb_StopsWhenLLPWouldBreachIMR(t *testing.T) {
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	// Bankrupt has a small but non-zero cushion so the autoADL pre-
-	// trade collateral assert (Lighter `is_bankrupt_has_enough_cross_
+	// trade collateral assert (`is_bankrupt_has_enough_cross_
 	// collateral`) passes at the candidate's settle price (mid of
 	// 100/110 = 105). The realised PnL on a 10-unit close at 105
 	// against EQ=+5000 is small (~50), so 100 of cushion is plenty.
@@ -870,10 +870,10 @@ func TestEndBlocker_BankruptcyFallsThroughToADLWhenLLPBreachesIMR(t *testing.T) 
 // which prevents the close-out from worsening the counterparty.
 //
 // The bankrupt is given a small but non-trivial collateral cushion so
-// the pre-trade collateral assert (Lighter
-// `is_bankrupt_has_enough_cross_collateral` parity) passes at the
-// candidate settle price; the test's interest is purely the ZP
-// alignment filter, not the collateral guard.
+// the pre-trade collateral assert
+// (`is_bankrupt_has_enough_cross_collateral`) passes at the candidate
+// settle price; the test's interest is purely the ZP alignment
+// filter, not the collateral guard.
 func TestAutoADL_RequiresZeroPriceAlignment(t *testing.T) {
 	ak := newStubAccount()
 	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.NewInt(200)}
@@ -1004,11 +1004,11 @@ func TestEndBlocker_PreLiquidationClearsFlags(t *testing.T) {
 	require.Empty(t, tk.calls)
 }
 
-// ----------- Lighter parity: no silent IF top-up of negative collateral -----------
+// ----------- no silent IF top-up of negative collateral -----------
 
 // TestLiquidate_DoesNotTopUpFromIF is the positive assertion that the
 // partial-liquidation path NEVER pulls collateral from the Insurance
-// Fund as a post-trade safety net. Lighter's
+// Fund as a post-trade safety net.
 // `internal_liquidate_position.rs` only inserts a `LIQUIDATION_ORDER +
 // IOC + reduce_only` and lets the matching engine settle improvements
 // above zero_price; there is no analogue of a chain-level
@@ -1045,8 +1045,8 @@ func TestLiquidate_DoesNotTopUpFromIF(t *testing.T) {
 
 	// Matching IOC must have been driven, but the IF account's
 	// collateral and the victim's pre-existing deficit must both be
-	// untouched: there is no post-trade collateral movement in
-	// Lighter's partial-liquidation path.
+	// untouched: there is no post-trade collateral movement in the
+	// partial-liquidation path.
 	require.Len(t, matchk.liqCalls, 1, "partial liq must drive matching IOC exactly once")
 	require.True(t,
 		ak.accounts[perptypes.InsuranceFundOperatorAccountIdx].Collateral.Equal(math.NewInt(1_000_000)),
@@ -1063,9 +1063,9 @@ func TestLiquidate_DoesNotTopUpFromIF(t *testing.T) {
 // arm: even though the LLP / IF participates as the deleverage
 // counterparty, any residual negative collateral that may exist on
 // the victim's ledger after the trade settles must NOT be silently
-// transferred to the IF. Lighter's `internal_deleverage.rs` settles
-// at `zero_quote` and lets the bankrupt's ledger reflect the truth;
-// it has no equivalent of a post-block IF top-up sweep.
+// transferred to the IF. `internal_deleverage.rs` settles at
+// `zero_quote` and lets the bankrupt's ledger reflect the truth; it
+// has no equivalent of a post-block IF top-up sweep.
 func TestDeleverage_LeavesResidualOnVictim(t *testing.T) {
 	ak := newStubAccount()
 	ak.accounts[perptypes.InsuranceFundOperatorAccountIdx] = accounttypes.Account{
@@ -1121,9 +1121,9 @@ func TestDeleverage_LeavesResidualOnVictim(t *testing.T) {
 // TestEndBlocker_BankruptResidueStaysWithVictim covers the worst-case
 // path: a bankrupt account whose LLP takeover would breach the IF's
 // IMR AND whose ADL queue is empty (no profitable opposite-side
-// counterparties). Under Lighter's design the position simply remains
-// open and is re-evaluated next block; there is no chain-level rescue
-// that drains the IF to make the bankrupt's collateral non-negative.
+// counterparties). The position simply remains open and is
+// re-evaluated next block; there is no chain-level rescue that
+// drains the IF to make the bankrupt's collateral non-negative.
 //
 // Pre-fix behaviour: the EndBlocker would silently move the residual
 // negative collateral to the IF (which itself has no balance check)
@@ -1174,8 +1174,8 @@ func TestEndBlocker_BankruptResidueStaysWithVictim(t *testing.T) {
 	// should have been issued at all.
 	require.Empty(t, tk.calls,
 		"no fill expected when LLP rejects and ADL queue is empty")
-	// Both ledgers must be exactly as they started — Lighter does
-	// not silently top up bankruptcy losses out of the IF.
+	// Both ledgers must be exactly as they started — there is no
+	// silent top-up of bankruptcy losses out of the IF.
 	require.True(t, ak.accounts[100].Collateral.Equal(math.NewInt(-200)),
 		"victim residual debt must persist (got=%s)",
 		ak.accounts[100].Collateral.String(),
@@ -1194,9 +1194,9 @@ func TestEndBlocker_BankruptResidueStaysWithVictim(t *testing.T) {
 // previously perpdex skipped the bankrupt check on the LLP path
 // (`SkipMakerRiskCheck=true`), allowing such regressions through.
 //
-// The new behaviour mirrors Lighter `internal_deleverage.rs` which
-// asserts `is_valid_risk_change` on bankrupt regardless of the
-// deleverager type.
+// The new behaviour mirrors `internal_deleverage.rs` which asserts
+// `is_valid_risk_change` on bankrupt regardless of the deleverager
+// type.
 func TestDeleverage_BankruptRiskRegressionRejected(t *testing.T) {
 	ak := newStubAccount()
 	ak.accounts[perptypes.InsuranceFundOperatorAccountIdx] = accounttypes.Account{
@@ -1243,7 +1243,7 @@ func TestDeleverage_BankruptRiskRegressionRejected(t *testing.T) {
 
 // TestDeleverage_InsufficientDeleveragerCollateral_UserADL covers Gap C
 // deleverager branch: under user-ADL the deleverager's own collateral
-// is also asserted (perpdex defense-in-depth + Lighter parity for
+// is also asserted (perpdex defense-in-depth for
 // `is_deleverager_has_enough_cross_collateral`). Insufficient
 // collateral on the user-ADL deleverager rejects the trade.
 //

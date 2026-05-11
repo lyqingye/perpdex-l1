@@ -69,13 +69,13 @@ func (s *stubRisk) GetIsolatedHealthStatus(_ context.Context, acc uint64, mkt ui
 //   - LiquidationFeeBps = forwarded from MatchLiquidationOrder arg
 //   - LiquidationFeeRecipient = forwarded from MatchLiquidationOrder arg
 //   - NoRiskCheck       = false; both sides go through IsValidRiskChangeFrom
-//     post-trade, mirroring Lighter
-//     `matching_engine.rs:1801,1843` for liquidation orders. Recoverable
-//     rejections flow through errMakerRejected / errTakerRejected.
+//     post-trade (`matching_engine.rs:1801,1843` for liquidation
+//     orders). Recoverable rejections flow through errMakerRejected /
+//     errTakerRejected.
 //
 // This is the matching-keeper-side contract for the
 // "PARTIAL_LIQUIDATION goes through the orderbook IOC" alignment with
-// Lighter.
+// the spec.
 func TestMatchLiquidation_PerpFillCarriesLiquidationFields(t *testing.T) {
 	e := newMatchEnv(t)
 	e.k.SetRiskKeeper(newStubRisk())
@@ -126,14 +126,14 @@ func TestMatchLiquidation_PerpFillCarriesLiquidationFields(t *testing.T) {
 	require.Equal(t, feeBps, got.LiquidationFeeBps)
 	require.Equal(t, llpIdx, got.LiquidationFeeRecipient)
 	require.False(t, got.NoRiskCheck,
-		"liquidation fill must validate both maker and taker post-state risk (Lighter parity)")
+		"liquidation fill must validate both maker and taker post-state risk")
 	require.False(t, got.SkipMakerRiskCheck,
 		"liquidation fill must validate maker risk change")
 	require.False(t, got.SkipTakerRiskCheck,
 		"liquidation fill must validate taker risk change")
 }
 
-// TestMatchLiquidation_HealthShortCircuit covers the Lighter
+// TestMatchLiquidation_HealthShortCircuit covers the
 // `is_not_in_liquidation_and_is_liquidation_order` short-circuit:
 // after the first fill the victim's health recovers, so the loop
 // must STOP consuming the book even though there is still a second
@@ -227,7 +227,7 @@ func TestMatchLiquidation_PriceUnreachableBreaksImmediately(t *testing.T) {
 // TestMatchLiquidation_HealthShortCircuit_Bankruptcy ensures a victim
 // who progresses from PARTIAL into BANKRUPTCY between fills is NOT
 // short-circuited by `needsLiquidation` — the loop must keep matching
-// because BANKRUPTCY is part of Lighter's `is_in_liquidation` set.
+// because BANKRUPTCY is part of the `is_in_liquidation` set.
 // Without Gap A's BANKRUPTCY arm, the second maker would be
 // erroneously skipped the moment the victim's health reading flipped
 // to BANKRUPTCY mid-loop (e.g., from a funding accrual).
@@ -236,7 +236,7 @@ func TestMatchLiquidation_HealthShortCircuit_Bankruptcy(t *testing.T) {
 	rk := newStubRisk()
 	rk.defaultStatus = perptypes.HealthBankruptcy
 	// First read after fill 1 reports BANKRUPTCY (still in
-	// liquidation per Lighter); fall-back default also BANKRUPTCY.
+	// liquidation per spec); fall-back default also BANKRUPTCY.
 	rk.cross[100] = []uint32{perptypes.HealthBankruptcy}
 	e.k.SetRiskKeeper(rk)
 
@@ -283,7 +283,7 @@ func TestMatchLiquidation_HealthShortCircuit_Bankruptcy(t *testing.T) {
 // regression (e.g., `ErrTakerInsufficientCollateral`) must abort the
 // matching loop *gracefully*, preserving any prior committed fills
 // and dropping the IOC residue without persisting the synthetic
-// taker. This is the same semantics as Lighter's
+// taker. This is the same semantics as
 // `internal_liquidation.rs` aborting the IOC on victim post-trade
 // regression while keeping prior partial fills.
 func TestMatchLiquidation_VictimRiskRegression_StopsGracefully(t *testing.T) {

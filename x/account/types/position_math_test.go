@@ -9,9 +9,9 @@ import (
 	"github.com/perpdex/perpdex-l1/x/account/types"
 )
 
-// TestAccountPosition_MarketValue covers the lighter `market_value`
-// formula AllocatedMargin + UnrealizedPnL(mark) used by
-// calculateIsolatedMarginDelta case 4.
+// TestAccountPosition_MarketValue covers the `market_value` formula
+// AllocatedMargin + UnrealizedPnL(mark) used by calculateIsolatedMarginDelta
+// case 4.
 func TestAccountPosition_MarketValue(t *testing.T) {
 	t.Run("empty_position_returns_allocated_only", func(t *testing.T) {
 		p := types.AccountPosition{

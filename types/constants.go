@@ -80,7 +80,7 @@ const (
 	MaxClientOrderIndex   = uint64(281_474_976_710_655)
 )
 
-// Perp position bit-width bounds. Lighter circuit constrains
+// Perp position bit-width bounds. The prover circuit constrains
 // `POSITION_SIZE_BITS = 56` and `ENTRY_QUOTE_BITS = 56`; we mirror the
 // limits here so trade application can refuse fills that would push
 // |position| or |entry_quote| beyond what the prover would accept,
@@ -112,7 +112,7 @@ const (
 	AccountTradingModeUnified = uint32(1)
 )
 
-// Public pool constants. Mirrors lighter-prover circuit/src/types/constants.rs
+// Public pool constants, mirroring circuit/src/types/constants.rs
 // `INITIAL_POOL_SHARE_VALUE`, `NB_STRATEGIES`, `SHARES_LIST_SIZE` and the
 // PUBLIC_POOL status enum.
 const (

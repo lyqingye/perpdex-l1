@@ -65,15 +65,14 @@ func (e Engine) isolatedDebit(ctx context.Context, res *positionChangeResult, am
 // an isolated-margined account, in three sequential steps:
 //
 //  1. cash flow: route (realized_pnl - fee) into the position's
-//     `allocated_margin` pool (lighter parity:
-//     `taker_collateral_delta` flows into allocated_margin first for
-//     isolated positions).
+//     `allocated_margin` pool (`taker_collateral_delta` flows into
+//     allocated_margin first for isolated positions).
 //  2. maker only: debit the liquidation improvement fee from the
 //     same `allocated_margin` pool so the victim's cross account is
 //     not arbitrarily disturbed.
 //  3. rebalance: run `rebalanceIsolatedMargin` to reconcile the
 //     post-trade `allocated_margin` against the new position's IM /
-//     market value (lighter `calculate_isolated_margin_change`).
+//     market value (`calculate_isolated_margin_change`).
 //
 // Caller guarantees liqFee is non-negative and only non-zero on the
 // maker side (the trade improvement fee victim). `applyAccount`
@@ -97,7 +96,7 @@ func (e Engine) applyIsolatedAccount(ctx context.Context, res *positionChangeRes
 	return e.rebalanceIsolatedMargin(ctx, res, fee, isMaker, f)
 }
 
-// rebalanceIsolatedMargin computes the lighter
+// rebalanceIsolatedMargin computes the
 // `calculate_isolated_margin_change` delta for an isolated position
 // and applies it: `allocated_margin += margin_delta`,
 // `cross_collateral -= margin_delta`. When the delta is positive (the
@@ -155,7 +154,7 @@ func (e Engine) rebalanceIsolatedMargin(ctx context.Context, res *positionChange
 	return e.accountKeeper.AddCollateral(ctx, res.AccountIdx, delta.Neg())
 }
 
-// calculateIsolatedMarginDelta is the in-Go equivalent of lighter
+// calculateIsolatedMarginDelta is the in-Go equivalent of
 // `calculate_isolated_margin_change` for one side. Returns the signed
 // math.Int amount that must be added to the position's
 // `allocated_margin` (and removed from cross collateral) to keep the
@@ -178,7 +177,7 @@ func (e Engine) rebalanceIsolatedMargin(ctx context.Context, res *positionChange
 // paid. `res.New.AllocatedMargin` MUST already include both the
 // (realized_pnl - fee) credit produced by `applyIsolatedAccount`
 // step 1 AND the maker liquidation-improvement-fee debit from step
-// 2, matching lighter's ordering where the
+// 2, matching the ordering where the
 // `taker_collateral_delta`-adjusted allocated_margin feeds into
 // `calculate_isolated_margin_change`.
 func (e Engine) calculateIsolatedMarginDelta(ctx context.Context, res *positionChangeResult, fee math.Int) (math.Int, error) {
@@ -223,8 +222,8 @@ func (e Engine) calculateIsolatedMarginDelta(ctx context.Context, res *positionC
 			}
 		} else {
 			// oldMV <= 0 ⇒ proportional value collapses to
-			// position_requirement (lighter `MAX(target, posReq)`
-			// with the negative-target shortcut).
+			// position_requirement (`MAX(target, posReq)` with the
+			// negative-target shortcut).
 			targetValue = posReq
 		}
 

@@ -72,8 +72,8 @@ func (m msgServer) CreateOrder(ctx context.Context, msg *types.MsgCreateOrder) (
 	}
 	// Public pools and the Insurance Fund cannot place orders directly;
 	// their fills come exclusively from the liquidation / ADL paths
-	// (lighter parity: l2_create_order rejects PUBLIC_POOL_ACCOUNT_TYPE
-	// and INSURANCE_FUND_ACCOUNT_TYPE up front).
+	// (l2_create_order rejects PUBLIC_POOL_ACCOUNT_TYPE and
+	// INSURANCE_FUND_ACCOUNT_TYPE up front).
 	if acc, err := m.accountKeeper.GetAccount(ctx, msg.AccountIndex); err == nil {
 		if acc.IsPoolType() {
 			return nil, types.ErrPoolCannotPlaceOrder
@@ -86,7 +86,7 @@ func (m msgServer) CreateOrder(ctx context.Context, msg *types.MsgCreateOrder) (
 	if market.Status != perptypes.MarketStatusActive {
 		return nil, types.ErrInvalidOrder.Wrap("market not active")
 	}
-	// Pre-liquidation order placement gate. Lighter rule:
+	// Pre-liquidation order placement gate. Rule:
 	//   - HEALTHY: any order allowed.
 	//   - PRE_LIQUIDATION: only reduce-only orders that strictly shrink
 	//     the account's position in this market are allowed. We
@@ -125,11 +125,11 @@ func (m msgServer) CreateOrder(ctx context.Context, msg *types.MsgCreateOrder) (
 		}
 	}
 
-	// Per-market open-order cap. Lighter parity: bound the number of
-	// resting + trigger-pending orders per account so an adversary
-	// cannot exhaust the orderbook with free post-only orders. The
-	// cap is enforced ahead of the matching pass so an order that
-	// would clearly violate the cap (e.g. plain non-IOC limit, or any
+	// Per-market open-order cap: bound the number of resting +
+	// trigger-pending orders per account so an adversary cannot
+	// exhaust the orderbook with free post-only orders. The cap is
+	// enforced ahead of the matching pass so an order that would
+	// clearly violate the cap (e.g. plain non-IOC limit, or any
 	// trigger order which immediately reserves a slot) is rejected
 	// up front. Pure IOC and POST_ONLY-that-fully-matches orders that
 	// happen to consume zero slots are still allowed even when the
@@ -234,10 +234,10 @@ func (m msgServer) CreateOrder(ctx context.Context, msg *types.MsgCreateOrder) (
 	// full (Available < required), force-cancel the residue rather
 	// than letting OpenOrder fail with ErrInsufficientFunds (which
 	// would revert the whole Msg and lose already-committed fills).
-	// Lighter parity: l2_create_order verify rejects the order, but
-	// any already-applied trades from the matching pass survive
-	// because they live in earlier transactions; here, fills already
-	// landed via writeCache, so only the residue must be cancelled.
+	// l2_create_order verify rejects the order, but any
+	// already-applied trades from the matching pass survive because
+	// they live in earlier transactions; here, fills already landed
+	// via writeCache, so only the residue must be cancelled.
 	if (order.Status == perptypes.OrderStatusOpen || order.Status == perptypes.OrderStatusPartiallyFilled) &&
 		market.MarketType == perptypes.MarketTypeSpot &&
 		order.RemainingBaseAmount > 0 {
@@ -270,8 +270,8 @@ func (m msgServer) CreateOrder(ctx context.Context, msg *types.MsgCreateOrder) (
 }
 
 // checkPreLiquidationGate enforces the pre-liquidation order placement
-// rule from the Lighter spec. The check happens BEFORE we touch the
-// orderbook so a frozen / unhealthy account cannot use CreateOrder /
+// rule from the spec. The check happens BEFORE we touch the orderbook
+// so a frozen / unhealthy account cannot use CreateOrder /
 // ModifyOrder to interleave with the liquidation engine.
 //
 // The gate consults the cross account health AND, when the touched

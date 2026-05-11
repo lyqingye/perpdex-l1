@@ -14,16 +14,16 @@ import (
 )
 
 // premiumSampleIntervalMs is the per-market spacing between two consecutive
-// premium samples. Lighter samples once a minute (60 samples per hour); we
-// match that on a per-market basis using `MarketDetails.LastUpdatedTimestamp`.
+// premium samples. We sample once a minute (60 samples per hour) on a
+// per-market basis using `MarketDetails.LastUpdatedTimestamp`.
 const premiumSampleIntervalMs = perptypes.MinuteInMs
 
 // BeginBlocker drives the per-market funding pipeline:
 //
 //  1. For every active perp market that has not been sampled in the last
 //     minute, recompute `ImpactBidPrice` / `ImpactAskPrice` (VWAP over
-//     `ImpactUSDCAmount` of resting depth) and push a Lighter-style premium
-//     sample into `AggregatePremiumSum`.
+//     `ImpactUSDCAmount` of resting depth) and push a premium sample into
+//     `AggregatePremiumSum`.
 //  2. Once `now - LastFundingRoundTimestamp >= FundingPeriodMs` (one hour by
 //     default), close the funding round: average the samples, apply the
 //     double clamp, divide by `FundingPeriodDivisor` to obtain the per-round
@@ -78,7 +78,7 @@ func (k Keeper) BeginBlocker(ctx context.Context) error {
 }
 
 // processMarketSample updates the running aggregate_premium_sum for a market
-// using Lighter's premium formula:
+// using the premium formula:
 //
 //	premium_t = ( max(0, ImpactBid - index) - max(0, index - ImpactAsk) ) / index
 //
@@ -197,7 +197,7 @@ func (k Keeper) SettleAllMarkets(ctx context.Context, params types.ParamsAlias) 
 	return firstErr
 }
 
-// settleMarket applies the Lighter funding-rate formula to one market:
+// settleMarket applies the funding-rate formula to one market:
 //
 //	premium             = aggregate_premium_sum / total_premium_samples
 //	smallClampedPremium = premium + clamp(interestRate - premium, ±SmallClamp)
@@ -206,7 +206,7 @@ func (k Keeper) SettleAllMarkets(ctx context.Context, params types.ParamsAlias) 
 // The 1-hour rate is then folded into the cumulative prefix sum as
 // `mark_price * rate`. `SettlePositionFunding` later applies
 // `position * delta_prefix_sum / FundingRateTick`, which reduces to
-// `position * mark * rate / FundingRateTick` -- exactly the Lighter funding
+// `position * mark * rate / FundingRateTick` -- exactly the funding
 // payment definition `funding = position * mark * fundingRate`.
 func (k Keeper) settleMarket(ctx context.Context, marketIdx uint32, params types.ParamsAlias) error {
 	d, err := k.marketKeeper.GetMarketDetails(ctx, marketIdx)
@@ -227,7 +227,7 @@ func (k Keeper) settleMarket(ctx context.Context, marketIdx uint32, params types
 	smallClampMag := int64(d.FundingClampSmall)
 	bigClampMag := int64(d.FundingClampBig)
 
-	// Lighter small clamp: the correction term is `clamp(ir - premium, ±SmallClamp)`.
+	// Small clamp: the correction term is `clamp(ir - premium, ±SmallClamp)`.
 	correction := clampInt64(ir-avg, -smallClampMag, smallClampMag)
 	smallClamped := avg + correction
 	bigClamped := clampInt64(smallClamped, -bigClampMag, bigClampMag)

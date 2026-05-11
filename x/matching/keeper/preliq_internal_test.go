@@ -24,7 +24,7 @@ func (s stubPreLiqRisk) GetIsolatedHealthStatus(_ context.Context, _ uint64, _ u
 }
 
 // TestCheckPreLiquidationGate exercises the matching-side pre-liquidation
-// order-placement rule against the full Lighter spec table:
+// order-placement rule against the full spec table:
 //
 //	cross / iso health     reduce-only?   expected
 //	HEALTHY / HEALTHY      either         allow

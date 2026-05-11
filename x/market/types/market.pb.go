@@ -43,9 +43,9 @@ type Market struct {
 	CreatedAt                int64  `protobuf:"varint,15,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
 	// max_open_orders_per_account caps the number of resting + trigger
 	// orders a single account may hold in this market simultaneously.
-	// Zero means "no limit". Lighter parity: per-market open_order_count
-	// bounded by market configuration so a malicious user cannot exhaust
-	// the orderbook by spamming free post-only orders.
+	// Zero means "no limit". The per-market open_order_count is bounded
+	// by market configuration so a malicious user cannot exhaust the
+	// orderbook by spamming free post-only orders.
 	MaxOpenOrdersPerAccount uint32 `protobuf:"varint,16,opt,name=max_open_orders_per_account,json=maxOpenOrdersPerAccount,proto3" json:"max_open_orders_per_account,omitempty"`
 }
 

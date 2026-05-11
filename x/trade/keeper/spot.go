@@ -37,9 +37,9 @@ type SpotFill struct {
 //
 // The maker side debits its locked balance first (lock-on-place semantics
 // from x/orderbook OpenOrder), spilling into available balance only if the
-// caller forgot to lock — defensive parity with Lighter where resting
-// orders always have their resources locked. The taker side debits its
-// available balance directly.
+// caller forgot to lock — defensive guard since resting orders always
+// have their resources locked. The taker side debits its available
+// balance directly.
 //
 // Insufficient-balance errors are wrapped into Maker* / Taker* sentinels
 // so the matching loop can evict a bad maker and continue, or stop a bad
@@ -91,8 +91,8 @@ func (k Keeper) ApplySpotMatching(ctx context.Context, f SpotFill, baseAssetID, 
 // spotMakerDebit moves `amount` of `assetID` from `from` (a maker) to
 // `to`, draining the maker's locked balance first (lock-on-place
 // accounting from x/orderbook.OpenOrder) and falling back to the
-// available balance only if the lock is short — defensive parity with
-// Lighter where resting orders always have their resources locked.
+// available balance only if the lock is short — defensive guard since
+// resting orders always have their resources locked.
 //
 // Insufficient-balance errors are wrapped into ErrMakerInsufficientBalance
 // so the matching loop can evict the bad maker and continue.

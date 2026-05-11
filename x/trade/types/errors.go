@@ -7,10 +7,10 @@ import "cosmossdk.io/errors"
 // abort just the current taker, preserving prior fills) and "hard" errors
 // that must revert the entire transaction.
 //
-// Lighter parity: `is_valid_perps_trade` / `is_valid_spot_trade` set
-// `cancel_taker_order` / `cancel_maker_order` rather than reverting the
-// whole block. We mirror that with sentinels that the matching loop
-// inspects via errors.Is.
+// `is_valid_perps_trade` / `is_valid_spot_trade` set
+// `cancel_taker_order` / `cancel_maker_order` rather than reverting
+// the whole block. We mirror that with sentinels that the matching
+// loop inspects via errors.Is.
 var (
 	// ErrMakerRiskRegression: maker side fails IsValidRiskChangeFrom
 	// after the would-be fill (e.g. maker drained collateral after
@@ -35,9 +35,8 @@ var (
 
 	// ErrMakerInvalidPosition: maker post-trade position size or
 	// entry_quote would overflow the perp circuit width
-	// (POSITION_SIZE_BITS / ENTRY_QUOTE_BITS in lighter). Soft:
-	// evict maker and continue. Lighter parity with the
-	// `is_new_maker_position_invalid` branch in
+	// (POSITION_SIZE_BITS / ENTRY_QUOTE_BITS). Soft: evict maker and
+	// continue. Mirrors the `is_new_maker_position_invalid` branch in
 	// `is_valid_perps_trade`.
 	ErrMakerInvalidPosition = errors.Register(ModuleName, 6, "maker post-trade position out of bounds")
 
@@ -48,9 +47,8 @@ var (
 	// ErrMakerInsufficientCollateral: maker isolated position grows
 	// (or flips) and the auto-allocated `margin_delta` exceeds the
 	// account's available cross collateral. Soft: evict maker and
-	// continue. Lighter parity with the
-	// `is_maker_has_enough_cross_collateral` branch in
-	// `is_valid_perps_trade`.
+	// continue. Mirrors the `is_maker_has_enough_cross_collateral`
+	// branch in `is_valid_perps_trade`.
 	ErrMakerInsufficientCollateral = errors.Register(ModuleName, 8, "maker insufficient cross collateral for isolated margin allocation")
 
 	// ErrTakerInsufficientCollateral: taker side of the isolated

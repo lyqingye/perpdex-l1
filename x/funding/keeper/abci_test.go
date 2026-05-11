@@ -485,13 +485,13 @@ func TestProcessMarketSample_OneSidedSkipsSample(t *testing.T) {
 	require.EqualValues(t, 1, got.TotalPremiumSamples, "sample count must not advance")
 }
 
-// TestProcessMarketSample_LighterPremium drives the new formula directly:
+// TestProcessMarketSample_Premium drives the premium formula directly:
 //
 //	premium_t = ( max(0, IB - idx) - max(0, idx - IA) ) * TICK / idx
 //
 // With IB=49999, IA=50001 and idx=49500 we expect
 // `(49999-49500) * 1e6 / 49500 = 499*1e6/49500 = 10080`.
-func TestProcessMarketSample_LighterPremium(t *testing.T) {
+func TestProcessMarketSample_Premium(t *testing.T) {
 	mk := &stubMarket{
 		markets: map[uint32]markettypes.Market{
 			1: {MarketIndex: 1, MarketType: perptypes.MarketTypePerps, Status: perptypes.MarketStatusActive},
@@ -593,8 +593,8 @@ func TestProcessMarketSample_MaxPremiumSampleCount(t *testing.T) {
 	require.EqualValues(t, 777, mk.details[1].AggregatePremiumSum)
 }
 
-// TestSettleMarket_LighterFormula pins down the new clamp/divisor logic and
-// the mark*rate prefix-sum convention.
+// TestSettleMarket_Formula pins down the clamp/divisor logic and the
+// mark*rate prefix-sum convention.
 //
 //	premium=10101, ir=0, SmallClamp=500, BigClamp=40000, divisor=8, mark=50000
 //	correction = clamp(0 - 10101, -500, +500) = -500
@@ -602,7 +602,7 @@ func TestProcessMarketSample_MaxPremiumSampleCount(t *testing.T) {
 //	bigClamped = clamp(9601, -40000, +40000) = 9601
 //	rate = 9601 / 8 = 1200 (truncated)
 //	prefix increment = mark * rate = 50_000 * 1200 = 60_000_000
-func TestSettleMarket_LighterFormula(t *testing.T) {
+func TestSettleMarket_Formula(t *testing.T) {
 	mk := &stubMarket{
 		markets: map[uint32]markettypes.Market{
 			1: {MarketIndex: 1, MarketType: perptypes.MarketTypePerps, Status: perptypes.MarketStatusActive},

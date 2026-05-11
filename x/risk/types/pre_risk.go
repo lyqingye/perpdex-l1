@@ -17,7 +17,7 @@ package types
 //   - Cross: nil when the account has no cross aggregate at the
 //     moment of the snapshot (e.g. a fresh account). Treated as
 //     "missing pre-state" by IsValidRiskChangeFrom, which falls back
-//     to "post must be HEALTHY" per the Lighter spec.
+//     to "post must be HEALTHY" per the spec.
 //   - Isolated: keyed by marketIdx, populated only for non-zero
 //     isolated positions held by the account at snapshot time. A
 //     per-market entry MUST be missing for any isolated market that

@@ -25,12 +25,12 @@ var (
 	// ModifyOrder calls when the account is currently being
 	// liquidated (PARTIAL / FULL / BANKRUPTCY) or, in PRE, when the
 	// order would not strictly reduce exposure (i.e. is not
-	// reduce-only). Mirrors Lighter's "no exchange operation that
+	// reduce-only). Mirrors the "no exchange operation that
 	// increases position size or worsens TAV/MMR ratio" rule.
 	ErrAccountUnderLiquidation = errors.Register(ModuleName, 20, "account under liquidation; only reduce-only orders allowed")
 	// ErrTooManyOpenOrders rejects a CreateOrder when the account has
 	// already reached the market's MaxOpenOrdersPerAccount cap.
-	// Lighter parity: per-market open_order_count bounds prevent
-	// adversarial spamming of post-only / non-funded orders.
+	// Per-market open_order_count bounds prevent adversarial spamming
+	// of post-only / non-funded orders.
 	ErrTooManyOpenOrders = errors.Register(ModuleName, 21, "account has reached market open order cap")
 )

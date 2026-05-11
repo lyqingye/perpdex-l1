@@ -14,8 +14,8 @@ import (
 
 // MatchLiquidationOrder is the system-only entry point used by the
 // liquidation keeper to drive a partial-liquidation close-out through
-// the public orderbook (Lighter parity with `InternalLiquidatePositionTx`
-// + `LIQUIDATION_ORDER + IOC + reduce_only` flow).
+// the public orderbook (matches the `InternalLiquidatePositionTx` +
+// `LIQUIDATION_ORDER + IOC + reduce_only` flow).
 //
 // The synthetic taker is owned by the victim. It is constructed in-
 // memory only — never persisted via `OpenOrder`, never indexed against
@@ -26,7 +26,7 @@ import (
 // The caller is expected to have already cancelled every resting
 // order owned by the victim (via `CancelAllOpenOrdersForAccount`)
 // before invoking this entry point so a victim's own bids cannot
-// front-run the close-out fill (matching Lighter's
+// front-run the close-out fill (matching the
 // `InternalCancelAllOrdersTx → InternalLiquidatePositionTx` ordering).
 //
 // Side direction is derived from the victim's current position:
@@ -120,13 +120,13 @@ func (k Keeper) MatchLiquidationOrder(
 //   - taker.OwnerAccountIndex == victim
 //   - taker.Price == zeroPrice (zero-price floor; the price-reachable
 //     check inside nextMaker guarantees fills only happen at maker
-//     prices not worse than zeroPrice, matching Lighter's "fill at or
+//     prices not worse than zeroPrice, matching the "fill at or
 //     better than zero price" guarantee)
 //
 // After every successful fill the loop re-evaluates the victim's
 // health (cross or per-market isolated, matching the liquidation
 // keeper's `victimHealthForPosition` rule) and breaks early when the
-// account is no longer in PARTIAL/FULL liquidation. This is Lighter's
+// account is no longer in PARTIAL/FULL liquidation. This is the
 // `is_not_in_liquidation_and_is_liquidation_order` short-circuit: a
 // liquidation order keeps consuming the book only as long as the
 // victim still needs deleveraging.
@@ -149,8 +149,8 @@ func (k Keeper) matchLiquidation(
 	if err != nil {
 		return 0, err
 	}
-	// Liquidation orders only exist for perps markets in Lighter's
-	// design. Spot markets have no notion of liquidation.
+	// Liquidation orders only exist for perps markets. Spot markets
+	// have no notion of liquidation.
 	if market.MarketType != perptypes.MarketTypePerps {
 		return 0, types.ErrInvalidOrder.Wrapf(
 			"liquidation order requires perps market (got type=%d)", market.MarketType,
@@ -231,13 +231,13 @@ func (k Keeper) matchLiquidation(
 //     floor is captured and routed to the configured recipient
 //     (Insurance Fund / LLP).
 //
-//   - Risk checks: both maker and taker are validated post-trade,
-//     mirroring Lighter `matching_engine.rs:1801,1843` where a
-//     LIQUIDATION_ORDER + IOC fill runs `is_valid_risk_change` on
-//     both sides. Recoverable rejections are wrapped into
-//     errMakerRejected / errTakerRejected by `applyPerpFill`; the
-//     enclosing `matchLiquidation` loop evicts a bad maker and
-//     gracefully stops on a bad taker (preserving prior fills).
+//   - Risk checks: both maker and taker are validated post-trade
+//     (`matching_engine.rs:1801,1843` runs `is_valid_risk_change` on
+//     both sides for a LIQUIDATION_ORDER + IOC fill). Recoverable
+//     rejections are wrapped into errMakerRejected / errTakerRejected
+//     by `applyPerpFill`; the enclosing `matchLiquidation` loop
+//     evicts a bad maker and gracefully stops on a bad taker
+//     (preserving prior fills).
 //
 //     The taker side (victim) almost always passes by construction
 //     (filling at >= zero price strictly improves TAV/MMR), but
@@ -277,12 +277,12 @@ func (k Keeper) applyLiquidationFill(
 // per-market isolated health, since each isolated position is its
 // own risk envelope.
 //
-// Used exclusively by `matchLiquidation` to implement the Lighter
-// `is_not_in_liquidation_and_is_liquidation_order` short-circuit.
-// It is intentionally NOT called from `matchOrder` so the user-path
+// Used exclusively by `matchLiquidation` to implement the
+// `is_not_in_liquidation_and_is_liquidation_order` short-circuit. It
+// is intentionally NOT called from `matchOrder` so the user-path
 // matching loop pays no per-fill risk-keeper read.
 //
-// The accepted health-status set mirrors Lighter's `is_in_liquidation`
+// The accepted health-status set mirrors the `is_in_liquidation`
 // predicate (risk_info.rs:362):
 //
 //	is_in_liquidation = (TALT.sign == -1) ∨ (TALT.abs < MMR)

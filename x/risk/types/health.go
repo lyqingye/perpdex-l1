@@ -5,7 +5,7 @@ import (
 )
 
 // HealthStatus implements the 5-level liquidation state machine
-// described in the Lighter spec. It is a pure function of the
+// described in the spec. It is a pure function of the
 // RiskParameters envelope so callers that already hold an RP value —
 // either as the cross aggregate, the isolated per-position
 // parameters, or the `Risk` field of a LiquidationRiskSnapshot — can

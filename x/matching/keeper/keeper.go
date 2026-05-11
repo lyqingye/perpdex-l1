@@ -65,7 +65,7 @@ func (k *Keeper) SetRiskKeeper(r types.RiskKeeper) { k.riskKeeper = r }
 
 // CancelAllOpenOrdersForAccount cancels every resting order owned by
 // `accountIdx` across every market, bypassing sender authority checks.
-// Reserved for the liquidation engine: per Lighter spec the partial
+// Reserved for the liquidation engine: per the spec the partial
 // liquidation flow must clear the victim's book before issuing
 // zero-price IoC closes, otherwise a victim's resting bids could
 // front-run the liquidation fill.

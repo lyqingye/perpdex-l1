@@ -7,7 +7,7 @@ import (
 )
 
 // FeeOf returns the integer fee charged for `notional` quote at the
-// supplied bps rate, using lighter's fixed fee tick:
+// supplied bps rate, using the fixed fee tick:
 //
 //	fee = notional * bps / FeeTick
 //

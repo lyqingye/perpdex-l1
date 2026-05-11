@@ -20,8 +20,7 @@ import (
 // `initial_total_shares * INITIAL_POOL_SHARE_VALUE * USDC_TO_COLLATERAL`
 // in collateral, which becomes the seed collateral of the pool.
 //
-// Mirrors lighter `circuit/src/transactions/l2_create_public_pool.rs`:
-// when master == InsuranceFundOperatorAccountIdx the new pool is
+// When master == InsuranceFundOperatorAccountIdx the new pool is
 // INSURANCE_FUND + UNIFIED; otherwise PUBLIC_POOL + SIMPLE.
 func (m msgServer) CreatePublicPool(ctx context.Context, msg *types.MsgCreatePublicPool) (*types.MsgCreatePublicPoolResponse, error) {
 	if msg.InitialTotalShares == 0 {
@@ -116,7 +115,7 @@ func (m msgServer) CreatePublicPool(ctx context.Context, msg *types.MsgCreatePub
 // Sender must be the pool's master owner. The pool must be ACTIVE
 // (frozen pools are read-only). To FREEZE the pool, it must be
 // healthy + position-free + no open orders. Freezing the LLP also
-// clears the system Params.LiquidityPoolIndex (lighter parity).
+// clears the system Params.LiquidityPoolIndex.
 func (m msgServer) UpdatePublicPool(ctx context.Context, msg *types.MsgUpdatePublicPool) (*types.MsgUpdatePublicPoolResponse, error) {
 	pool, err := m.GetAccount(ctx, msg.PoolAccountIndex)
 	if err != nil {
@@ -285,10 +284,9 @@ func (m msgServer) isPoolOperator(ctx context.Context, pool types.Account, sende
 // ---------- MintShares ----------
 
 // MintShares deposits sender's master collateral into the pool and
-// allocates fresh shares at the current NAV. Mirrors lighter
-// `l2_mint_shares.rs`: principal is the cumulative cost-basis used by
-// future burn profit calc; entry_timestamp is reset on every non-
-// operator mint and gates the LLP burn cooldown.
+// allocates fresh shares at the current NAV. Principal is the cumulative
+// cost-basis used by future burn profit calc; entry_timestamp is reset
+// on every non-operator mint and gates the LLP burn cooldown.
 func (m msgServer) MintShares(ctx context.Context, msg *types.MsgMintShares) (*types.MsgMintSharesResponse, error) {
 	pool, err := m.GetAccount(ctx, msg.PoolAccountIndex)
 	if err != nil {
@@ -371,8 +369,7 @@ func (m msgServer) MintShares(ctx context.Context, msg *types.MsgMintShares) (*t
 
 // BurnShares redeems sender's shares from the pool back to USDC.
 // Cooldown applies to LLP + non-operator burns. operator_fee_share
-// (computed as in lighter `l2_burn_shares.rs`) is split out from
-// realised profit and credited to operator_shares.
+// is split out from realised profit and credited to operator_shares.
 func (m msgServer) BurnShares(ctx context.Context, msg *types.MsgBurnShares) (*types.MsgBurnSharesResponse, error) {
 	resp, err := m.burnSharesCore(ctx, msg.Sender, msg.PoolAccountIndex, msg.ShareAmount, false /* skipCooldown */, false /* asAuthority */)
 	if err != nil {
@@ -433,9 +430,9 @@ func (m msgServer) burnSharesCore(
 		}
 	}
 
-	// Pool must be healthy enough to burn (lighter requires non-
-	// liquidation cross risk). We approximate by requiring TAV > 0,
-	// which AvailableSharesToBurn already enforces.
+	// Pool must be healthy enough to burn (non-liquidation cross risk).
+	// We approximate by requiring TAV > 0, which AvailableSharesToBurn
+	// already enforces.
 	available, err := m.AvailableSharesToBurn(ctx, poolIdx)
 	if err != nil {
 		return nil, err
@@ -500,8 +497,7 @@ func (m msgServer) burnSharesCore(
 		return nil, types.ErrInvalidParams.Wrap("computed redeem usdc is zero")
 	}
 
-	// Realised profit + operator fee math (lighter parity, applies
-	// only to non-operator burns).
+	// Realised profit + operator fee math (applies only to non-operator burns).
 	burnedShares := shareAmount
 	operatorFeeShares := math.ZeroInt()
 	if !isOperator {
@@ -594,9 +590,8 @@ func (m msgServer) burnSharesCore(
 // ---------- StrategyTransfer ----------
 
 // StrategyTransfer reallocates collateral between IF strategy buckets.
-// Mirrors lighter `l2_strategy_transfer.rs`: pool must be IF, non-
-// frozen, sender must be the pool operator, from != to, and the from
-// bucket must hold the requested amount.
+// Pool must be IF, non-frozen, sender must be the pool operator,
+// from != to, and the from bucket must hold the requested amount.
 func (m msgServer) StrategyTransfer(ctx context.Context, msg *types.MsgStrategyTransfer) (*types.MsgStrategyTransferResponse, error) {
 	pool, err := m.GetAccount(ctx, msg.PoolAccountIndex)
 	if err != nil {

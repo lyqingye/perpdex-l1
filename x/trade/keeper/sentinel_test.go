@@ -262,7 +262,7 @@ func TestSentinel_ApplyPerpsMatching_TakerInvalidPosition(t *testing.T) {
 }
 
 // TestSentinel_ApplyPerpsMatching_MakerInsufficientCollateral exercises
-// the lighter `is_maker_has_enough_cross_collateral` branch. The maker
+// the `is_maker_has_enough_cross_collateral` branch. The maker
 // sits in isolated mode with zero allocated_margin; the fill grows
 // |position| so `margin_delta > 0`. Set the stub's available cross
 // collateral below `margin_delta` and ensure the trade is rejected

@@ -14,8 +14,8 @@ import (
 	"github.com/perpdex/perpdex-l1/x/risk/types"
 )
 
-// Keeper implements the pure risk computations described in 16-risk.md and
-// the Lighter "Liquidations & LLP" specification. The keeper owns
+// Keeper implements the pure risk computations described in 16-risk.md
+// and the "Liquidations & LLP" specification. The keeper owns
 // only the module Params; pre-state RiskParameters used by the
 // post-state regression check live in a function-local
 // `types.PreRiskSnapshot` value threaded through by the caller.
@@ -138,7 +138,7 @@ func classifyChange(pre, post types.RiskParameters, missingPre bool) bool {
 	}
 	switch preClass {
 	case perptypes.HealthPreLiquidation:
-		// Lighter PRE rule: no MMR growth + TAV/MMR ratio non-
+		// PRE rule: no MMR growth + TAV/MMR ratio non-
 		// decreasing. The MMR cap implicitly forbids any |size|
 		// increase since mark is constant within the block.
 		if post.MaintenanceMarginRequirement.GT(pre.MaintenanceMarginRequirement) {

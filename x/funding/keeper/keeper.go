@@ -55,7 +55,7 @@ func NewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, authori
 
 func (k Keeper) Authority() string { return k.authority }
 
-// SettlePositionFunding applies the per-round Lighter funding payment to a
+// SettlePositionFunding applies the per-round funding payment to a
 // position by leveraging the cumulative prefix sum maintained by
 // `settleMarket`.
 //
@@ -66,7 +66,7 @@ func (k Keeper) Authority() string { return k.authority }
 //	pay = position * (Σ_now mark_t*rate_t - Σ_last mark_t*rate_t) / FundingRateTick
 //	    = Σ_unsettled (position * mark_t * rate_t) / FundingRateTick
 //
-// which matches Lighter's `funding = position * mark * fundingRate`.
+// which matches the `funding = position * mark * fundingRate` formula.
 //
 // The funding amount is applied to `EntryQuote` so it folds directly into
 // `uPnL = position * mark - EntryQuote`:

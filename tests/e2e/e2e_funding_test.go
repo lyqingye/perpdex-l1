@@ -12,9 +12,9 @@ import (
 	"github.com/perpdex/perpdex-l1/tests/e2e/msg"
 )
 
-// FundingSuite drives the perpetual-funding pipeline (Lighter spec):
+// FundingSuite drives the perpetual-funding pipeline:
 //
-//   - x/funding BeginBlocker samples the Lighter premium
+//   - x/funding BeginBlocker samples the premium
 //     `(max(0, ImpactBid - index) - max(0, index - ImpactAsk)) / index`
 //     once a minute per market and accumulates the sample into
 //     `MarketDetails.AggregatePremiumSum`.
@@ -26,7 +26,7 @@ import (
 //     positions can settle via `pos * delta_prefix / TICK`.
 //   - On the next position touch (e.g. a trade or explicit
 //     `SettlePositionFunding`) the position absorbs the prefix-sum delta
-//     into its EntryQuote, matching the Lighter formula
+//     into its EntryQuote, matching the formula
 //     `funding = position * mark * fundingRate`.
 type FundingSuite struct {
 	e2e.PerpdexTestSuite
@@ -57,7 +57,7 @@ func (s *FundingSuite) SetupTest() {
 	s.MarketIndex = s.CreatePerpMarket(msg.DefaultPerpMarketOpts(1, s.BTCAssetIndex))
 }
 
-// TestPremiumAccumulatesAndSettles walks the Lighter funding pipeline
+// TestPremiumAccumulatesAndSettles walks the funding pipeline
 // end-to-end:
 //
 //  1. user0/user1 each deposit 100k USDC and open opposing positions of

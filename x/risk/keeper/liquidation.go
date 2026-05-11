@@ -16,7 +16,7 @@ import (
 //
 //   - GetPositionZeroPrice: gRPC entry point that returns the partial-
 //     liquidation reference price ("zero price") for one (account,
-//     market) pair. Mirrors the Lighter spec's `zero_price` formula.
+//     market) pair, implementing the `zero_price` formula.
 //   - SimulateRiskAfterTakeover: previews the cross RiskParameters the
 //     LLP / Insurance Fund would inherit if it absorbed `delta` of
 //     `marketIdx`, so the LLP waterfall can short-circuit before
@@ -152,7 +152,7 @@ func pureComputeZeroPrice(
 
 // GetPositionZeroPrice returns the price at which liquidating a
 // portion of the position would leave the account's TAV/MMR ratio
-// invariant — the "zero price" defined in the Lighter spec. Bankrupt
+// invariant — the "zero price" defined in the spec. Bankrupt
 // accounts (TAV < 0) are not partially liquidatable; callers must
 // short-circuit before invoking this.
 //

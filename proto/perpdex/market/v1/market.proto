@@ -24,9 +24,9 @@ message Market {
   int64 created_at = 15;
   // max_open_orders_per_account caps the number of resting + trigger
   // orders a single account may hold in this market simultaneously.
-  // Zero means "no limit". Lighter parity: per-market open_order_count
-  // bounded by market configuration so a malicious user cannot exhaust
-  // the orderbook by spamming free post-only orders.
+  // Zero means "no limit". The per-market open_order_count is bounded
+  // by market configuration so a malicious user cannot exhaust the
+  // orderbook by spamming free post-only orders.
   uint32 max_open_orders_per_account = 16;
 }
 
