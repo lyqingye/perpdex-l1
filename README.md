@@ -67,13 +67,14 @@ IBC support includes `ibc-go` core, the `07-tendermint` light client and ICS-20
 ## Build
 
 Use the Go version declared in `go.mod`. Docker is required for protobuf
-generation targets because they run through the Cosmos proto-builder image.
+targets because they run through the Cosmos proto-builder image.
 
 ```bash
 make build           # builds ./build/perpd
 make install         # installs perpd into $GOPATH/bin
 make build-sidecar   # builds ./services/oracle/build/oracle-sidecar
 make install-sidecar # installs the sidecar into $GOPATH/bin
+make run-sidecar     # runs the sidecar with services/oracle/oracle.json
 make dev-stack       # builds both binaries, runs the sidecar in the
                      #   foreground and prints a reminder to start
                      #   `perpd` in another shell with [oracle].enabled=true
@@ -95,6 +96,7 @@ five-step quick start, and reference deployment examples.
 
 ```bash
 make test              # go test ./...
+make test-sidecar      # go test ./... inside services/oracle
 make test-unit         # app, ante, cmd and shared type tests
 make test-integration  # tests/integration
 make test-race         # race-enabled Go tests
@@ -104,7 +106,8 @@ make proto-lint        # buf lint through proto-builder
 
 The GitHub workflows mirror the local checks:
 
-- `.github/workflows/test.yml` runs module-tidy verification and `make test`.
+- `.github/workflows/test.yml` verifies root and sidecar modules are tidy, then
+  runs `make test` and `make test-sidecar`.
 - `.github/workflows/lint.yml` runs `golangci-lint` with `.golangci.yml`.
 - `.github/workflows/release.yml` runs tests, builds Linux and macOS archives
   for `amd64` and `arm64`, uploads checksums, and publishes them to a GitHub
@@ -116,8 +119,12 @@ The GitHub workflows mirror the local checks:
 make proto-gen          # regenerates protobuf Go code
 make proto-swagger-gen  # regenerates Swagger output
 make proto-format       # formats .proto files
+make proto-check-breaking # checks for breaking proto changes against HTTPS_GIT
+make proto-update-deps  # updates buf dependencies
 make proto-all          # format, lint and generate protobuf code
 ```
+
+All protobuf targets run through the Cosmos proto-builder Docker image.
 
 ## Quick Start
 
@@ -129,3 +136,7 @@ perpd genesis gentx validator 1000000uperp --chain-id perpdex-1
 perpd genesis collect-gentxs
 perpd start
 ```
+
+This minimal flow starts a single node without the local oracle sidecar. For a
+price-feed enabled validator or dev stack, follow the
+[`docs/oracle/README.md`](./docs/oracle/README.md) quick start.
