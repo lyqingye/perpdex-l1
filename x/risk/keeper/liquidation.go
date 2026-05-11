@@ -2,7 +2,6 @@ package keeper
 
 import (
 	"context"
-	"fmt"
 
 	"cosmossdk.io/math"
 
@@ -261,7 +260,10 @@ func (k Keeper) SimulateRiskAfterTakeover(
 		return types.RiskParameters{}, err
 	}
 	if pos.MarginMode == perptypes.IsolatedMargin {
-		return types.RiskParameters{}, fmt.Errorf("simulate_takeover: account %d market %d is isolated", accountIdx, marketIdx)
+		return types.RiskParameters{}, accounttypes.ErrInvalidMarginMode.Wrapf(
+			"simulate_takeover requires cross margin: account %d market %d is isolated",
+			accountIdx, marketIdx,
+		)
 	}
 	mark, md, err := k.GetMarkAndMarketDetails(ctx, marketIdx)
 	if err != nil {

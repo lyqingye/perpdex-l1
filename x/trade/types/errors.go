@@ -55,6 +55,13 @@ var (
 	// margin auto-allocation cannot be funded from cross collateral.
 	// Soft: stop taker, preserve prior fills.
 	ErrTakerInsufficientCollateral = errors.Register(ModuleName, 9, "taker insufficient cross collateral for isolated margin allocation")
+
+	// ErrInvalidTransferAmount fires when a spot maker/taker debit
+	// receives a negative `math.Int` amount. This is a hard error
+	// (programmer / invariant violation), not a soft sentinel — it
+	// cannot be evicted-and-continue because the underlying ApplySpot
+	// invariant has been violated upstream.
+	ErrInvalidTransferAmount = errors.Register(ModuleName, 10, "transfer amount must be non-negative")
 )
 
 // IsRecoverableMakerError reports whether err is a sentinel that the
