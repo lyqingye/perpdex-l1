@@ -9,7 +9,6 @@ import (
 
 	"github.com/cosmos/cosmos-sdk/codec"
 
-	perptypes "github.com/perpdex/perpdex-l1/types"
 	markettypes "github.com/perpdex/perpdex-l1/x/market/types"
 	"github.com/perpdex/perpdex-l1/x/risk/types"
 )
@@ -23,20 +22,20 @@ import (
 // The keeper code is split across several files for navigability:
 //
 //   - keeper.go   : Keeper struct + constructor + universally-shared
-//                   helpers (Authority, classifyChange, resolveMarkPrice,
+//                   helpers (Authority, resolveMarkPrice,
 //                   GetMarkAndMarketDetails). Per-RP health classification
 //                   lives on RiskParameters itself in x/risk/types so
 //                   liquidation-side callers can classify locally without
 //                   re-aggregating state.
-//   - cross.go    : cross-margin aggregation (ComputeRiskInfo,
+//   - cross.go    : cross-margin aggregation (ComputeCrossRisk,
 //                   GetHealthStatus, GetTotalAccountValue,
 //                   GetAvailableCollateral, GetAvailableUsdcCollateral)
 //                   and the per-cross half of IsValidRiskChangeFrom.
 //   - isolated.go : isolated-margin per-position equivalents
 //                   (ComputeIsolatedRisk, GetIsolatedHealthStatus,
 //                   IterateIsolatedPositions, isIsolatedRiskChangeValid).
-//   - risk_change.go : IsValidRiskChangeFrom + SnapshotRisk drivers
-//                      that stitch cross + isolated together.
+//   - risk_change.go : IsValidRiskChangeFrom, SnapshotRisk, and classifyChange;
+//                      stitches cross + isolated together.
 //   - liquidation.go : liquidation-specific math
 //                      (GetPositionZeroPrice, SimulateRiskAfterTakeover,
 //                      GetLiquidationRiskSnapshot, GetZeroPriceSnapshot).
@@ -91,7 +90,7 @@ func (k Keeper) Authority() string { return k.authority }
 //     look healthy.
 //
 // Centralised here to retire the identical guards previously inlined in
-// ComputeRiskInfo / ComputeIsolatedRisk / GetPositionZeroPrice /
+// ComputeCrossRisk / ComputeIsolatedRisk / GetPositionZeroPrice /
 // SimulateRiskAfterTakeover. Callers that need to attach extra account
 // context can wrap the returned error with errors.Wrapf themselves.
 func (k Keeper) resolveMarkPrice(ctx context.Context, marketIdx uint32) (uint32, error) {
@@ -117,50 +116,4 @@ func (k Keeper) GetMarkAndMarketDetails(ctx context.Context, marketIdx uint32) (
 		return 0, markettypes.MarketDetails{}, err
 	}
 	return mark, md, nil
-}
-
-// classifyChange centralises the pre-vs-post risk decision used by both
-// the cross and isolated paths. `missingPre` signals that no pre-state
-// snapshot exists; in that case we reject any unhealthy post-state to
-// avoid silently accepting a change that may have introduced the
-// underwater state.
-func classifyChange(pre, post types.RiskParameters, missingPre bool) bool {
-	postClass := post.HealthStatus()
-	if postClass == perptypes.HealthHealthy {
-		return true
-	}
-	if missingPre {
-		return false
-	}
-	preClass := pre.HealthStatus()
-	if postClass > preClass {
-		return false
-	}
-	switch preClass {
-	case perptypes.HealthPreLiquidation:
-		// PRE rule: no MMR growth + TAV/MMR ratio non-
-		// decreasing. The MMR cap implicitly forbids any |size|
-		// increase since mark is constant within the block.
-		if post.MaintenanceMarginRequirement.GT(pre.MaintenanceMarginRequirement) {
-			return false
-		}
-		if pre.MaintenanceMarginRequirement.IsZero() ||
-			post.MaintenanceMarginRequirement.IsZero() {
-			return true
-		}
-		lhs := post.TotalAccountValue.Mul(pre.MaintenanceMarginRequirement)
-		rhs := pre.TotalAccountValue.Mul(post.MaintenanceMarginRequirement)
-		return !lhs.LT(rhs)
-	default:
-		// PARTIAL / FULL / BANKRUPTCY pre-state: keep the historical
-		// TAV/IM ratio safety net so liquidation fills can never
-		// worsen efficiency.
-		if post.InitialMarginRequirement.IsZero() ||
-			pre.InitialMarginRequirement.IsZero() {
-			return true
-		}
-		lhs := post.TotalAccountValue.Mul(pre.InitialMarginRequirement)
-		rhs := pre.TotalAccountValue.Mul(post.InitialMarginRequirement)
-		return !lhs.LT(rhs)
-	}
 }

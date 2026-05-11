@@ -12,7 +12,7 @@ import (
 )
 
 // cross.go owns the cross-margin half of the risk keeper: the aggregate
-// ComputeRiskInfo walk + the *pure read* helpers that surface its
+// ComputeCrossRisk walk + the *pure read* helpers that surface its
 // outputs (GetHealthStatus / GetTotalAccountValue /
 // GetAvailableCollateral / GetAvailableUsdcCollateral). The
 // per-account half of IsValidRiskChangeFrom (isCrossRiskChangeValid)
@@ -20,8 +20,8 @@ import (
 // cross + isolated driver IsValidRiskChangeFrom and SnapshotRisk live
 // in risk_change.go.
 
-// ComputeRiskInfo iterates all CROSS positions of an account and aggregates
-// their risk contributions into a RiskInfo struct.
+// ComputeCrossRisk iterates all CROSS positions of an account and aggregates
+// their risk contributions into a RiskParameters value.
 //
 // Per the spec, isolated positions are a separate accounting unit: the
 // allocated margin of an isolated position only collateralises that
@@ -31,10 +31,10 @@ import (
 // an isolated profit silently inflate cross health and dodge cross
 // liquidation. We therefore aggregate ONLY cross-margin positions here;
 // isolated positions are evaluated individually via ComputeIsolatedRisk.
-func (k Keeper) ComputeRiskInfo(ctx context.Context, accountIdx uint64) (types.RiskInfo, error) {
+func (k Keeper) ComputeCrossRisk(ctx context.Context, accountIdx uint64) (types.RiskParameters, error) {
 	a, err := k.accountKeeper.GetAccount(ctx, accountIdx)
 	if err != nil {
-		return types.RiskInfo{}, err
+		return types.RiskParameters{}, err
 	}
 	collateral := a.Collateral
 
@@ -83,39 +83,28 @@ func (k Keeper) ComputeRiskInfo(ctx context.Context, accountIdx uint64) (types.R
 		totalCross = totalCross.Add(pos.UnrealizedPnL(mark))
 		return false
 	}); err != nil {
-		return types.RiskInfo{}, err
+		return types.RiskParameters{}, err
 	}
 	if iterErr != nil {
-		return types.RiskInfo{}, iterErr
+		return types.RiskParameters{}, iterErr
 	}
 
 	cross.TotalAccountValue = totalCross
 	cross.InitialMarginRequirement = imSum
 	cross.MaintenanceMarginRequirement = mmSum
 	cross.CloseOutMarginRequirement = cmSum
-
-	// Both cross_risk_parameters and current_risk_parameters describe
-	// the cross account. Isolated positions are queried separately via
-	// ComputeIsolatedRisk / GetIsolatedHealthStatus. Returning the
-	// same pointer twice would let downstream callers mutate one and
-	// surprise the other; we deep-copy via two struct values.
-	current := cross
-	return types.RiskInfo{CrossRiskParameters: &cross, CurrentRiskParameters: &current}, nil
+	return cross, nil
 }
 
 // GetHealthStatus returns the CROSS health status. Isolated positions
 // have their own per-market health envelope; query
 // GetIsolatedHealthStatus for those.
 func (k Keeper) GetHealthStatus(ctx context.Context, accountIdx uint64) (uint32, error) {
-	ri, err := k.ComputeRiskInfo(ctx, accountIdx)
+	rp, err := k.ComputeCrossRisk(ctx, accountIdx)
 	if err != nil {
 		return 0, err
 	}
-	cur := ri.CurrentRiskParameters
-	if cur == nil {
-		return perptypes.HealthHealthy, nil
-	}
-	return cur.HealthStatus(), nil
+	return rp.HealthStatus(), nil
 }
 
 // GetTotalAccountValue returns TAV = collateral + sum(uPnL across CROSS
@@ -123,28 +112,20 @@ func (k Keeper) GetHealthStatus(ctx context.Context, accountIdx uint64) (uint32,
 // (NAV = TAV / total_shares). Isolated positions are deliberately
 // excluded, mirroring the spec's "isolated is a sub-account" rule.
 func (k Keeper) GetTotalAccountValue(ctx context.Context, accountIdx uint64) (math.Int, error) {
-	ri, err := k.ComputeRiskInfo(ctx, accountIdx)
+	rp, err := k.ComputeCrossRisk(ctx, accountIdx)
 	if err != nil {
 		return math.ZeroInt(), err
 	}
-	cur := ri.CurrentRiskParameters
-	if cur == nil {
-		return math.ZeroInt(), nil
-	}
-	return cur.TotalAccountValue, nil
+	return rp.TotalAccountValue, nil
 }
 
 // GetAvailableCollateral returns total_account_value - initial_margin_requirement.
 func (k Keeper) GetAvailableCollateral(ctx context.Context, accountIdx uint64) (math.Int, error) {
-	ri, err := k.ComputeRiskInfo(ctx, accountIdx)
+	rp, err := k.ComputeCrossRisk(ctx, accountIdx)
 	if err != nil {
 		return math.ZeroInt(), err
 	}
-	cur := ri.CurrentRiskParameters
-	if cur == nil {
-		return math.ZeroInt(), nil
-	}
-	return cur.TotalAccountValue.Sub(cur.InitialMarginRequirement), nil
+	return rp.TotalAccountValue.Sub(rp.InitialMarginRequirement), nil
 }
 
 // GetAvailableUsdcCollateral returns the amount of cross USDC collateral
@@ -162,22 +143,18 @@ func (k Keeper) GetAvailableCollateral(ctx context.Context, accountIdx uint64) (
 // otherwise drain more cross collateral than the account currently has
 // to spare.
 func (k Keeper) GetAvailableUsdcCollateral(ctx context.Context, accountIdx uint64) (math.Int, error) {
-	ri, err := k.ComputeRiskInfo(ctx, accountIdx)
+	rp, err := k.ComputeCrossRisk(ctx, accountIdx)
 	if err != nil {
 		return math.ZeroInt(), err
 	}
-	cur := ri.CurrentRiskParameters
-	if cur == nil {
+	if rp.HealthStatus() != perptypes.HealthHealthy {
 		return math.ZeroInt(), nil
 	}
-	if cur.HealthStatus() != perptypes.HealthHealthy {
-		return math.ZeroInt(), nil
-	}
-	collateral := cur.CollateralWithFunding
+	collateral := rp.CollateralWithFunding
 	if collateral.IsNegative() {
 		return math.ZeroInt(), nil
 	}
-	avail := cur.TotalAccountValue.Sub(cur.InitialMarginRequirement)
+	avail := rp.TotalAccountValue.Sub(rp.InitialMarginRequirement)
 	if avail.IsNegative() {
 		return math.ZeroInt(), nil
 	}
@@ -193,13 +170,12 @@ func (k Keeper) GetAvailableUsdcCollateral(ctx context.Context, accountIdx uint6
 // classifyChange. A nil `pre` is treated as "no pre-state" and
 // forces the post-state to be HEALTHY.
 func (k Keeper) isCrossRiskChangeValid(ctx context.Context, accountIdx uint64, pre *types.RiskParameters) (bool, error) {
-	post, err := k.ComputeRiskInfo(ctx, accountIdx)
+	post, err := k.ComputeCrossRisk(ctx, accountIdx)
 	if err != nil {
 		return false, err
 	}
-	postP := post.CurrentRiskParameters
 	if pre == nil {
-		return classifyChange(types.RiskParameters{}, *postP, true /*missingPre*/), nil
+		return classifyChange(types.RiskParameters{}, post, true /*missingPre*/), nil
 	}
-	return classifyChange(*pre, *postP, false), nil
+	return classifyChange(*pre, post, false), nil
 }

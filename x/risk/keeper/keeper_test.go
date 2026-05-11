@@ -107,10 +107,10 @@ func makeKeeper(t *testing.T, ak *stubAccountKeeper, mk stubMarketKeeper, ok stu
 	), ctx
 }
 
-// TestComputeRiskInfo_StalePriceFailsClosed ensures that non-zero positions
+// TestComputeCrossRisk_StalePriceFailsClosed ensures that non-zero positions
 // with a missing or stale oracle price surface an explicit error rather than
 // being silently skipped (audit Blocker risk-3).
-func TestComputeRiskInfo_StalePriceFailsClosed(t *testing.T) {
+func TestComputeCrossRisk_StalePriceFailsClosed(t *testing.T) {
 	ak := stubAccountKeeper{
 		acc: accounttypes.Account{AccountIndex: 1, Collateral: math.NewInt(1000)},
 		pos: accounttypes.AccountPosition{
@@ -123,13 +123,13 @@ func TestComputeRiskInfo_StalePriceFailsClosed(t *testing.T) {
 	ok := stubOracleKeeper{err: oracletypes.ErrStalePrice}
 	k, ctx := makeKeeper(t, &ak, mk, ok)
 
-	_, err := k.ComputeRiskInfo(ctx, 1)
+	_, err := k.ComputeCrossRisk(ctx, 1)
 	require.ErrorIs(t, err, risktypes.ErrMissingPrice)
 }
 
-// TestComputeRiskInfo_ZeroMarkPriceRejected enforces the "non-zero mark"
+// TestComputeCrossRisk_ZeroMarkPriceRejected enforces the "non-zero mark"
 // invariant on non-zero positions.
-func TestComputeRiskInfo_ZeroMarkPriceRejected(t *testing.T) {
+func TestComputeCrossRisk_ZeroMarkPriceRejected(t *testing.T) {
 	ak := stubAccountKeeper{
 		acc: accounttypes.Account{AccountIndex: 1, Collateral: math.NewInt(1000)},
 		pos: accounttypes.AccountPosition{
@@ -142,7 +142,7 @@ func TestComputeRiskInfo_ZeroMarkPriceRejected(t *testing.T) {
 	ok := stubOracleKeeper{price: oracletypes.OraclePrice{MarkPrice: 0, IndexPrice: 100}}
 	k, ctx := makeKeeper(t, &ak, mk, ok)
 
-	_, err := k.ComputeRiskInfo(ctx, 1)
+	_, err := k.ComputeCrossRisk(ctx, 1)
 	require.ErrorIs(t, err, risktypes.ErrZeroMarkPrice)
 }
 
@@ -284,12 +284,12 @@ func TestGetPositionZeroPrice_IsolatedUsesIsolatedTAV(t *testing.T) {
 		"isolated zero price must use AllocatedMargin + uPnL, NOT cross collateral")
 }
 
-// TestComputeRiskInfo_IsolatedDoesNotPolluteCross ensures isolated
+// TestComputeCrossRisk_IsolatedDoesNotPolluteCross ensures isolated
 // positions are excluded from the cross aggregate. The previous
 // implementation included isolated AllocatedMargin + uPnL in cross TAV
 // without also accumulating IM/MM/CM, which let isolated profit
 // silently inflate cross health.
-func TestComputeRiskInfo_IsolatedDoesNotPolluteCross(t *testing.T) {
+func TestComputeCrossRisk_IsolatedDoesNotPolluteCross(t *testing.T) {
 	ak := stubAccountKeeper{
 		acc: accounttypes.Account{AccountIndex: 1, Collateral: math.NewInt(100)},
 		pos: accounttypes.AccountPosition{
@@ -309,12 +309,11 @@ func TestComputeRiskInfo_IsolatedDoesNotPolluteCross(t *testing.T) {
 	ok := stubOracleKeeper{price: oracletypes.OraclePrice{MarkPrice: 1000}}
 	k, ctx := makeKeeper(t, &ak, mk, ok)
 
-	ri, err := k.ComputeRiskInfo(ctx, 1)
+	rp, err := k.ComputeCrossRisk(ctx, 1)
 	require.NoError(t, err)
-	require.NotNil(t, ri.CrossRiskParameters)
-	require.Equal(t, "100", ri.CrossRiskParameters.TotalAccountValue.String(),
+	require.Equal(t, "100", rp.TotalAccountValue.String(),
 		"cross TAV must equal cross collateral; isolated profit must not leak in")
-	require.True(t, ri.CrossRiskParameters.MaintenanceMarginRequirement.IsZero(),
+	require.True(t, rp.MaintenanceMarginRequirement.IsZero(),
 		"isolated MMR must not aggregate into cross MMR")
 }
 

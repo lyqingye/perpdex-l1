@@ -32,9 +32,4 @@ message RiskParameters {
   ];
 }
 
-message RiskInfo {
-  RiskParameters cross_risk_parameters = 1;
-  RiskParameters current_risk_parameters = 2;
-}
-
 message Params {}
