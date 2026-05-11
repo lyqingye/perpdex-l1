@@ -2,7 +2,6 @@ package keeper
 
 import (
 	"context"
-	"fmt"
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
 	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
@@ -25,7 +24,7 @@ func (k Keeper) ComputeIsolatedRisk(ctx context.Context, accountIdx uint64, mark
 		return types.RiskParameters{}, err
 	}
 	if pos.MarginMode != perptypes.IsolatedMargin {
-		return types.RiskParameters{}, fmt.Errorf("position is not isolated")
+		return types.RiskParameters{}, accounttypes.ErrPositionNotIsolated
 	}
 	mark, err := k.resolveMarkPrice(ctx, marketIdx)
 	if err != nil {

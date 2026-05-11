@@ -3,7 +3,6 @@ package keeper
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	sdkerrors "cosmossdk.io/errors"
 	"cosmossdk.io/math"
@@ -98,7 +97,7 @@ func (k Keeper) ApplySpotMatching(ctx context.Context, f SpotFill, baseAssetID, 
 // so the matching loop can evict the bad maker and continue.
 func (k Keeper) spotMakerDebit(ctx context.Context, from, to uint64, assetID uint32, amount math.Int) error {
 	if amount.IsNegative() {
-		return fmt.Errorf("trade: transfer amount must be non-negative")
+		return types.ErrInvalidTransferAmount
 	}
 	if err := k.accountKeeper.TransferAccountAssetBalance(ctx, from, to, assetID, amount, true /* drainLockedFirst */); err != nil {
 		if errors.Is(err, accounttypes.ErrInsufficientFunds) {
@@ -118,7 +117,7 @@ func (k Keeper) spotMakerDebit(ctx context.Context, from, to uint64, assetID uin
 // so the matching loop can stop the taker without reverting prior fills.
 func (k Keeper) spotTakerDebit(ctx context.Context, from, to uint64, assetID uint32, amount math.Int) error {
 	if amount.IsNegative() {
-		return fmt.Errorf("trade: transfer amount must be non-negative")
+		return types.ErrInvalidTransferAmount
 	}
 	if err := k.accountKeeper.TransferAccountAssetBalance(ctx, from, to, assetID, amount, false /* drainLockedFirst */); err != nil {
 		if errors.Is(err, accounttypes.ErrInsufficientFunds) {

@@ -2,9 +2,8 @@ package keeper
 
 import (
 	"context"
-	"errors"
-	"fmt"
 
+	errorsmod "cosmossdk.io/errors"
 	"cosmossdk.io/math"
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
@@ -70,7 +69,7 @@ func (k Keeper) ComputeRiskInfo(ctx context.Context, accountIdx uint64) (types.R
 		// cannot be hidden by an oracle outage".
 		mark, err := k.resolveMarkPrice(ctx, pos.MarketIndex)
 		if err != nil {
-			iterErr = errors.Join(err, fmt.Errorf("account=%d", accountIdx))
+			iterErr = errorsmod.Wrapf(err, "account=%d", accountIdx)
 			return true
 		}
 		md, err := k.marketKeeper.GetMarketDetails(ctx, pos.MarketIndex)

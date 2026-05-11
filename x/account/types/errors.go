@@ -36,4 +36,5 @@ var (
 	ErrPoolCannotPlaceOrder  = errors.Register(ModuleName, 41, "public pool / insurance fund cannot place orders directly")
 	ErrPoolGenericMsg        = errors.Register(ModuleName, 42, "public pool / insurance fund cannot use generic account msg; use share/strategy paths")
 	ErrInvalidMarginMode     = errors.Register(ModuleName, 44, "invalid margin mode")
+	ErrInvalidDepositorIndex = errors.Register(ModuleName, 45, "invalid depositor index")
 )

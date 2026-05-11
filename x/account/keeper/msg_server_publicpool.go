@@ -2,7 +2,6 @@ package keeper
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 
 	"cosmossdk.io/math"
@@ -236,7 +235,7 @@ func (m msgServer) assertPoolEmpty(ctx context.Context, pool types.Account) erro
 func (m msgServer) resolveSenderMaster(ctx context.Context, sender string) (types.Account, error) {
 	master, err := m.GetMasterAccountByOwner(ctx, sender)
 	if err != nil {
-		return types.Account{}, fmt.Errorf("sender has no perpdex account: %w", err)
+		return types.Account{}, types.ErrAccountNotFound.Wrapf("sender has no perpdex account: %s", err.Error())
 	}
 	return master, nil
 }
@@ -409,7 +408,7 @@ func (m msgServer) burnSharesCore(
 		// it through this slot.
 		depIdx, err := strconv.ParseUint(owner, 10, 64)
 		if err != nil {
-			return nil, fmt.Errorf("invalid depositor index: %w", err)
+			return nil, types.ErrInvalidDepositorIndex.Wrapf("%s", err.Error())
 		}
 		depositor, err = m.GetAccount(ctx, depIdx)
 		if err != nil {
