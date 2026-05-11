@@ -19,6 +19,58 @@ import (
 // There is no chain-level KV cache: a pre-state that outlived its
 // handler would silently leak into the next Msg's regression check.
 
+// classifyChange centralises the pre-vs-post risk decision used by both
+// the cross and isolated paths. `missingPre` signals that no pre-state
+// snapshot exists; in that case we reject any unhealthy post-state to
+// avoid silently accepting a change that may have introduced the
+// underwater state.
+func classifyChange(pre, post types.RiskParameters, missingPre bool) bool {
+	postClass := post.HealthStatus()
+	if postClass == perptypes.HealthHealthy {
+		return true
+	}
+	if missingPre {
+		return false
+	}
+	preClass := pre.HealthStatus()
+	if postClass > preClass {
+		return false
+	}
+	switch preClass {
+	case perptypes.HealthPreLiquidation:
+		// PRE rule: no MMR growth + TAV/MMR ratio non-
+		// decreasing. The MMR cap implicitly forbids any |size|
+		// increase since mark is constant within the block.
+		if post.MaintenanceMarginRequirement.GT(pre.MaintenanceMarginRequirement) {
+			return false
+		}
+		if pre.MaintenanceMarginRequirement.IsZero() ||
+			post.MaintenanceMarginRequirement.IsZero() {
+			return true
+		}
+		// Compare post.TAV/post.MMR >= pre.TAV/pre.MMR without division,
+		// so integer truncation cannot make the health ratio look better.
+		lhs := post.TotalAccountValue.Mul(pre.MaintenanceMarginRequirement)
+		rhs := pre.TotalAccountValue.Mul(post.MaintenanceMarginRequirement)
+		return !lhs.LT(rhs)
+	default:
+		// PARTIAL / FULL / BANKRUPTCY pre-state: keep the historical
+		// TAV/IM ratio safety net so liquidation fills can never
+		// worsen efficiency.
+		if post.InitialMarginRequirement.IsZero() ||
+			pre.InitialMarginRequirement.IsZero() {
+			return true
+		}
+		// Once the account is already below MMR, MMR coverage is no longer
+		// a useful recovery benchmark. Use the stricter IMR coverage ratio
+		// instead, and compare post.TAV/post.IMR >= pre.TAV/pre.IMR without
+		// division so integer truncation cannot hide a worse risk efficiency.
+		lhs := post.TotalAccountValue.Mul(pre.InitialMarginRequirement)
+		rhs := pre.TotalAccountValue.Mul(post.InitialMarginRequirement)
+		return !lhs.LT(rhs)
+	}
+}
+
 // IsValidRiskChangeFrom enforces the post-state vs pre-state risk
 // invariants. It walks both the cross account and each isolated
 // position the account holds; if either side regresses the change is
@@ -88,14 +140,11 @@ func (k Keeper) IsValidRiskChangeFrom(ctx context.Context, accountIdx uint64, pr
 // position is opened during the handler.
 func (k Keeper) SnapshotRisk(ctx context.Context, accountIdx uint64) (types.PreRiskSnapshot, error) {
 	snap := types.PreRiskSnapshot{}
-	cross, err := k.ComputeRiskInfo(ctx, accountIdx)
+	cross, err := k.ComputeCrossRisk(ctx, accountIdx)
 	if err != nil {
 		return types.PreRiskSnapshot{}, err
 	}
-	if cross.CurrentRiskParameters != nil {
-		rp := *cross.CurrentRiskParameters
-		snap.Cross = &rp
-	}
+	snap.Cross = &cross
 	var iterErr error
 	if err := k.accountKeeper.IterateAccountPositions(ctx, accountIdx, func(pos accounttypes.AccountPosition) bool {
 		if pos.BaseSize.IsZero() || pos.MarginMode != perptypes.IsolatedMargin {

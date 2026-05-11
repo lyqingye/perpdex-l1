@@ -15,12 +15,12 @@ func NewQuerier(k Keeper) Querier { return Querier{k: k} }
 
 var _ types.QueryServer = Querier{}
 
-func (q Querier) RiskInfo(ctx context.Context, req *types.QueryRiskInfoRequest) (*types.QueryRiskInfoResponse, error) {
-	ri, err := q.k.ComputeRiskInfo(ctx, req.AccountIndex)
+func (q Querier) CrossRisk(ctx context.Context, req *types.QueryCrossRiskRequest) (*types.QueryCrossRiskResponse, error) {
+	rp, err := q.k.ComputeCrossRisk(ctx, req.AccountIndex)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-	return &types.QueryRiskInfoResponse{RiskInfo: ri}, nil
+	return &types.QueryCrossRiskResponse{Risk: rp}, nil
 }
 
 func (q Querier) IsolatedRisk(ctx context.Context, req *types.QueryIsolatedRiskRequest) (*types.QueryIsolatedRiskResponse, error) {

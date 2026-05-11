@@ -649,7 +649,7 @@ func (k Keeper) GetPosition(ctx context.Context, accIdx uint64, marketIdx uint32
 // by `accountIdx`. The callback returns `true` to stop early.
 //
 // Replaces the old MaxPerpsMarketIndex-wide loops in
-// risk.ComputeRiskInfo / IsValidRiskChangeFrom / SnapshotRisk /
+// risk.ComputeCrossRisk / IsValidRiskChangeFrom / SnapshotRisk /
 // IterateIsolatedPositions / liquidation.processAccount /
 // rankVictimPositionsByUPnL / account.settleAllPositionFunding which each
 // did up to 256 GetPosition reads per call. With this iterator we only

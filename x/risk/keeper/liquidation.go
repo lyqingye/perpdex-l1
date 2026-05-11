@@ -69,13 +69,9 @@ func (k Keeper) GetLiquidationRiskSnapshot(
 	if err != nil {
 		return types.LiquidationRiskSnapshot{}, err
 	}
-	crossRi, err := k.ComputeRiskInfo(ctx, accountIdx)
+	crossRP, err := k.ComputeCrossRisk(ctx, accountIdx)
 	if err != nil {
 		return types.LiquidationRiskSnapshot{}, err
-	}
-	var crossRP types.RiskParameters
-	if crossRi.CurrentRiskParameters != nil {
-		crossRP = *crossRi.CurrentRiskParameters
 	}
 	risk := crossRP
 	if pos.MarginMode == perptypes.IsolatedMargin {
@@ -198,13 +194,11 @@ func (k Keeper) GetZeroPriceSnapshot(
 		}
 		risk = rp
 	} else {
-		ri, err := k.ComputeRiskInfo(ctx, accountIdx)
+		rp, err := k.ComputeCrossRisk(ctx, accountIdx)
 		if err != nil {
 			return types.ZeroPriceSnapshot{}, err
 		}
-		if ri.CurrentRiskParameters != nil {
-			risk = *ri.CurrentRiskParameters
-		}
+		risk = rp
 	}
 	zp := pureComputeZeroPrice(pos, mark, md, risk.TotalAccountValue, risk.MaintenanceMarginRequirement)
 	return types.ZeroPriceSnapshot{Position: pos, ZeroPrice: zp}, nil
@@ -244,13 +238,9 @@ func (k Keeper) SimulateRiskAfterTakeover(
 	delta math.Int,
 	entryPrice uint32,
 ) (types.RiskParameters, error) {
-	base, err := k.ComputeRiskInfo(ctx, accountIdx)
+	cur, err := k.ComputeCrossRisk(ctx, accountIdx)
 	if err != nil {
 		return types.RiskParameters{}, err
-	}
-	cur := types.RiskParameters{}
-	if base.CurrentRiskParameters != nil {
-		cur = *base.CurrentRiskParameters
 	}
 	if delta.IsZero() {
 		return cur, nil

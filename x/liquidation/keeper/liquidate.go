@@ -329,7 +329,8 @@ func (k Keeper) victimHealthForPosition(
 //  4. Otherwise, compare the side's available collateral against
 //     `|RealizedPnL|`. Cross uses `account.Collateral`; isolated uses
 //     `pos.AllocatedMargin` — mirroring the per-account split between
-//     `cross_risk_parameters` and `current_risk_parameters`.
+//     the cross aggregate (ComputeCrossRisk) and the per-position
+//     isolated envelope (ComputeIsolatedRisk).
 //
 // On rejection returns `types.ErrInsufficientCollateral`; the
 // EndBlocker callers (`tryLLPAbsorb` / `autoADL`) treat it as a

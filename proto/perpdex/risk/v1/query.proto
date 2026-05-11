@@ -8,8 +8,8 @@ import "perpdex/risk/v1/risk.proto";
 option go_package = "github.com/perpdex/perpdex-l1/x/risk/types";
 
 service Query {
-  rpc RiskInfo(QueryRiskInfoRequest) returns (QueryRiskInfoResponse) {
-    option (google.api.http).get = "/perpdex/risk/v1/risk_info/{account_index}";
+  rpc CrossRisk(QueryCrossRiskRequest) returns (QueryCrossRiskResponse) {
+    option (google.api.http).get = "/perpdex/risk/v1/cross/{account_index}";
   }
   rpc IsolatedRisk(QueryIsolatedRiskRequest) returns (QueryIsolatedRiskResponse) {
     option (google.api.http).get = "/perpdex/risk/v1/isolated/{account_index}/{market_index}";
@@ -25,8 +25,8 @@ service Query {
   }
 }
 
-message QueryRiskInfoRequest { uint64 account_index = 1; }
-message QueryRiskInfoResponse { RiskInfo risk_info = 1 [(gogoproto.nullable) = false]; }
+message QueryCrossRiskRequest { uint64 account_index = 1; }
+message QueryCrossRiskResponse { RiskParameters risk = 1 [(gogoproto.nullable) = false]; }
 
 message QueryIsolatedRiskRequest { uint64 account_index = 1; uint32 market_index = 2; }
 message QueryIsolatedRiskResponse { RiskParameters risk = 1 [(gogoproto.nullable) = false]; }
