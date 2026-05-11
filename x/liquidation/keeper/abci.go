@@ -26,9 +26,9 @@ import (
 //     deleverager-side pre-trade collateral assert
 //     (`is_deleverager_has_enough_cross_collateral`) skips
 //     under-capitalised candidates and advances to the next
-//     counterparty. Mirrors Lighter `internal_deleverage.rs`
-//     accepting both health states indistinctly. The chain caller
-//     bounds total work by Params.MaxAdlAttemptsPerBlock.
+//     counterparty. `internal_deleverage.rs` accepts both health
+//     states indistinctly. The chain caller bounds total work by
+//     Params.MaxAdlAttemptsPerBlock.
 func (k Keeper) EndBlocker(ctx context.Context) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	now := sdkCtx.BlockTime().UnixMilli()
@@ -123,9 +123,9 @@ func (k Keeper) processAccount(
 		}
 
 		// FULL_LIQUIDATION + BANKRUPTCY: try the LLP first per the
-		// Lighter spec ("LLP closes all of the user's positions by
-		// taking them over"), gated by SimulateRiskAfterTakeover so
-		// the LLP never breaches its IMR. Anything the LLP refuses
+		// spec ("LLP closes all of the user's positions by taking
+		// them over"), gated by SimulateRiskAfterTakeover so the
+		// LLP never breaches its IMR. Anything the LLP refuses
 		// falls through to ADL. Each callee re-snapshots the victim
 		// internally so the post-mutation state is what drives the
 		// next market's decision.
@@ -162,8 +162,8 @@ func (k Keeper) processAccount(
 		// "Absorption" is the LLP/IF deleverage trade itself; if
 		// `tryLLPAbsorb` rejected (IMR breach) and `autoADL` could
 		// not find counterparties, the position simply remains and
-		// is re-evaluated next block — Lighter has no analogue of
-		// a silent IF top-up sweep.
+		// is re-evaluated next block — there is no silent IF
+		// top-up sweep.
 		return false
 	}); err != nil {
 		return err

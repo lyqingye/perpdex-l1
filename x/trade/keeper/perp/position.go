@@ -12,8 +12,8 @@ import (
 
 // positionChangeResult bundles the inputs / outputs of one side's
 // position update so the surrounding Apply pipeline can chain through
-// the lighter `realized_pnl → fee → margin_delta → risk` sequence on
-// the right account / market without re-loading state.
+// the `realized_pnl → fee → margin_delta → risk` sequence on the
+// right account / market without re-loading state.
 //
 // `New` reflects the position AFTER size + entry_quote are written,
 // but BEFORE the realized-PnL / fee / margin_delta routing — the
@@ -32,7 +32,7 @@ type positionChangeResult struct {
 // errPositionOutOfBounds is the internal sentinel returned by
 // `applyPositionChange` when the post-trade `|position|` or
 // `|entry_quote|` would overflow `POSITION_SIZE_BITS` /
-// `ENTRY_QUOTE_BITS` (lighter `is_new_position_valid` failure mode).
+// `ENTRY_QUOTE_BITS` (`is_new_position_valid` failure mode).
 // `Apply` re-wraps it into `ErrMakerInvalidPosition` /
 // `ErrTakerInvalidPosition` so the matching loop can route the failure
 // through `IsRecoverable*Error`.
@@ -42,7 +42,7 @@ var errPositionOutOfBounds = errors.New("trade: post-trade position out of bound
 // 14-trade.md §3.2: open new, increase, decrease, flip. It computes the
 // new position size + entry_quote and the realized PnL but does NOT
 // route the realized PnL anywhere — `applyPositionFinancials` does
-// that based on the position's margin mode (lighter parity).
+// that based on the position's margin mode.
 //
 // The four-quadrant arithmetic itself lives in
 // `accounttypes.AccountPosition.ApplyFill`, shared with x/risk's
@@ -108,7 +108,7 @@ func (e Engine) applyPositionChange(ctx context.Context, accountIdx uint64, mark
 
 // isWithinPositionBounds enforces the prover circuit's hard limits
 // `|position| < 2^POSITION_SIZE_BITS` and `|entry_quote| < 2^ENTRY_QUOTE_BITS`.
-// Lighter `position.is_valid` checks the same envelope.
+// `position.is_valid` checks the same envelope.
 func isWithinPositionBounds(position, entryQuote math.Int) bool {
 	maxPos := math.NewIntFromUint64(perptypes.MaxPositionSize)
 	maxEntryQuote := math.NewIntFromUint64(perptypes.MaxEntryQuote)

@@ -37,7 +37,7 @@ import (
 //     liquidation health.
 //   - CrossRisk: the account's cross aggregate regardless of margin
 //     mode. ADL ranking uses leverage on the cross aggregate per the
-//     Lighter spec ("highly-leveraged winners get pulled in first")
+//     spec ("highly-leveraged winners get pulled in first")
 //     even when the candidate's targeted position is isolated.
 //   - ZeroPrice: the partial-liquidation reference price computed
 //     from `(Position, MarkPrice, MarketDetails, Risk)`. Pre-computed

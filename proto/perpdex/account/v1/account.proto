@@ -131,13 +131,13 @@ message Params {
   uint64 min_partial_transfer_amount = 3;
   uint64 min_partial_withdraw_amount = 4;
   // liquidity_pool_index is the canonical liquidity pool subject to
-  // burn-cooldown gating. Mirrors lighter system_config.liquidity_pool_index.
+  // burn-cooldown gating. Mirrors system_config.liquidity_pool_index.
   // Defaults to InsuranceFundOperatorAccountIdx; cleared if that pool
   // is later frozen via MsgUpdatePublicPool.
   uint64 liquidity_pool_index = 5;
   // liquidity_pool_cooldown_period_ms is the minimum elapsed wall-clock
   // (ms) between a non-operator mint and the matching burn for the LLP
-  // pool. Mirrors lighter system_config.liquidity_pool_cooldown_period.
+  // pool. Mirrors system_config.liquidity_pool_cooldown_period.
   int64 liquidity_pool_cooldown_period_ms = 6;
 }
 

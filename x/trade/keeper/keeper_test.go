@@ -228,7 +228,7 @@ type stubRisk struct {
 	riskChecks   int
 	rejectOnCall int // >0 means reject only on Nth riskCheck call
 
-	// Knobs for the lighter-aligned isolated margin / cross collateral
+	// Knobs for the isolated margin / cross collateral
 	// pre-checks. Tests that need to exercise the
 	// `ErrMaker/TakerInsufficientCollateral` branches can set
 	// `availableCollateral` per-account; the default behaviour
@@ -344,14 +344,14 @@ func TestApplyPerpsMatching_RejectsMakerRisk(t *testing.T) {
 }
 
 // TestApplyPerpsMatching_LiquidationFeeRoutesToLLP exercises the
-// Lighter-aligned improvement-over-zero-price liquidation fee path.
-// When the fill price is strictly better than the zero price for the
-// victim, an improvement fee is debited from the side being closed
-// and credited to LiquidationFeeRecipient (LLP / Insurance Fund).
-// Standard taker/maker fees do not apply on the same fill (caller
-// sets them to 0), so the treasury stays untouched.
+// improvement-over-zero-price liquidation fee path. When the fill
+// price is strictly better than the zero price for the victim, an
+// improvement fee is debited from the side being closed and credited
+// to LiquidationFeeRecipient (LLP / Insurance Fund). Standard
+// taker/maker fees do not apply on the same fill (caller sets them
+// to 0), so the treasury stays untouched.
 //
-// Numerical expectations (Lighter parity):
+// Numerical expectations:
 //
 //	improvement     = (Price - ZeroPrice) * BaseAmount = (110-100)*1000 = 10_000
 //	notional        = Price * BaseAmount               = 110*1000       = 110_000
@@ -365,8 +365,8 @@ func TestApplyPerpsMatching_RejectsMakerRisk(t *testing.T) {
 // branch) is gone — the cap now naturally drops out of the
 // `min(LiquidationFeeBps, price_diff_rate)` rate, scaled across
 // notional rather than across improvement. This is exactly the
-// per-trade taker fee bound enforced in `lighter-prover`'s
-// `matching_engine.rs` `_compute_liquidation_taker_fee`.
+// per-trade taker fee bound enforced in `matching_engine.rs`
+// `_compute_liquidation_taker_fee`.
 func TestApplyPerpsMatching_LiquidationFeeRoutesToLLP(t *testing.T) {
 	ctx, ak, _, _, k := newSdkCtx(t)
 	const (
@@ -424,7 +424,7 @@ func TestApplyPerpsMatching_LiquidationFeeRoutesToLLP(t *testing.T) {
 //
 // Without the price_diff_rate cap the fee would have been
 // `notional * 50_000 / FeeTick = 5_050`, ~5x larger than the actual
-// improvement — the bug Lighter explicitly guards against.
+// improvement — the bug the spec explicitly guards against.
 func TestApplyPerpsMatching_LiquidationFeePriceDiffRateBound(t *testing.T) {
 	ctx, ak, _, _, k := newSdkCtx(t)
 	const (
@@ -494,12 +494,12 @@ func TestApplyPerpsMatching_LiquidationFeeNoneAtZeroPrice(t *testing.T) {
 		"no improvement ⇒ no fee; LLP must not receive collateral")
 }
 
-// TestApplyPerpsMatching_SkipTakerRiskCheck verifies the Lighter-parity
-// flag introduced for `Deleverage`'s LLP / IF path: when the taker is
-// the IF/LLP absorber, both the pre-trade snapshot and the post-trade
+// TestApplyPerpsMatching_SkipTakerRiskCheck verifies the flag
+// introduced for `Deleverage`'s LLP / IF path: when the taker is the
+// IF/LLP absorber, both the pre-trade snapshot and the post-trade
 // `IsValidRiskChangeFrom` on the taker must be skipped (the absorber's
 // collateral sufficiency is gated by `tryLLPAbsorb`'s pre-trade
-// `SimulateRiskAfterTakeover`/IMR check and Lighter's
+// `SimulateRiskAfterTakeover`/IMR check and the
 // `is_*_has_enough_cross_collateral` assert instead). The maker side
 // keeps its full risk pipeline.
 func TestApplyPerpsMatching_SkipTakerRiskCheck(t *testing.T) {

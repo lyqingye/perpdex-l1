@@ -149,8 +149,8 @@ type FillResult struct {
 
 // ApplyFill projects the post-trade state of this position after a single
 // fill of `delta` (signed base amount; positive = buy, negative = sell) at
-// integer `price`. Pure math; mirrors lighter `apply_match_order` and
-// covers the four canonical scenarios:
+// integer `price`. Pure math implementing `apply_match_order` and covering
+// the four canonical scenarios:
 //
 //  1. open new        : curSize == 0
 //     ⇒ entry_quote = delta * price
@@ -160,7 +160,7 @@ type FillResult struct {
 //
 //  3. decrease | close: opposite sign, |delta| <= |curSize|
 //     ⇒ entry_quote scaled to remaining size, realized_pnl realized
-//     for the closed portion. Mirrors lighter
+//     for the closed portion via
 //     `realized_pnl = trade_quote + curEntryQuote * delta / -curSize`.
 //
 //  4. flip            : opposite sign, |delta| > |curSize|

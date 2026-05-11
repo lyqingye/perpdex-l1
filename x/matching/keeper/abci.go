@@ -41,7 +41,7 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 		if err != nil {
 			return false
 		}
-		// Activation semantics, mirroring lighter docs:
+		// Activation semantics, mirroring the spec docs:
 		//   stop-loss long (isAsk=true, protect long): trigger when mark <= trigger
 		//   stop-loss short (isAsk=false):              trigger when mark >= trigger
 		//   take-profit long:                           trigger when mark >= trigger

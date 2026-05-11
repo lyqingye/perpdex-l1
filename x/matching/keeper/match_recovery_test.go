@@ -93,11 +93,11 @@ func makeTaker(idx, owner uint64, price uint32, base uint64, isAsk bool) *orderb
 	}
 }
 
-// TestMatchOrder_BadMakerEvictedAndContinues verifies the Lighter
-// `cancel_maker_order` parity: when a single maker fails the post-trade
-// risk check, the maker is evicted on the outer ctx and the taker
-// continues onto the next price level rather than reverting the entire
-// CreateOrder.
+// TestMatchOrder_BadMakerEvictedAndContinues verifies the
+// `cancel_maker_order` semantics: when a single maker fails the
+// post-trade risk check, the maker is evicted on the outer ctx and
+// the taker continues onto the next price level rather than reverting
+// the entire CreateOrder.
 func TestMatchOrder_BadMakerEvictedAndContinues(t *testing.T) {
 	e, _ := withInjectingTrade(t,
 		sdkerrors.Wrapf(tradetypes.ErrMakerRiskRegression, "first maker"),
@@ -159,8 +159,8 @@ func TestMatchOrder_MultipleBadMakersAllEvicted(t *testing.T) {
 }
 
 // TestMatchOrder_BadTakerStopsButPreservesPriorFills confirms the
-// Lighter `cancel_taker_order` parity: when the taker fails risk on
-// the second iteration, the first fill survives but the residue is
+// `cancel_taker_order` semantics: when the taker fails risk on the
+// second iteration, the first fill survives but the residue is
 // terminated rather than resting on the book.
 func TestMatchOrder_BadTakerStopsButPreservesPriorFills(t *testing.T) {
 	e, _ := withInjectingTrade(t,
@@ -212,7 +212,7 @@ func TestMatchOrder_HardErrorRevertsWholeMatch(t *testing.T) {
 }
 
 // TestCreateOrder_PerpOpenOrderCap rejects placement once the account
-// has reached Market.MaxOpenOrdersPerAccount. Lighter parity:
+// has reached Market.MaxOpenOrdersPerAccount.
 // `increment_order_count_in_place` aborts when the per-account counter
 // is at the limit.
 func TestCreateOrder_PerpOpenOrderCap(t *testing.T) {
@@ -285,7 +285,7 @@ func TestCreateOrder_IOCBypassesCap(t *testing.T) {
 }
 
 // TestMatchOrder_BadMakerInvalidPositionEvictedAndContinues confirms
-// the lighter `is_new_maker_position_invalid` parity (case 1 of
+// the `is_new_maker_position_invalid` semantics (case 1 of
 // `is_valid_perps_trade`): when a maker's post-trade position would
 // overflow the bit-width bound, the maker is evicted on the outer
 // ctx and the taker continues.
@@ -317,7 +317,7 @@ func TestMatchOrder_BadMakerInvalidPositionEvictedAndContinues(t *testing.T) {
 }
 
 // TestMatchOrder_BadMakerInsufficientCollateralEvictedAndContinues
-// confirms the lighter `is_maker_has_enough_cross_collateral` parity
+// confirms the `is_maker_has_enough_cross_collateral` semantics
 // (case 3): a maker whose isolated margin auto-allocation cannot be
 // funded from cross collateral is evicted and the loop continues.
 func TestMatchOrder_BadMakerInsufficientCollateralEvictedAndContinues(t *testing.T) {

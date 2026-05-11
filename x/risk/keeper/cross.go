@@ -24,7 +24,7 @@ import (
 // ComputeRiskInfo iterates all CROSS positions of an account and aggregates
 // their risk contributions into a RiskInfo struct.
 //
-// Per Lighter spec, isolated positions are a separate accounting unit: the
+// Per the spec, isolated positions are a separate accounting unit: the
 // allocated margin of an isolated position only collateralises that
 // position, and its uPnL is realised against AllocatedMargin (not the
 // shared cross collateral). Including isolated AllocatedMargin/uPnL in
@@ -150,7 +150,7 @@ func (k Keeper) GetAvailableCollateral(ctx context.Context, accountIdx uint64) (
 
 // GetAvailableUsdcCollateral returns the amount of cross USDC collateral
 // that can be safely consumed by a new isolated margin allocation
-// without pushing the cross account out of HEALTHY. Mirrors lighter
+// without pushing the cross account out of HEALTHY. Mirrors
 // `get_available_usdc_collateral`:
 //
 //   - account must currently be HEALTHY (otherwise zero — no headroom)

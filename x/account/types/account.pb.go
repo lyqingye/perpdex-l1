@@ -508,13 +508,13 @@ type Params struct {
 	MinPartialTransferAmount  uint64 `protobuf:"varint,3,opt,name=min_partial_transfer_amount,json=minPartialTransferAmount,proto3" json:"min_partial_transfer_amount,omitempty"`
 	MinPartialWithdrawAmount  uint64 `protobuf:"varint,4,opt,name=min_partial_withdraw_amount,json=minPartialWithdrawAmount,proto3" json:"min_partial_withdraw_amount,omitempty"`
 	// liquidity_pool_index is the canonical liquidity pool subject to
-	// burn-cooldown gating. Mirrors lighter system_config.liquidity_pool_index.
+	// burn-cooldown gating. Mirrors system_config.liquidity_pool_index.
 	// Defaults to InsuranceFundOperatorAccountIdx; cleared if that pool
 	// is later frozen via MsgUpdatePublicPool.
 	LiquidityPoolIndex uint64 `protobuf:"varint,5,opt,name=liquidity_pool_index,json=liquidityPoolIndex,proto3" json:"liquidity_pool_index,omitempty"`
 	// liquidity_pool_cooldown_period_ms is the minimum elapsed wall-clock
 	// (ms) between a non-operator mint and the matching burn for the LLP
-	// pool. Mirrors lighter system_config.liquidity_pool_cooldown_period.
+	// pool. Mirrors system_config.liquidity_pool_cooldown_period.
 	LiquidityPoolCooldownPeriodMs int64 `protobuf:"varint,6,opt,name=liquidity_pool_cooldown_period_ms,json=liquidityPoolCooldownPeriodMs,proto3" json:"liquidity_pool_cooldown_period_ms,omitempty"`
 }
 

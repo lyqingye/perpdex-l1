@@ -9,8 +9,7 @@ import (
 	"github.com/perpdex/perpdex-l1/x/account/types"
 )
 
-// SharesToUSDCValue mirrors lighter-prover
-// `get_shares_usdc_value_for_public_pool` in circuit/src/liquidation.rs:
+// SharesToUSDCValue implements `get_shares_usdc_value_for_public_pool`:
 //
 //	if total_shares == 0 ⇒ share * INITIAL_POOL_SHARE_VALUE
 //	else                 ⇒ share * |TAV| / (total_shares * USDC_TO_COLLATERAL_MULTIPLIER)
@@ -86,7 +85,7 @@ func (k Keeper) USDCValueToShares(
 }
 
 // AvailableSharesToBurn returns the cap on shares an LP may burn given
-// the pool's current available_collateral. Mirrors lighter
+// the pool's current available_collateral, implementing
 // `get_available_shares_to_burn_for_public_pool`:
 //
 //	available_shares = available_collateral * total_shares / TAV
@@ -126,8 +125,8 @@ func (k Keeper) AvailableSharesToBurn(
 //
 //	total_shares * min_rate <= operator_shares * SHARE_TICK
 //
-// which is lighter's skin-in-the-game floor. Used by Mint (non-operator),
-// Burn (operator burn while pool not frozen) and Update.
+// which is the operator's skin-in-the-game floor. Used by Mint
+// (non-operator), Burn (operator burn while pool not frozen) and Update.
 //
 // An empty pool (`total_shares == 0`) trivially satisfies the invariant,
 // so the check is skipped.

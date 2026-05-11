@@ -14,7 +14,7 @@ import (
 	"github.com/perpdex/perpdex-l1/tests/e2e/msg"
 )
 
-// PublicPoolSuite covers the lighter-style PUBLIC_POOL pipeline:
+// PublicPoolSuite covers the PUBLIC_POOL pipeline:
 // Create / Update / Mint / Burn / StrategyTransfer / ForceBurn,
 // plus the cross-cutting `pool/IF cannot place orders` and
 // EndBlocker IF_FIRST routing rules.

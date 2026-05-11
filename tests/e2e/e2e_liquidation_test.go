@@ -132,8 +132,8 @@ func (s *LiquidationSuite) TestRejectsHealthyVictim() {
 //
 // The previous semantics (1:1 transfer of the victim's exposure to a
 // caller-supplied "liquidator account") are gone — this test now
-// asserts the orderbook flow that mirrors Lighter's
-// `InternalLiquidatePositionTx`.
+// asserts the orderbook flow that mirrors the
+// `InternalLiquidatePositionTx` semantics.
 func (s *LiquidationSuite) TestPartialLiquidation() {
 	entry, qty := s.openHurtablePosition()
 	// Anchor oracle at entry first so the trade keeper risk-check during
@@ -151,9 +151,9 @@ func (s *LiquidationSuite) TestPartialLiquidation() {
 		"price drop must push victim into PARTIAL_LIQUIDATION (got %d)", health)
 
 	// A counterparty bid sits on the book at the distressed mark.
-	// Lighter's IOC fills opposite makers at prices that improve on
-	// the zero-price floor for the victim; for a long victim the
-	// floor is at-or-below mark, so distressedPrice itself is enough.
+	// The IOC fills opposite makers at prices that improve on the
+	// zero-price floor for the victim; for a long victim the floor
+	// is at-or-below mark, so distressedPrice itself is enough.
 	// Pre-fund the bidder so its post-trade risk check passes when it
 	// inherits a fresh long at the fill price.
 	s.preFundLiquidator(s.Users[2].AccountIndex, math.NewInt(1_000_000_000_000_000)) // 1e15
@@ -303,8 +303,8 @@ func (s *LiquidationSuite) drainInsuranceFund(target math.Int) {
 
 // freezeInsuranceFund flips IF.PublicPoolInfo.Status to FROZEN. Required
 // in the user-ADL fallback tests because EndBlocker now routes
-// BANKRUPTCY victims to the IF first when it is ACTIVE (lighter
-// IF_FIRST behaviour).
+// BANKRUPTCY victims to the IF first when it is ACTIVE
+// (IF_FIRST behaviour).
 func (s *LiquidationSuite) freezeInsuranceFund() {
 	insf, err := s.App.PerpAccountKeeper.GetAccount(s.Ctx, perptypes.InsuranceFundOperatorAccountIdx)
 	s.Require().NoError(err)
@@ -314,7 +314,7 @@ func (s *LiquidationSuite) freezeInsuranceFund() {
 	s.Require().NoError(accountkeepertest.SetAccountForTest(s.Ctx, s.App.PerpAccountKeeper, insf))
 }
 
-// TestADLRejectsSameSide verifies the Lighter-style ADL invariant: a
+// TestADLRejectsSameSide verifies the ADL invariant: a
 // counterparty on the SAME side as the victim cannot be used as
 // deleverager. user0 (long victim) attempts to ADL against user2 (also
 // long because we cross them at entry).

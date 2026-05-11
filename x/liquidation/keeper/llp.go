@@ -14,11 +14,11 @@ import (
 	"github.com/perpdex/perpdex-l1/x/liquidation/types"
 )
 
-// tryLLPAbsorb implements the Lighter "LLP picks up positions in
-// ascending order of unrealized PnL, only when doing so keeps the LLP
-// TAV >= IMR" rule. Called once per victim per FULL_LIQUIDATION cycle
-// — it ranks the victim's OWN positions by uPnL and offers the worst
-// (most negative) one to the LLP first.
+// tryLLPAbsorb implements the "LLP picks up positions in ascending
+// order of unrealized PnL, only when doing so keeps the LLP TAV >= IMR"
+// rule. Called once per victim per FULL_LIQUIDATION cycle — it ranks
+// the victim's OWN positions by uPnL and offers the worst (most
+// negative) one to the LLP first.
 //
 // Returns true iff the targeted position was fully absorbed; the
 // caller skips ADL on a true return. False return means the LLP would
@@ -136,10 +136,10 @@ type rankedPosition struct {
 }
 
 // rankVictimPositionsByUPnL returns the victim's non-zero positions
-// sorted by ascending unrealized PnL (worst first), as the Lighter
-// spec requires for LLP takeover. Mark prices are fetched once per
-// distinct MarketIndex encountered and reused; uPnL is derived
-// directly from the iterated position via `pos.UnrealizedPnL(mark)`.
+// sorted by ascending unrealized PnL (worst first), as the spec
+// requires for LLP takeover. Mark prices are fetched once per distinct
+// MarketIndex encountered and reused; uPnL is derived directly from
+// the iterated position via `pos.UnrealizedPnL(mark)`.
 //
 // Ranking does NOT materialise a full risk snapshot per position —
 // only the mark is needed to score uPnL, and a snapshot's extra cross

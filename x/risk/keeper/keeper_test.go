@@ -354,9 +354,9 @@ func TestGetIsolatedHealthStatus_PerMarket(t *testing.T) {
 }
 
 // TestIsValidRiskChangeFrom_PreLiquidationRejectsMMRGrowth verifies
-// the Lighter PRE rule. With pre.MMR snapshotted, a post-state with
-// strictly larger MMR (i.e. account opened a new position) must be
-// rejected even if post is still PRE_LIQUIDATION.
+// the PRE rule. With pre.MMR snapshotted, a post-state with strictly
+// larger MMR (i.e. account opened a new position) must be rejected
+// even if post is still PRE_LIQUIDATION.
 func TestIsValidRiskChangeFrom_PreLiquidationRejectsMMRGrowth(t *testing.T) {
 	ak := stubAccountKeeper{
 		acc: accounttypes.Account{AccountIndex: 1, Collateral: math.NewInt(1_000)},
@@ -411,7 +411,7 @@ func TestIsValidRiskChangeFrom_PreLiquidationRejectsMMRGrowth(t *testing.T) {
 	ok2, err := k.IsValidRiskChangeFrom(ctx, 1, pre)
 	require.NoError(t, err)
 	require.False(t, ok2,
-		"PRE → PRE with larger MMR must be rejected (Lighter no-size-up rule)")
+		"PRE → PRE with larger MMR must be rejected (no-size-up rule)")
 }
 
 // TestIsValidRiskChangeFrom_PreLiquidationAllowsReduceOnly verifies

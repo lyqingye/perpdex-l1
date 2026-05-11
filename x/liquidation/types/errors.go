@@ -12,8 +12,8 @@ var (
 	// ErrInsufficientCollateral is returned by Deleverage / autoADL
 	// when the user-ADL deleverager cannot cover the predicted
 	// realised PnL with available cross / allocated collateral.
-	// Mirrors Lighter `is_deleverager_has_enough_cross_collateral`.
-	// The bankrupt side counterpart (`is_bankrupt_has_enough_cross_
+	// Implements `is_deleverager_has_enough_cross_collateral`. The
+	// bankrupt-side counterpart (`is_bankrupt_has_enough_cross_
 	// collateral`) is intentionally NOT enforced in perpdex — see
 	// `liquidate.go` Deleverage docstring for the rationale.
 	// EndBlocker callers treat this as a graceful "skip this

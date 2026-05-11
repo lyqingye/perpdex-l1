@@ -120,8 +120,8 @@ type MatchingKeeper interface {
 	// is not subject to authority / pool-account / pre-liquidation
 	// gates that user-driven CreateOrder enforces. The matching loop
 	// short-circuits the moment the victim is no longer in
-	// PARTIAL/FULL liquidation health (Lighter parity:
-	// `is_not_in_liquidation_and_is_liquidation_order`).
+	// PARTIAL/FULL liquidation health
+	// (`is_not_in_liquidation_and_is_liquidation_order`).
 	MatchLiquidationOrder(
 		ctx context.Context,
 		victim uint64,

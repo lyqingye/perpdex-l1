@@ -146,7 +146,7 @@ func (s *PerpdexTestSuite) AdvanceBlockBy(d time.Duration) {
 }
 
 // AdvanceBlocksBy advances `n` blocks each spaced by `d`. Equivalent to
-// calling AdvanceBlockBy in a loop, but lighter on test boilerplate.
+// calling AdvanceBlockBy in a loop, but leaner on test boilerplate.
 func (s *PerpdexTestSuite) AdvanceBlocksBy(n int, d time.Duration) {
 	for i := 0; i < n; i++ {
 		s.AdvanceBlockBy(d)
