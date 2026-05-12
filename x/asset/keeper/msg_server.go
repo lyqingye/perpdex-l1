@@ -19,19 +19,31 @@ func NewMsgServerImpl(k Keeper) types.MsgServer { return &msgServer{Keeper: k} }
 
 var _ types.MsgServer = msgServer{}
 
+// ensureAuthority rejects any signer that is not the configured
+// governance module address. Centralised here so all three handlers
+// produce identical, context-bearing error messages.
+func (m msgServer) ensureAuthority(signer string) error {
+	if signer != m.authority {
+		return types.ErrInvalidAuthority.Wrapf("expected %s, got %s", m.authority, signer)
+	}
+	return nil
+}
+
 func (m msgServer) RegisterAsset(ctx context.Context, msg *types.MsgRegisterAsset) (*types.MsgRegisterAssetResponse, error) {
 	if err := msg.ValidateBasic(); err != nil {
 		return nil, err
 	}
-	if msg.Authority != m.authority {
-		return nil, types.ErrInvalidAuthority.Wrapf("expected %s, got %s", m.authority, msg.Authority)
-	}
-	exists, err := m.HasDenom(ctx, msg.Denom)
-	if err != nil {
+	if err := m.ensureAuthority(msg.Authority); err != nil {
 		return nil, err
 	}
-	if exists {
-		return nil, types.ErrAssetExists.Wrapf("denom=%s", msg.Denom)
+
+	// Display-name uniqueness is a business rule (case-folded), not an
+	// index, so it stays in the msg server. Denom + asset_index
+	// uniqueness are enforced atomically by Keeper.CreateAsset below.
+	if nameTaken, err := m.HasDisplayName(ctx, msg.DisplayName); err != nil {
+		return nil, err
+	} else if nameTaken {
+		return nil, types.ErrAssetExists.Wrapf("display_name=%s", msg.DisplayName)
 	}
 
 	params, err := m.Params.Get(ctx)
@@ -43,27 +55,32 @@ func (m msgServer) RegisterAsset(ctx context.Context, msg *types.MsgRegisterAsse
 	if err != nil {
 		return nil, err
 	}
+	// The sequence is normalised at InitGenesis to start at
+	// max(MinAssetIndex, max_seeded_index+1). We refuse rather than
+	// silently bump if a future migration leaves it below the floor —
+	// silent bumps mask state corruption and "leak" indices with no
+	// audit trail.
 	if idx < uint64(perptypes.MinAssetIndex) {
-		// Bootstrap: initial seq is 0, bump until >= MinAssetIndex
-		for idx < uint64(perptypes.MinAssetIndex) {
-			idx, err = m.NextAssetIndex.Next(ctx)
-			if err != nil {
-				return nil, err
-			}
-		}
+		return nil, types.ErrInvalidModuleParams.Wrapf(
+			"next_asset_index=%d below MinAssetIndex=%d; genesis was not normalised",
+			idx, perptypes.MinAssetIndex,
+		)
 	}
 	if idx > uint64(params.MaxAssetIndex) {
 		return nil, types.ErrAssetIndexExceedsMax.Wrapf("got %d, max %d", idx, params.MaxAssetIndex)
 	}
-
-	// USDC <-> margin enabled invariant. We treat display_name == "USDC" or
-	// asset_index == 3 (USDC_ASSET_INDEX) as the USDC binding.
-	isUSDC := msg.DisplayName == "USDC" || uint32(idx) == perptypes.USDCAssetIndex
-	isMarginEnabled := msg.MarginMode == perptypes.MarginModeEnabled
-	if isUSDC != isMarginEnabled {
-		return nil, types.ErrUSDCMarginConstraint
+	// Defensive: the USDC slot is reserved for the genesis seed; if the
+	// sequence ever advanced past it without seeding USDC the allocator
+	// must not hand it out at runtime (which would silently break the
+	// "USDC at index 3" invariant).
+	if uint32(idx) == perptypes.USDCAssetIndex {
+		return nil, types.ErrUSDCMarginConstraint.Wrapf(
+			"asset_index=%d is reserved for the genesis-seeded USDC asset",
+			perptypes.USDCAssetIndex,
+		)
 	}
 
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	asset := types.Asset{
 		AssetIndex:          uint32(idx),
 		Denom:               msg.Denom,
@@ -72,40 +89,66 @@ func (m msgServer) RegisterAsset(ctx context.Context, msg *types.MsgRegisterAsse
 		ExtensionMultiplier: msg.ExtensionMultiplier,
 		MinTransferAmount:   msg.MinTransferAmount,
 		MinWithdrawalAmount: msg.MinWithdrawalAmount,
-		MarginMode:          msg.MarginMode,
+		MarginMode:          msg.MarginMode, // forced to MarginModeDisabled by ValidateBasic
 		Enabled:             true,
-		CreatedAt:           sdk.UnwrapSDKContext(ctx).BlockTime().UnixMilli(),
+		CreatedAt:           sdkCtx.BlockTime().UnixMilli(),
 	}
-	if err := m.SetAsset(ctx, asset); err != nil {
+	if err := m.CreateAsset(ctx, asset); err != nil {
 		return nil, err
 	}
 
-	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
+	sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
 		types.EventTypeAssetRegistered,
-		sdk.NewAttribute(types.AttributeKeyAssetIndex, strconv.FormatUint(uint64(idx), 10)),
-		sdk.NewAttribute(types.AttributeKeyDenom, msg.Denom),
+		sdk.NewAttribute(types.AttributeKeyAssetIndex, strconv.FormatUint(uint64(asset.AssetIndex), 10)),
+		sdk.NewAttribute(types.AttributeKeyDenom, asset.Denom),
+		sdk.NewAttribute(types.AttributeKeyDisplayName, asset.DisplayName),
+		sdk.NewAttribute(types.AttributeKeyDecimals, strconv.FormatUint(uint64(asset.Decimals), 10)),
+		sdk.NewAttribute(types.AttributeKeyExtensionMultiplier, strconv.FormatUint(asset.ExtensionMultiplier, 10)),
+		sdk.NewAttribute(types.AttributeKeyMarginMode, strconv.FormatUint(uint64(asset.MarginMode), 10)),
+		sdk.NewAttribute(types.AttributeKeyMinTransferAmount, strconv.FormatUint(asset.MinTransferAmount, 10)),
+		sdk.NewAttribute(types.AttributeKeyMinWithdrawalAmount, strconv.FormatUint(asset.MinWithdrawalAmount, 10)),
 	))
 
-	return &types.MsgRegisterAssetResponse{AssetIndex: uint32(idx)}, nil
+	return &types.MsgRegisterAssetResponse{AssetIndex: asset.AssetIndex}, nil
 }
 
 func (m msgServer) UpdateAsset(ctx context.Context, msg *types.MsgUpdateAsset) (*types.MsgUpdateAssetResponse, error) {
 	if err := msg.ValidateBasic(); err != nil {
 		return nil, err
 	}
-	if msg.Authority != m.authority {
-		return nil, types.ErrInvalidAuthority
+	if err := m.ensureAuthority(msg.Authority); err != nil {
+		return nil, err
 	}
 	a, err := m.GetAsset(ctx, msg.AssetIndex)
 	if err != nil {
 		return nil, err
 	}
+	// USDC underpins every margin operation; disabling it would freeze
+	// every collateral deposit/withdrawal on the chain. Refuse here so
+	// gov has to take the explicit "halt USDC" code path (not yet
+	// exposed) instead of stumbling into it via a routine update.
+	if msg.AssetIndex == perptypes.USDCAssetIndex && !msg.Enabled {
+		return nil, types.ErrUSDCMarginConstraint.Wrap("USDC must remain enabled")
+	}
+
 	a.MinTransferAmount = msg.MinTransferAmount
 	a.MinWithdrawalAmount = msg.MinWithdrawalAmount
 	a.Enabled = msg.Enabled
-	if err := m.SetAsset(ctx, a); err != nil {
+	// Explicit Keeper.UpdateAsset because msgServer.UpdateAsset (this
+	// method) shadows the promoted Keeper method.
+	if err := m.Keeper.UpdateAsset(ctx, a); err != nil {
 		return nil, err
 	}
+
+	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
+		types.EventTypeAssetUpdated,
+		sdk.NewAttribute(types.AttributeKeyAssetIndex, strconv.FormatUint(uint64(a.AssetIndex), 10)),
+		sdk.NewAttribute(types.AttributeKeyDenom, a.Denom),
+		sdk.NewAttribute(types.AttributeKeyEnabled, strconv.FormatBool(a.Enabled)),
+		sdk.NewAttribute(types.AttributeKeyMinTransferAmount, strconv.FormatUint(a.MinTransferAmount, 10)),
+		sdk.NewAttribute(types.AttributeKeyMinWithdrawalAmount, strconv.FormatUint(a.MinWithdrawalAmount, 10)),
+	))
+
 	return &types.MsgUpdateAssetResponse{}, nil
 }
 
@@ -113,11 +156,17 @@ func (m msgServer) UpdateParams(ctx context.Context, msg *types.MsgUpdateParams)
 	if err := msg.ValidateBasic(); err != nil {
 		return nil, err
 	}
-	if msg.Authority != m.authority {
-		return nil, types.ErrInvalidAuthority
+	if err := m.ensureAuthority(msg.Authority); err != nil {
+		return nil, err
 	}
 	if err := m.Params.Set(ctx, msg.Params); err != nil {
 		return nil, err
 	}
+
+	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
+		types.EventTypeParamsUpdated,
+		sdk.NewAttribute(types.AttributeKeyMaxAssetIndex, strconv.FormatUint(uint64(msg.Params.MaxAssetIndex), 10)),
+	))
+
 	return &types.MsgUpdateParamsResponse{}, nil
 }

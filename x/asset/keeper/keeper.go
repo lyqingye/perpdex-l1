@@ -5,7 +5,6 @@ import (
 
 	"cosmossdk.io/collections"
 	"cosmossdk.io/core/store"
-	"cosmossdk.io/log"
 
 	"github.com/cosmos/cosmos-sdk/codec"
 
@@ -50,8 +49,3 @@ func NewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, authori
 
 // Authority returns the bech32 address allowed to send governance Msg.
 func (k Keeper) Authority() string { return k.authority }
-
-// Logger returns a module-scoped logger.
-func (k Keeper) Logger(ctx interface{ Logger() log.Logger }) log.Logger {
-	return ctx.Logger().With("module", "x/"+types.ModuleName)
-}
