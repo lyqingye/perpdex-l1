@@ -31,7 +31,18 @@ func maxUint64(a, b uint64) uint64 {
 // Deposit converts cosmos coins from the sender into perpdex collateral or
 // spot balance. If the beneficiary has no master account yet, one is created
 // automatically.
+//
+// Every msg_server handler in this module starts with msg.ValidateBasic()
+// as defense-in-depth: the ante handler already runs ValidateBasic for
+// transactions submitted through CometBFT, but keeper-level test
+// callers, governance proposals, and hypothetical cross-module callers
+// can bypass ante. Re-running the stateless check here guarantees the
+// invariants encoded in ValidateBasic are always enforced before any
+// state is touched.
 func (m msgServer) Deposit(ctx context.Context, msg *types.MsgDeposit) (*types.MsgDepositResponse, error) {
+	if err := msg.ValidateBasic(); err != nil {
+		return nil, err
+	}
 	sender, err := sdk.AccAddressFromBech32(msg.Sender)
 	if err != nil {
 		return nil, err
@@ -105,6 +116,9 @@ func (m msgServer) Deposit(ctx context.Context, msg *types.MsgDeposit) (*types.M
 }
 
 func (m msgServer) Withdraw(ctx context.Context, msg *types.MsgWithdraw) (*types.MsgWithdrawResponse, error) {
+	if err := msg.ValidateBasic(); err != nil {
+		return nil, err
+	}
 	if ok, err := m.IsAuthorized(ctx, msg.Sender, msg.AccountIndex); err != nil {
 		return nil, err
 	} else if !ok {
@@ -198,6 +212,9 @@ func (m msgServer) Withdraw(ctx context.Context, msg *types.MsgWithdraw) (*types
 }
 
 func (m msgServer) CreateSubAccount(ctx context.Context, msg *types.MsgCreateSubAccount) (*types.MsgCreateSubAccountResponse, error) {
+	if err := msg.ValidateBasic(); err != nil {
+		return nil, err
+	}
 	master, err := m.GetAccount(ctx, msg.MasterAccountIndex)
 	if err != nil {
 		return nil, err
@@ -223,7 +240,9 @@ func (m msgServer) CreateSubAccount(ctx context.Context, msg *types.MsgCreateSub
 }
 
 func (m msgServer) UpdateAccountConfig(ctx context.Context, msg *types.MsgUpdateAccountConfig) (*types.MsgUpdateAccountConfigResponse, error) {
-	// new_trading_mode enum membership is enforced by ValidateBasic.
+	if err := msg.ValidateBasic(); err != nil {
+		return nil, err
+	}
 	a, err := m.GetAccount(ctx, msg.AccountIndex)
 	if err != nil {
 		return nil, err
@@ -246,7 +265,9 @@ func (m msgServer) UpdateAccountConfig(ctx context.Context, msg *types.MsgUpdate
 }
 
 func (m msgServer) UpdateAccountAssetConfig(ctx context.Context, msg *types.MsgUpdateAccountAssetConfig) (*types.MsgUpdateAccountAssetConfigResponse, error) {
-	// new_margin_mode enum membership is enforced by ValidateBasic.
+	if err := msg.ValidateBasic(); err != nil {
+		return nil, err
+	}
 	a, err := m.GetAccount(ctx, msg.AccountIndex)
 	if err != nil {
 		return nil, err
@@ -270,6 +291,9 @@ func (m msgServer) UpdateAccountAssetConfig(ctx context.Context, msg *types.MsgU
 }
 
 func (m msgServer) Transfer(ctx context.Context, msg *types.MsgTransfer) (*types.MsgTransferResponse, error) {
+	if err := msg.ValidateBasic(); err != nil {
+		return nil, err
+	}
 	if ok, err := m.IsAuthorized(ctx, msg.Sender, msg.FromAccountIndex); err != nil {
 		return nil, err
 	} else if !ok {
@@ -346,6 +370,9 @@ func (m msgServer) Transfer(ctx context.Context, msg *types.MsgTransfer) (*types
 }
 
 func (m msgServer) UpdateMargin(ctx context.Context, msg *types.MsgUpdateMargin) (*types.MsgUpdateMarginResponse, error) {
+	if err := msg.ValidateBasic(); err != nil {
+		return nil, err
+	}
 	if ok, err := m.IsAuthorized(ctx, msg.Sender, msg.AccountIndex); err != nil {
 		return nil, err
 	} else if !ok {
@@ -417,6 +444,9 @@ func (m msgServer) UpdateMargin(ctx context.Context, msg *types.MsgUpdateMargin)
 }
 
 func (m msgServer) UpdateLeverage(ctx context.Context, msg *types.MsgUpdateLeverage) (*types.MsgUpdateLeverageResponse, error) {
+	if err := msg.ValidateBasic(); err != nil {
+		return nil, err
+	}
 	if ok, err := m.IsAuthorized(ctx, msg.Sender, msg.AccountIndex); err != nil {
 		return nil, err
 	} else if !ok {
@@ -459,6 +489,9 @@ func (m msgServer) UpdateLeverage(ctx context.Context, msg *types.MsgUpdateLever
 }
 
 func (m msgServer) UpdateParams(ctx context.Context, msg *types.MsgUpdateParams) (*types.MsgUpdateParamsResponse, error) {
+	if err := msg.ValidateBasic(); err != nil {
+		return nil, err
+	}
 	if msg.Authority != m.authority {
 		return nil, types.ErrInvalidAuthority
 	}

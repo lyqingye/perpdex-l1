@@ -663,3 +663,135 @@ func TestStateChangeEvents_Position(t *testing.T) {
 	require.Equal(t, 1, countEvents(env, &types.EventPositionUpdated{}),
 		"UpdatePosition must emit a single EventPositionUpdated")
 }
+
+// The following tests pin the msg_server defense-in-depth contract:
+// every public handler must call msg.ValidateBasic() on entry so that
+// callers that bypass the SDK ante (keeper-level tests like the ones in
+// this file, governance proposals routed through MsgServiceRouter,
+// future cross-module Msg routers) cannot smuggle malformed messages
+// past the stateless invariants. Each test constructs a message that
+// passes the per-handler state-dependent checks (so any rejection MUST
+// come from ValidateBasic) and asserts the handler returns the
+// expected stateless error without touching state.
+
+const validOwner = "px1qv9pzxqlyckngw6zf9g9whn9d3eh4qvgsxc8cx"
+
+// TestMsgServer_Deposit_RejectsInvalidRoute proves the Deposit handler
+// surfaces ValidateBasic's route-enum check even when called directly
+// from the keeper layer.
+func TestMsgServer_Deposit_RejectsInvalidRoute(t *testing.T) {
+	env := initTestEnv(t)
+	srv := accountkeeper.NewMsgServerImpl(env.ak)
+
+	_, err := srv.Deposit(env.ctx, &types.MsgDeposit{
+		Sender:     validOwner,
+		AssetIndex: perptypes.USDCAssetIndex,
+		Amount:     1_000_000,
+		RouteType:  99, // out of {RouteTypePerps, RouteTypeSpot}
+	})
+	require.ErrorIs(t, err, types.ErrInvalidRoute)
+}
+
+// TestMsgServer_Withdraw_RejectsZeroAmount proves the Withdraw handler
+// runs ValidateBasic before authorization / state lookups so a zero
+// amount is rejected without touching the store.
+func TestMsgServer_Withdraw_RejectsZeroAmount(t *testing.T) {
+	env := initTestEnv(t)
+	srv := accountkeeper.NewMsgServerImpl(env.ak)
+
+	_, err := srv.Withdraw(env.ctx, &types.MsgWithdraw{
+		Sender:       validOwner,
+		AccountIndex: 1234,
+		AssetIndex:   perptypes.USDCAssetIndex,
+		Amount:       0,
+		RouteType:    perptypes.RouteTypePerps,
+	})
+	require.ErrorIs(t, err, types.ErrAmountTooSmall)
+}
+
+// TestMsgServer_Transfer_RejectsSameAccount proves the Transfer
+// handler rejects from == to via ValidateBasic before any pool /
+// authorization checks run.
+func TestMsgServer_Transfer_RejectsSameAccount(t *testing.T) {
+	env := initTestEnv(t)
+	srv := accountkeeper.NewMsgServerImpl(env.ak)
+
+	_, err := srv.Transfer(env.ctx, &types.MsgTransfer{
+		Sender:           validOwner,
+		FromAccountIndex: 4242,
+		ToAccountIndex:   4242,
+		AssetIndex:       perptypes.USDCAssetIndex,
+		Amount:           1_000,
+	})
+	require.ErrorIs(t, err, types.ErrInvalidParams)
+}
+
+// TestMsgServer_UpdateMargin_RejectsInvalidAction proves the
+// UpdateMargin handler enforces the Action enum guard from
+// ValidateBasic at the keeper-call layer.
+func TestMsgServer_UpdateMargin_RejectsInvalidAction(t *testing.T) {
+	env := initTestEnv(t)
+	srv := accountkeeper.NewMsgServerImpl(env.ak)
+
+	_, err := srv.UpdateMargin(env.ctx, &types.MsgUpdateMargin{
+		Sender:       validOwner,
+		AccountIndex: 9001,
+		MarketIndex:  0,
+		Action:       99, // not in {AddMargin, RemoveMargin}
+		Amount:       math.NewInt(100),
+	})
+	require.ErrorIs(t, err, types.ErrInvalidMarginAction)
+}
+
+// TestMsgServer_UpdateLeverage_RejectsIMFAboveTick proves the
+// UpdateLeverage handler enforces the MarginTick upper bound at the
+// keeper-call layer (the per-market floor still requires
+// MarketKeeper and is exercised by other tests).
+func TestMsgServer_UpdateLeverage_RejectsIMFAboveTick(t *testing.T) {
+	env := initTestEnv(t)
+	srv := accountkeeper.NewMsgServerImpl(env.ak)
+
+	_, err := srv.UpdateLeverage(env.ctx, &types.MsgUpdateLeverage{
+		Sender:                   validOwner,
+		AccountIndex:             9002,
+		MarketIndex:              0,
+		NewMarginMode:            perptypes.CrossMargin,
+		NewInitialMarginFraction: uint32(perptypes.MarginTick) + 1,
+	})
+	require.ErrorIs(t, err, types.ErrInvalidParams)
+}
+
+// TestMsgServer_CreatePublicPool_RejectsZeroShares proves the
+// CreatePublicPool handler enforces InitialTotalShares > 0 from
+// ValidateBasic at the keeper-call layer.
+func TestMsgServer_CreatePublicPool_RejectsZeroShares(t *testing.T) {
+	env := initTestEnv(t)
+	srv := accountkeeper.NewMsgServerImpl(env.ak)
+
+	_, err := srv.CreatePublicPool(env.ctx, &types.MsgCreatePublicPool{
+		Sender:               validOwner,
+		MasterAccountIndex:   8200,
+		AccountType:          perptypes.PublicPoolAccountType,
+		OperatorFee:          0,
+		MinOperatorShareRate: 0,
+		InitialTotalShares:   0, // ValidateBasic floor.
+	})
+	require.ErrorIs(t, err, types.ErrInvalidParams)
+}
+
+// TestMsgServer_UpdatePublicPool_RejectsInvalidStatus proves the
+// UpdatePublicPool handler enforces the NewStatus enum from
+// ValidateBasic at the keeper-call layer.
+func TestMsgServer_UpdatePublicPool_RejectsInvalidStatus(t *testing.T) {
+	env := initTestEnv(t)
+	srv := accountkeeper.NewMsgServerImpl(env.ak)
+
+	_, err := srv.UpdatePublicPool(env.ctx, &types.MsgUpdatePublicPool{
+		Sender:                  validOwner,
+		PoolAccountIndex:        8300,
+		NewStatus:               42,
+		NewOperatorFee:          0,
+		NewMinOperatorShareRate: 0,
+	})
+	require.ErrorIs(t, err, types.ErrInvalidPoolUpdate)
+}
