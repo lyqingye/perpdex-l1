@@ -25,14 +25,20 @@ import (
 )
 
 // SetAccountForTest writes `a` directly to the Accounts collection
-// and (when applicable) maintains the OwnerToIndex pointer, mirroring
-// the legacy `SetAccount` semantics that x/account no longer exposes.
+// and (when applicable) maintains the OwnerToIndex pointer +
+// MasterSubAccounts index, mirroring the legacy `SetAccount` semantics
+// that x/account no longer exposes.
 func SetAccountForTest(ctx context.Context, k accountkeeper.Keeper, a types.Account) error {
 	if err := k.Accounts.Set(ctx, a.AccountIndex, a); err != nil {
 		return err
 	}
 	if a.OwnerAddress != "" && a.AccountType == perptypes.MasterAccountType {
 		if err := k.OwnerToIndex.Set(ctx, a.OwnerAddress, a.AccountIndex); err != nil {
+			return err
+		}
+	}
+	if a.AccountType != perptypes.MasterAccountType && a.MasterAccountIndex != perptypes.NilMasterAccountIndex {
+		if err := k.MasterSubAccounts.Set(ctx, collections.Join(a.MasterAccountIndex, a.AccountIndex)); err != nil {
 			return err
 		}
 	}

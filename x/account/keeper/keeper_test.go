@@ -257,3 +257,264 @@ func TestUpdateLeverage_RejectsBelowMarketMinIMF(t *testing.T) {
 	})
 	require.ErrorIs(t, err, types.ErrInvalidParams)
 }
+
+// internalAmount converts an external USDC base amount (6 decimals) to the
+// internal collateral-precision delta used by spot AccountAsset rows.
+func internalAmount(externalAmount uint64) math.Int {
+	return math.NewIntFromUint64(externalAmount).
+		Mul(math.NewIntFromUint64(perptypes.USDCToCollateralMultiplier))
+}
+
+// TestWithdraw_RespectsSpotLock validates that the spot Withdraw path
+// cannot drain a balance below the resting LockedBalance reservation
+// (audit H1: AddAccountAssetBalance must enforce Available on debit).
+func TestWithdraw_RespectsSpotLock(t *testing.T) {
+	env := initTestEnv(t)
+	srv := accountkeeper.NewMsgServerImpl(env.ak)
+
+	owner := "px1qv9pzxqlyckngw6zf9g9whn9d3eh4qvgsxc8cx"
+	require.NoError(t, keepertest.SetAccountForTest(env.ctx, env.ak, types.Account{
+		AccountIndex: 1001,
+		OwnerAddress: owner,
+		AccountType:  perptypes.MasterAccountType,
+		Collateral:   math.ZeroInt(),
+	}))
+	// Set spot row with Balance large enough to satisfy minimum but
+	// LockedBalance leaving only 5M USDC available, well under the
+	// 10M minimum withdrawal. Without H1 the debit would succeed and
+	// leave Balance < LockedBalance.
+	require.NoError(t, keepertest.SetAccountAssetForTest(env.ctx, env.ak, types.AccountAsset{
+		AccountIndex:  1001,
+		AssetIndex:    perptypes.USDCAssetIndex,
+		Balance:       internalAmount(15_000_000),
+		LockedBalance: internalAmount(10_000_000),
+		MarginMode:    perptypes.MarginModeEnabled,
+	}))
+
+	_, err := srv.Withdraw(env.ctx, &types.MsgWithdraw{
+		Sender:       owner,
+		AccountIndex: 1001,
+		AssetIndex:   perptypes.USDCAssetIndex,
+		Amount:       10_000_000,
+		RouteType:    perptypes.RouteTypeSpot,
+	})
+	require.ErrorIs(t, err, types.ErrInsufficientFunds)
+}
+
+// TestAddAccountAssetBalance_RespectsLock isolates H1: a negative
+// delta cannot drain Balance below the resting LockedBalance, even
+// though the post-state Balance would still be non-negative. This is
+// the invariant that protects spot Withdraw / Transfer from raiding
+// resting spot order locks.
+func TestAddAccountAssetBalance_RespectsLock(t *testing.T) {
+	env := initTestEnv(t)
+
+	require.NoError(t, keepertest.SetAccountAssetForTest(env.ctx, env.ak, types.AccountAsset{
+		AccountIndex:  2001,
+		AssetIndex:    perptypes.USDCAssetIndex,
+		Balance:       internalAmount(20),
+		LockedBalance: internalAmount(15),
+		MarginMode:    perptypes.MarginModeDisabled,
+	}))
+	require.ErrorIs(t,
+		env.ak.AddAccountAssetBalance(env.ctx, 2001, perptypes.USDCAssetIndex, internalAmount(10).Neg()),
+		types.ErrInsufficientFunds,
+	)
+	// Withdrawing within Available succeeds.
+	require.NoError(t,
+		env.ak.AddAccountAssetBalance(env.ctx, 2001, perptypes.USDCAssetIndex, internalAmount(5).Neg()),
+	)
+}
+
+// TestWithdraw_RespectsParamsMin proves the module-level Params floor
+// is now actually consulted on Withdraw (audit M1).
+func TestWithdraw_RespectsParamsMin(t *testing.T) {
+	env := initTestEnv(t)
+	srv := accountkeeper.NewMsgServerImpl(env.ak)
+
+	owner := "px1qv9pzxqlyckngw6zf9g9whn9d3eh4qvgsxc8cx"
+	require.NoError(t, keepertest.SetAccountForTest(env.ctx, env.ak, types.Account{
+		AccountIndex: 3001,
+		OwnerAddress: owner,
+		AccountType:  perptypes.MasterAccountType,
+		Collateral:   internalAmount(1_000_000_000),
+	}))
+	// Inflate the module-level minimum well above the asset min so the
+	// post-fix branch fires.
+	require.NoError(t, env.ak.Params.Set(env.ctx, types.Params{
+		MinPartialTransferAmount:      perptypes.MinPartialTransferAmount,
+		MinPartialWithdrawAmount:      perptypes.MinPartialWithdrawAmount * 5,
+		LiquidityPoolIndex:            perptypes.InsuranceFundOperatorAccountIdx,
+		LiquidityPoolCooldownPeriodMs: perptypes.DefaultLLPCooldownPeriodMs,
+	}))
+
+	_, err := srv.Withdraw(env.ctx, &types.MsgWithdraw{
+		Sender:       owner,
+		AccountIndex: 3001,
+		AssetIndex:   perptypes.USDCAssetIndex,
+		Amount:       perptypes.MinPartialWithdrawAmount * 2, // above asset min but below new params min
+		RouteType:    perptypes.RouteTypePerps,
+	})
+	require.ErrorIs(t, err, types.ErrAmountTooSmall)
+}
+
+// TestTransfer_RespectsParamsMin proves Transfer now enforces a
+// minimum amount (audit M2 + M1).
+func TestTransfer_RespectsParamsMin(t *testing.T) {
+	env := initTestEnv(t)
+	srv := accountkeeper.NewMsgServerImpl(env.ak)
+
+	owner := "px1qv9pzxqlyckngw6zf9g9whn9d3eh4qvgsxc8cx"
+	require.NoError(t, keepertest.SetAccountForTest(env.ctx, env.ak, types.Account{
+		AccountIndex: 4001,
+		OwnerAddress: owner,
+		AccountType:  perptypes.MasterAccountType,
+		Collateral:   internalAmount(1_000_000_000),
+	}))
+	require.NoError(t, keepertest.SetAccountForTest(env.ctx, env.ak, types.Account{
+		AccountIndex: 4002,
+		OwnerAddress: owner,
+		AccountType:  perptypes.MasterAccountType,
+		Collateral:   math.ZeroInt(),
+	}))
+
+	_, err := srv.Transfer(env.ctx, &types.MsgTransfer{
+		Sender:           owner,
+		FromAccountIndex: 4001,
+		ToAccountIndex:   4002,
+		AssetIndex:       perptypes.USDCAssetIndex,
+		Amount:           1, // way below MinPartialTransferAmount
+	})
+	require.ErrorIs(t, err, types.ErrAmountTooSmall)
+}
+
+// TestIsAuthorized_RejectsEmptyOwner ensures owner-less genesis accounts
+// (treasury / IF) cannot be matched by an empty signer (audit M6).
+func TestIsAuthorized_RejectsEmptyOwner(t *testing.T) {
+	env := initTestEnv(t)
+
+	require.NoError(t, keepertest.SetAccountForTest(env.ctx, env.ak, types.Account{
+		AccountIndex: 9999,
+		OwnerAddress: "",
+		AccountType:  perptypes.MasterAccountType,
+	}))
+
+	ok, err := env.ak.IsAuthorized(env.ctx, "", 9999)
+	require.NoError(t, err)
+	require.False(t, ok)
+	// Sanity: a non-empty signer also fails on an owner-less row.
+	ok, err = env.ak.IsAuthorized(env.ctx, "px1someaddr", 9999)
+	require.NoError(t, err)
+	require.False(t, ok)
+}
+
+// TestSubAccounts_UsesSecondaryIndex confirms the SubAccounts query is
+// populated via the master->sub keyset rather than scanning every
+// account (audit M4).
+func TestSubAccounts_UsesSecondaryIndex(t *testing.T) {
+	env := initTestEnv(t)
+	srv := accountkeeper.NewQuerier(env.ak)
+
+	// Wire two masters with non-overlapping sub-accounts and validate
+	// the query only returns the requested master's children.
+	owner := "px1qv9pzxqlyckngw6zf9g9whn9d3eh4qvgsxc8cx"
+	const masterA, masterB uint64 = 5001, 5002
+	require.NoError(t, keepertest.SetAccountForTest(env.ctx, env.ak, types.Account{
+		AccountIndex: masterA, OwnerAddress: owner, AccountType: perptypes.MasterAccountType,
+	}))
+	require.NoError(t, keepertest.SetAccountForTest(env.ctx, env.ak, types.Account{
+		AccountIndex: masterB, OwnerAddress: owner, AccountType: perptypes.MasterAccountType,
+	}))
+	for _, sub := range []uint64{6001, 6002, 6003} {
+		require.NoError(t, keepertest.SetAccountForTest(env.ctx, env.ak, types.Account{
+			AccountIndex:       sub,
+			MasterAccountIndex: masterA,
+			OwnerAddress:       owner,
+			AccountType:        perptypes.SubAccountType,
+		}))
+	}
+	require.NoError(t, keepertest.SetAccountForTest(env.ctx, env.ak, types.Account{
+		AccountIndex:       7001,
+		MasterAccountIndex: masterB,
+		OwnerAddress:       owner,
+		AccountType:        perptypes.SubAccountType,
+	}))
+
+	resp, err := srv.SubAccounts(env.ctx, &types.QuerySubAccountsRequest{MasterAccountIndex: masterA})
+	require.NoError(t, err)
+	require.Len(t, resp.Accounts, 3)
+	for _, a := range resp.Accounts {
+		require.Equal(t, masterA, a.MasterAccountIndex)
+	}
+}
+
+// TestMintShares_BlockedByRiskRegression verifies the master's
+// post-state risk is enforced on MintShares (audit H2).
+func TestMintShares_BlockedByRiskRegression(t *testing.T) {
+	env := initTestEnv(t)
+	srv := accountkeeper.NewMsgServerImpl(env.ak)
+
+	owner := "px1qv9pzxqlyckngw6zf9g9whn9d3eh4qvgsxc8cx"
+	const masterIdx uint64 = 8001
+	require.NoError(t, keepertest.SetAccountForTest(env.ctx, env.ak, types.Account{
+		AccountIndex: masterIdx,
+		OwnerAddress: owner,
+		AccountType:  perptypes.MasterAccountType,
+		Collateral:   internalAmount(1_000_000_000),
+	}))
+	// Seed a public pool with non-zero total shares so USDCValueToShares
+	// uses the NAV branch (which calls riskKeeper.GetTotalAccountValue).
+	require.NoError(t, keepertest.SetAccountForTest(env.ctx, env.ak, types.Account{
+		AccountIndex:       9001,
+		MasterAccountIndex: masterIdx,
+		OwnerAddress:       owner,
+		AccountType:        perptypes.PublicPoolAccountType,
+		Collateral:         internalAmount(1_000),
+		PublicPoolInfo: &types.PublicPoolInfo{
+			Status:               perptypes.PublicPoolStatusActive,
+			OperatorFee:          0,
+			MinOperatorShareRate: 0,
+			TotalShares:          math.ZeroInt(),
+			OperatorShares:       math.ZeroInt(),
+			Strategies:           make([]math.Int, perptypes.NbStrategies),
+		},
+	}))
+	// Mark fakeRiskKeeper as risky so the post-mint risk check rejects.
+	env.risk.risky = true
+
+	_, err := srv.MintShares(env.ctx, &types.MsgMintShares{
+		Sender:           owner,
+		PoolAccountIndex: 9001,
+		PrincipalAmount:  1_000_000,
+	})
+	require.ErrorIs(t, err, types.ErrRiskRegression)
+}
+
+// TestCreatePublicPool_BlockedByRiskRegression mirrors the above for
+// the pool-creation seed transfer (audit H2).
+func TestCreatePublicPool_BlockedByRiskRegression(t *testing.T) {
+	env := initTestEnv(t)
+	srv := accountkeeper.NewMsgServerImpl(env.ak)
+
+	owner := "px1qv9pzxqlyckngw6zf9g9whn9d3eh4qvgsxc8cx"
+	const masterIdx uint64 = 8101
+	// Master pays initial_total_shares * INITIAL_POOL_SHARE_VALUE *
+	// USDC_TO_COLLATERAL = 10 * 1000 * 1_000_000 = 10_000_000_000.
+	require.NoError(t, keepertest.SetAccountForTest(env.ctx, env.ak, types.Account{
+		AccountIndex: masterIdx,
+		OwnerAddress: owner,
+		AccountType:  perptypes.MasterAccountType,
+		Collateral:   internalAmount(1_000_000_000),
+	}))
+	env.risk.risky = true
+
+	_, err := srv.CreatePublicPool(env.ctx, &types.MsgCreatePublicPool{
+		Sender:               owner,
+		MasterAccountIndex:   masterIdx,
+		AccountType:          perptypes.PublicPoolAccountType,
+		OperatorFee:          0,
+		MinOperatorShareRate: 0,
+		InitialTotalShares:   10,
+	})
+	require.ErrorIs(t, err, types.ErrRiskRegression)
+}

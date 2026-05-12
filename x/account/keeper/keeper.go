@@ -35,6 +35,12 @@ type Keeper struct {
 	AccountMetas     collections.Map[uint64, types.AccountMeta]
 	NextMasterIndex  collections.Sequence
 	NextSubIndex     collections.Sequence
+	// MasterSubAccounts is a (masterIdx, subIdx) -> () keyset so the
+	// SubAccounts query can scan only the master's range instead of
+	// the entire Accounts table. The Accounts row remains the source
+	// of truth; this collection is rebuilt from genesis on import and
+	// maintained by setAccount on every sub-account write.
+	MasterSubAccounts collections.KeySet[collections.Pair[uint64, uint64]]
 }
 
 // NewKeeper builds the x/account Keeper.
@@ -62,6 +68,12 @@ func NewKeeper(
 		AccountMetas:     collections.NewMap(sb, types.AccountMetaKey, "account_metas", collections.Uint64Key, codec.CollValue[types.AccountMeta](cdc)),
 		NextMasterIndex:  collections.NewSequence(sb, types.NextMasterIndexKey, "next_master_index"),
 		NextSubIndex:     collections.NewSequence(sb, types.NextSubIndexKey, "next_sub_index"),
+		MasterSubAccounts: collections.NewKeySet(
+			sb,
+			types.MasterSubLinkKey,
+			"master_sub_accounts",
+			collections.PairKeyCodec(collections.Uint64Key, collections.Uint64Key),
+		),
 	}
 
 	schema, err := sb.Build()

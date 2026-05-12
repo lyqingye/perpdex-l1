@@ -18,6 +18,16 @@ func NewMsgServerImpl(k Keeper) types.MsgServer { return &msgServer{Keeper: k} }
 
 var _ types.MsgServer = msgServer{}
 
+// maxUint64 returns the larger of two uint64 values. Used to combine
+// asset-level and module-Params-level minimum amounts so that whichever
+// floor is higher actually gates the message.
+func maxUint64(a, b uint64) uint64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 // Deposit converts cosmos coins from the sender into perpdex collateral or
 // spot balance. If the beneficiary has no master account yet, one is created
 // automatically.
@@ -51,8 +61,13 @@ func (m msgServer) Deposit(ctx context.Context, msg *types.MsgDeposit) (*types.M
 		return nil, types.ErrInvalidRoute
 	}
 
-	if msg.Amount < asset.MinTransferAmount {
-		return nil, types.ErrAmountTooSmall.Wrapf("amount=%d min=%d", msg.Amount, asset.MinTransferAmount)
+	params, err := m.Params.Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	minDeposit := maxUint64(asset.MinTransferAmount, params.MinPartialTransferAmount)
+	if msg.Amount < minDeposit {
+		return nil, types.ErrAmountTooSmall.Wrapf("amount=%d min=%d", msg.Amount, minDeposit)
 	}
 
 	// Pull the coin into the module account.
@@ -108,20 +123,13 @@ func (m msgServer) Withdraw(ctx context.Context, msg *types.MsgWithdraw) (*types
 	if !asset.Enabled {
 		return nil, types.ErrAssetDisabled
 	}
-	if msg.Amount < asset.MinWithdrawalAmount {
-		return nil, types.ErrAmountTooSmall
-	}
-	// Settle pending funding on all non-zero positions so the post-state
-	// risk check sees the up-to-date collateral/entry_quote.
-	if err := m.settleAllPositionFunding(ctx, msg.AccountIndex); err != nil {
-		return nil, err
-	}
-	// Capture pre-state risk so requireRiskOKFrom can enforce the
-	// "strict improvement" rule for accounts that are already
-	// unhealthy (e.g. returning collateral to a HEALTHY state).
-	pre, err := m.snapshotPreRisk(ctx, msg.AccountIndex)
+	params, err := m.Params.Get(ctx)
 	if err != nil {
 		return nil, err
+	}
+	minWithdraw := maxUint64(asset.MinWithdrawalAmount, params.MinPartialWithdrawAmount)
+	if msg.Amount < minWithdraw {
+		return nil, types.ErrAmountTooSmall.Wrapf("amount=%d min=%d", msg.Amount, minWithdraw)
 	}
 
 	// Internal precision delta to subtract.
@@ -134,19 +142,35 @@ func (m msgServer) Withdraw(ctx context.Context, msg *types.MsgWithdraw) (*types
 		if asset.MarginMode != perptypes.MarginModeEnabled {
 			return nil, types.ErrAssetNotMargin
 		}
+		// Settle pending funding on all non-zero positions so the post-state
+		// risk check sees the up-to-date collateral/entry_quote. Only the
+		// perps route consumes/affects the collateral bucket on which risk
+		// is computed; spot withdrawals never touch margin, so we skip the
+		// funding sweep on that path.
+		if err := m.settleAllPositionFunding(ctx, msg.AccountIndex); err != nil {
+			return nil, err
+		}
+		// Capture pre-state risk so requireRiskOKFrom can enforce the
+		// "strict improvement" rule for accounts that are already
+		// unhealthy (e.g. returning collateral to a HEALTHY state).
+		pre, err := m.snapshotPreRisk(ctx, msg.AccountIndex)
+		if err != nil {
+			return nil, err
+		}
 		if err := m.AddCollateral(ctx, msg.AccountIndex, delta.Neg()); err != nil {
 			return nil, err
 		}
+		if err := m.requireRiskOKFrom(ctx, msg.AccountIndex, pre); err != nil {
+			return nil, err
+		}
 	case perptypes.RouteTypeSpot:
+		// Spot withdrawals never touch margin/positions. AddAccountAssetBalance
+		// enforces Available >= |delta| so resting spot locks are honoured.
 		if err := m.AddAccountAssetBalance(ctx, msg.AccountIndex, msg.AssetIndex, delta.Neg()); err != nil {
 			return nil, err
 		}
 	default:
 		return nil, types.ErrInvalidRoute
-	}
-
-	if err := m.requireRiskOKFrom(ctx, msg.AccountIndex, pre); err != nil {
-		return nil, err
 	}
 
 	dest, err := sdk.AccAddressFromBech32(msg.Sender)
@@ -163,6 +187,14 @@ func (m msgServer) Withdraw(ctx context.Context, msg *types.MsgWithdraw) (*types
 	if err := m.bankKeeper.SendCoinsFromModuleToAccount(ctx, types.ModuleName, dest, sdk.NewCoins(coin)); err != nil {
 		return nil, err
 	}
+
+	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
+		types.EventTypeWithdraw,
+		sdk.NewAttribute(types.AttributeKeyAccountIndex, strconv.FormatUint(msg.AccountIndex, 10)),
+		sdk.NewAttribute(types.AttributeKeyAssetIndex, strconv.FormatUint(uint64(msg.AssetIndex), 10)),
+		sdk.NewAttribute(types.AttributeKeyAmount, strconv.FormatUint(msg.Amount, 10)),
+		sdk.NewAttribute(types.AttributeKeyRoute, strconv.FormatUint(uint64(msg.RouteType), 10)),
+	))
 	return &types.MsgWithdrawResponse{}, nil
 }
 
@@ -183,6 +215,11 @@ func (m msgServer) CreateSubAccount(ctx context.Context, msg *types.MsgCreateSub
 	if err != nil {
 		return nil, err
 	}
+	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
+		types.EventTypeCreateSubAccount,
+		sdk.NewAttribute(types.AttributeKeyMasterAccountIndex, strconv.FormatUint(master.AccountIndex, 10)),
+		sdk.NewAttribute(types.AttributeKeySubAccountIndex, strconv.FormatUint(sub.AccountIndex, 10)),
+	))
 	return &types.MsgCreateSubAccountResponse{SubAccountIndex: sub.AccountIndex}, nil
 }
 
@@ -203,6 +240,11 @@ func (m msgServer) UpdateAccountConfig(ctx context.Context, msg *types.MsgUpdate
 	if err := m.UpdateAccountTradingMode(ctx, a.AccountIndex, msg.NewTradingMode); err != nil {
 		return nil, err
 	}
+	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
+		types.EventTypeUpdateAccountConfig,
+		sdk.NewAttribute(types.AttributeKeyAccountIndex, strconv.FormatUint(a.AccountIndex, 10)),
+		sdk.NewAttribute(types.AttributeKeyTradingMode, strconv.FormatUint(uint64(msg.NewTradingMode), 10)),
+	))
 	return &types.MsgUpdateAccountConfigResponse{}, nil
 }
 
@@ -224,6 +266,12 @@ func (m msgServer) UpdateAccountAssetConfig(ctx context.Context, msg *types.MsgU
 	if err := m.SetAccountAssetMarginMode(ctx, msg.AccountIndex, msg.AssetIndex, msg.NewMarginMode); err != nil {
 		return nil, err
 	}
+	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
+		types.EventTypeUpdateAccountAssetConfig,
+		sdk.NewAttribute(types.AttributeKeyAccountIndex, strconv.FormatUint(a.AccountIndex, 10)),
+		sdk.NewAttribute(types.AttributeKeyAssetIndex, strconv.FormatUint(uint64(msg.AssetIndex), 10)),
+		sdk.NewAttribute(types.AttributeKeyMarginMode, strconv.FormatUint(uint64(msg.NewMarginMode), 10)),
+	))
 	return &types.MsgUpdateAccountAssetConfigResponse{}, nil
 }
 
@@ -249,27 +297,42 @@ func (m msgServer) Transfer(ctx context.Context, msg *types.MsgTransfer) (*types
 	if !asset.Enabled {
 		return nil, types.ErrAssetDisabled
 	}
-	// Settle pending funding on the sender (the account whose risk we check)
-	// so the post-state risk uses the up-to-date collateral / entry_quote.
-	if err := m.settleAllPositionFunding(ctx, msg.FromAccountIndex); err != nil {
-		return nil, err
-	}
-	pre, err := m.snapshotPreRisk(ctx, msg.FromAccountIndex)
+	params, err := m.Params.Get(ctx)
 	if err != nil {
 		return nil, err
+	}
+	minTransfer := maxUint64(asset.MinTransferAmount, params.MinPartialTransferAmount)
+	if msg.Amount < minTransfer {
+		return nil, types.ErrAmountTooSmall.Wrapf("amount=%d min=%d", msg.Amount, minTransfer)
 	}
 	delta := math.NewIntFromUint64(msg.Amount).Mul(math.NewIntFromUint64(asset.ExtensionMultiplier))
 
 	// We move USDC-style collateral when the asset is margin-enabled, else the
 	// spot balance row.
 	if asset.MarginMode == perptypes.MarginModeEnabled {
+		// Margin-enabled assets settle through the collateral bucket so the
+		// transfer can change perp risk on the sender. Settle pending
+		// funding + snapshot pre-risk before mutating collateral.
+		if err := m.settleAllPositionFunding(ctx, msg.FromAccountIndex); err != nil {
+			return nil, err
+		}
+		pre, err := m.snapshotPreRisk(ctx, msg.FromAccountIndex)
+		if err != nil {
+			return nil, err
+		}
 		if err := m.AddCollateral(ctx, msg.FromAccountIndex, delta.Neg()); err != nil {
 			return nil, err
 		}
 		if err := m.AddCollateral(ctx, msg.ToAccountIndex, delta); err != nil {
 			return nil, err
 		}
+		if err := m.requireRiskOKFrom(ctx, msg.FromAccountIndex, pre); err != nil {
+			return nil, err
+		}
 	} else {
+		// Spot-only assets never affect perp risk; skip the funding /
+		// risk sweep. AddAccountAssetBalance enforces Available >= |delta|
+		// so resting locks remain honoured.
 		if err := m.AddAccountAssetBalance(ctx, msg.FromAccountIndex, msg.AssetIndex, delta.Neg()); err != nil {
 			return nil, err
 		}
@@ -278,9 +341,13 @@ func (m msgServer) Transfer(ctx context.Context, msg *types.MsgTransfer) (*types
 		}
 	}
 
-	if err := m.requireRiskOKFrom(ctx, msg.FromAccountIndex, pre); err != nil {
-		return nil, err
-	}
+	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
+		types.EventTypeTransfer,
+		sdk.NewAttribute(types.AttributeKeyFromAccountIndex, strconv.FormatUint(msg.FromAccountIndex, 10)),
+		sdk.NewAttribute(types.AttributeKeyToAccountIndex, strconv.FormatUint(msg.ToAccountIndex, 10)),
+		sdk.NewAttribute(types.AttributeKeyAssetIndex, strconv.FormatUint(uint64(msg.AssetIndex), 10)),
+		sdk.NewAttribute(types.AttributeKeyAmount, strconv.FormatUint(msg.Amount, 10)),
+	))
 	return &types.MsgTransferResponse{}, nil
 }
 
@@ -350,6 +417,13 @@ func (m msgServer) UpdateMargin(ctx context.Context, msg *types.MsgUpdateMargin)
 	if err := m.requireRiskOKFrom(ctx, msg.AccountIndex, pre); err != nil {
 		return nil, err
 	}
+	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
+		types.EventTypeUpdateMargin,
+		sdk.NewAttribute(types.AttributeKeyAccountIndex, strconv.FormatUint(msg.AccountIndex, 10)),
+		sdk.NewAttribute(types.AttributeKeyMarketIndex, strconv.FormatUint(uint64(msg.MarketIndex), 10)),
+		sdk.NewAttribute(types.AttributeKeyAction, strconv.FormatUint(uint64(msg.Action), 10)),
+		sdk.NewAttribute(types.AttributeKeyAmount, amount.String()),
+	))
 	return &types.MsgUpdateMarginResponse{}, nil
 }
 
@@ -393,6 +467,13 @@ func (m msgServer) UpdateLeverage(ctx context.Context, msg *types.MsgUpdateLever
 	if err := m.SetPositionLeverage(ctx, msg.AccountIndex, msg.MarketIndex, msg.NewMarginMode, msg.NewInitialMarginFraction); err != nil {
 		return nil, err
 	}
+	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
+		types.EventTypeUpdateLeverage,
+		sdk.NewAttribute(types.AttributeKeyAccountIndex, strconv.FormatUint(msg.AccountIndex, 10)),
+		sdk.NewAttribute(types.AttributeKeyMarketIndex, strconv.FormatUint(uint64(msg.MarketIndex), 10)),
+		sdk.NewAttribute(types.AttributeKeyMarginMode, strconv.FormatUint(uint64(msg.NewMarginMode), 10)),
+		sdk.NewAttribute(types.AttributeKeyInitialMarginFraction, strconv.FormatUint(uint64(msg.NewInitialMarginFraction), 10)),
+	))
 	return &types.MsgUpdateLeverageResponse{}, nil
 }
 

@@ -36,13 +36,37 @@ func (k Keeper) GetAccount(ctx context.Context, idx uint64) (types.Account, erro
 // the cohesive methods; the primitive is intentionally unexported to
 // prevent drive-by upserts that bypass invariants and event emission.
 //
+// The OwnerToIndex write is conditioned on the current pointer being
+// missing or stale so idempotent master updates (e.g. AddCollateral on
+// an existing master) don't repeatedly rewrite the same value. The
+// MasterSubAccounts index is kept in sync here for sub/pool accounts so
+// per-master queries can iterate a prefix instead of scanning the
+// entire Accounts table.
+//
 // TODO(events): emit AccountUpdated here once the event schema lands.
 func (k Keeper) setAccount(ctx context.Context, a types.Account) error {
 	if err := k.Accounts.Set(ctx, a.AccountIndex, a); err != nil {
 		return err
 	}
 	if a.OwnerAddress != "" && a.AccountType == perptypes.MasterAccountType {
-		if err := k.OwnerToIndex.Set(ctx, a.OwnerAddress, a.AccountIndex); err != nil {
+		cur, err := k.OwnerToIndex.Get(ctx, a.OwnerAddress)
+		switch {
+		case err == nil:
+			if cur != a.AccountIndex {
+				if err := k.OwnerToIndex.Set(ctx, a.OwnerAddress, a.AccountIndex); err != nil {
+					return err
+				}
+			}
+		case errors.Is(err, collections.ErrNotFound):
+			if err := k.OwnerToIndex.Set(ctx, a.OwnerAddress, a.AccountIndex); err != nil {
+				return err
+			}
+		default:
+			return err
+		}
+	}
+	if a.AccountType != perptypes.MasterAccountType && a.MasterAccountIndex != perptypes.NilMasterAccountIndex {
+		if err := k.MasterSubAccounts.Set(ctx, collections.Join(a.MasterAccountIndex, a.AccountIndex)); err != nil {
 			return err
 		}
 	}
@@ -84,11 +108,12 @@ func (k Keeper) EnsureMasterAccount(ctx context.Context, owner sdk.AccAddress) (
 		return types.Account{}, err
 	}
 	if idx < perptypes.FirstUserMasterAccountIndex {
-		for idx < perptypes.FirstUserMasterAccountIndex {
-			idx, err = k.NextMasterIndex.Next(ctx)
-			if err != nil {
-				return types.Account{}, err
-			}
+		// Sequence is below the reserved floor (only reachable if
+		// genesis was skipped). Skip the wasted Next() loop and jump
+		// the counter straight to the floor in a single write.
+		idx = perptypes.FirstUserMasterAccountIndex
+		if err := k.NextMasterIndex.Set(ctx, idx+1); err != nil {
+			return types.Account{}, err
 		}
 	}
 	if idx > perptypes.MaxMasterAccountIndex {
@@ -119,11 +144,11 @@ func (k Keeper) CreateSubAccount(ctx context.Context, master types.Account) (typ
 		return types.Account{}, err
 	}
 	if idx < perptypes.MinSubAccountIndex {
-		for idx < perptypes.MinSubAccountIndex {
-			idx, err = k.NextSubIndex.Next(ctx)
-			if err != nil {
-				return types.Account{}, err
-			}
+		// Below the sub-account floor: jump directly with one Set
+		// instead of looping Next() and consuming reserved slots.
+		idx = perptypes.MinSubAccountIndex
+		if err := k.NextSubIndex.Set(ctx, idx+1); err != nil {
+			return types.Account{}, err
 		}
 	}
 	if idx > perptypes.MaxAccountIndex {
@@ -188,10 +213,28 @@ func (k Keeper) GetAccountAsset(ctx context.Context, accIdx uint64, assetIdx uin
 }
 
 // AddAccountAssetBalance updates the spot balance of an asset.
+//
+// Positive deltas (credits) only validate the post-state balance is
+// non-negative. Negative deltas (debits) MUST respect the resting
+// `LockedBalance` reservation: only the available portion
+// (`Balance - LockedBalance`) may be withdrawn so user-facing
+// Withdraw / Transfer cannot raid spot orders' locked collateral.
+// The matching engine continues to use TransferAccountAssetBalance for
+// fill-driven movements, which knows when to drain the lock first.
 func (k Keeper) AddAccountAssetBalance(ctx context.Context, accIdx uint64, assetIdx uint32, delta math.Int) error {
 	aa, err := k.GetAccountAsset(ctx, accIdx, assetIdx)
 	if err != nil {
 		return err
+	}
+	if delta.IsNegative() {
+		debit := delta.Neg()
+		available := aa.Balance.Sub(aa.LockedBalance)
+		if available.LT(debit) {
+			return types.ErrInsufficientFunds.Wrapf(
+				"asset_index=%d available=%s need=%s",
+				assetIdx, available.String(), debit.String(),
+			)
+		}
 	}
 	aa.Balance = aa.Balance.Add(delta)
 	if aa.Balance.IsNegative() {
@@ -285,6 +328,11 @@ func (k Keeper) TransferAccountAssetBalance(
 // AvailableBalance returns Balance - LockedBalance for an account asset.
 // Lock-on-place spot orders consume Available at place time and release
 // it on cancel / evict / fill.
+//
+// A negative result indicates a state inconsistency (Balance dropped
+// below LockedBalance). The function still clamps to zero to keep
+// downstream math safe but emits a high-severity log line so the
+// invariant breach is observable in node logs.
 func (k Keeper) AvailableBalance(ctx context.Context, accIdx uint64, assetIdx uint32) (math.Int, error) {
 	aa, err := k.GetAccountAsset(ctx, accIdx, assetIdx)
 	if err != nil {
@@ -292,6 +340,15 @@ func (k Keeper) AvailableBalance(ctx context.Context, accIdx uint64, assetIdx ui
 	}
 	avail := aa.Balance.Sub(aa.LockedBalance)
 	if avail.IsNegative() {
+		sdk.UnwrapSDKContext(ctx).Logger().
+			With("module", "x/"+types.ModuleName).
+			Error(
+				"available balance underflow",
+				"account_index", accIdx,
+				"asset_index", assetIdx,
+				"balance", aa.Balance.String(),
+				"locked_balance", aa.LockedBalance.String(),
+			)
 		return math.ZeroInt(), nil
 	}
 	return avail, nil
@@ -349,12 +406,20 @@ func (k Keeper) DecreaseLockedBalance(ctx context.Context, accIdx uint64, assetI
 	return k.setAccountAsset(ctx, aa)
 }
 
-// IsAuthorized returns true if signer can act on account `idx` (matches owner
-// of master, or owner of master for sub-accounts).
+// IsAuthorized returns true if signer can act on account `idx`.
+// Sub-accounts inherit the master's OwnerAddress at creation time, so
+// the direct string equality covers both master and sub. Owner-less
+// accounts (treasury at idx=0, the canonical Insurance Fund pool at
+// idx=1) are explicitly rejected so an empty signer can never match
+// them — those accounts only mutate through the gov-authority Msg
+// paths or genesis.
 func (k Keeper) IsAuthorized(ctx context.Context, signer string, idx uint64) (bool, error) {
 	a, err := k.GetAccount(ctx, idx)
 	if err != nil {
 		return false, err
+	}
+	if a.OwnerAddress == "" {
+		return false, nil
 	}
 	if a.OwnerAddress == signer {
 		return true, nil
@@ -539,9 +604,9 @@ func (k Keeper) allocatePoolSubAccountIndex(ctx context.Context) (uint64, error)
 	if err != nil {
 		return 0, err
 	}
-	for idx < perptypes.MinSubAccountIndex {
-		idx, err = k.NextSubIndex.Next(ctx)
-		if err != nil {
+	if idx < perptypes.MinSubAccountIndex {
+		idx = perptypes.MinSubAccountIndex
+		if err := k.NextSubIndex.Set(ctx, idx+1); err != nil {
 			return 0, err
 		}
 	}

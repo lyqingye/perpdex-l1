@@ -73,6 +73,19 @@ func (m msgServer) CreatePublicPool(ctx context.Context, msg *types.MsgCreatePub
 		)
 	}
 
+	// Seeding a pool removes margin from the master, so settle pending
+	// funding and snapshot pre-state risk before mutating collateral.
+	// This matches the Withdraw / Transfer template and prevents a
+	// position-holding master from siphoning maintenance margin into a
+	// brand-new pool.
+	if err := m.settleAllPositionFunding(ctx, master.AccountIndex); err != nil {
+		return nil, err
+	}
+	pre, err := m.snapshotPreRisk(ctx, master.AccountIndex)
+	if err != nil {
+		return nil, err
+	}
+
 	zeros := make([]math.Int, perptypes.NbStrategies)
 	for i := range zeros {
 		zeros[i] = math.ZeroInt()
@@ -95,6 +108,9 @@ func (m msgServer) CreatePublicPool(ctx context.Context, msg *types.MsgCreatePub
 		return nil, err
 	}
 	if err := m.AddCollateral(ctx, master.AccountIndex, seedCollat.Neg()); err != nil {
+		return nil, err
+	}
+	if err := m.requireRiskOKFrom(ctx, master.AccountIndex, pre); err != nil {
 		return nil, err
 	}
 
@@ -324,6 +340,18 @@ func (m msgServer) MintShares(ctx context.Context, msg *types.MsgMintShares) (*t
 		return nil, types.ErrInvalidParams.Wrap("computed share amount is zero")
 	}
 
+	// Minting drains master collateral, so settle pending funding and
+	// snapshot pre-state risk before mutating. Without this, a master
+	// with open positions could mint into the pool and let liquidation
+	// recover the difference at the system's expense.
+	if err := m.settleAllPositionFunding(ctx, master.AccountIndex); err != nil {
+		return nil, err
+	}
+	pre, err := m.snapshotPreRisk(ctx, master.AccountIndex)
+	if err != nil {
+		return nil, err
+	}
+
 	// Move funds: master.collateral -> pool.collateral.
 	if err := m.AddCollateral(ctx, master.AccountIndex, collatDelta.Neg()); err != nil {
 		return nil, err
@@ -354,6 +382,10 @@ func (m msgServer) MintShares(ctx context.Context, msg *types.MsgMintShares) (*t
 		}
 	}
 
+	if err := m.requireRiskOKFrom(ctx, master.AccountIndex, pre); err != nil {
+		return nil, err
+	}
+
 	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
 		types.EventTypeMintShares,
 		sdk.NewAttribute(types.AttributeKeyPoolAccountIndex, strconv.FormatUint(pool.AccountIndex, 10)),
@@ -370,64 +402,48 @@ func (m msgServer) MintShares(ctx context.Context, msg *types.MsgMintShares) (*t
 // Cooldown applies to LLP + non-operator burns. operator_fee_share
 // is split out from realised profit and credited to operator_shares.
 func (m msgServer) BurnShares(ctx context.Context, msg *types.MsgBurnShares) (*types.MsgBurnSharesResponse, error) {
-	resp, err := m.burnSharesCore(ctx, msg.Sender, msg.PoolAccountIndex, msg.ShareAmount, false /* skipCooldown */, false /* asAuthority */)
-	if err != nil {
-		return nil, err
-	}
-	return resp, nil
-}
-
-// burnSharesCore is shared by BurnShares and ForceBurnShares.
-//
-//	skipCooldown   -> bypass LLP cooldown (force-burn path)
-//	asAuthority    -> caller is gov authority; the `sender` arg is in
-//	                  fact the depositor master index (encoded as
-//	                  string for ergonomics; we pass owner addr instead
-//	                  via lookup elsewhere).
-func (m msgServer) burnSharesCore(
-	ctx context.Context,
-	owner string,
-	poolIdx uint64,
-	shareAmount math.Int,
-	skipCooldown bool,
-	asAuthority bool,
-) (*types.MsgBurnSharesResponse, error) {
-	pool, err := m.GetAccount(ctx, poolIdx)
+	pool, err := m.GetAccount(ctx, msg.PoolAccountIndex)
 	if err != nil {
 		return nil, err
 	}
 	if !IsPoolAccount(pool) {
 		return nil, types.ErrInvalidPoolAccount
 	}
-
-	// Find depositor master.
-	var depositor types.Account
-	if asAuthority {
-		// In the ForceBurn flow, owner is actually the depositor's
-		// master AccountIndex serialized as ASCII; the wrapper passes
-		// it through this slot.
-		depIdx, err := strconv.ParseUint(owner, 10, 64)
-		if err != nil {
-			return nil, types.ErrInvalidDepositorIndex.Wrapf("%s", err.Error())
-		}
-		depositor, err = m.GetAccount(ctx, depIdx)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		depositor, err = m.resolveSenderMaster(ctx, owner)
-		if err != nil {
-			return nil, err
-		}
+	depositor, err := m.resolveSenderMaster(ctx, msg.Sender)
+	if err != nil {
+		return nil, err
 	}
-
-	isOperator := false
-	if !asAuthority {
-		isOperator, err = m.isPoolOperator(ctx, pool, owner)
-		if err != nil {
-			return nil, err
-		}
+	isOperator, err := m.isPoolOperator(ctx, pool, msg.Sender)
+	if err != nil {
+		return nil, err
 	}
+	return m.burnSharesCore(ctx, pool, depositor, isOperator, msg.ShareAmount, false /* skipCooldown */)
+}
+
+// burnSharesCore is the shared engine behind BurnShares and
+// ForceBurnShares. Callers resolve the pool / depositor / operator
+// flag up front so this function can stay focused on the math and
+// state transitions.
+//
+//	skipCooldown -> bypass LLP cooldown (force-burn path)
+func (m msgServer) burnSharesCore(
+	ctx context.Context,
+	pool types.Account,
+	depositor types.Account,
+	isOperator bool,
+	shareAmount math.Int,
+	skipCooldown bool,
+) (*types.MsgBurnSharesResponse, error) {
+	if !IsPoolAccount(pool) {
+		return nil, types.ErrInvalidPoolAccount
+	}
+	info := pool.PublicPoolInfo
+	// Status gate: ACTIVE and FROZEN both allow burn (frozen pools must
+	// continue to honour LP exits). Any unknown/future state is rejected.
+	if !BurnAllowed(*info) {
+		return nil, types.ErrPoolNotActive.Wrapf("status=%d", info.Status)
+	}
+	poolIdx := pool.AccountIndex
 
 	// Pool must be healthy enough to burn (non-liquidation cross risk).
 	// We approximate by requiring TAV > 0, which AvailableSharesToBurn
@@ -443,7 +459,6 @@ func (m msgServer) burnSharesCore(
 		)
 	}
 
-	info := pool.PublicPoolInfo
 	frozen := info.Status == perptypes.PublicPoolStatusFrozen
 
 	// Locate share entry on depositor row (operator burns from
@@ -528,12 +543,13 @@ func (m msgServer) burnSharesCore(
 		burnedShares = shareAmount.Sub(operatorFeeShares)
 	}
 
-	// Redeem-side: re-quote with the post-fee-cut share count to
-	// determine the USDC delivered to the depositor.
-	deliveredUSDC, err := m.SharesToUSDCValue(ctx, poolIdx, burnedShares)
-	if err != nil {
-		return nil, err
-	}
+	// Delivered USDC scales linearly with burnedShares relative to
+	// the originally-quoted shareAmount, so we avoid a second
+	// SharesToUSDCValue / TAV roundtrip:
+	//   delivered = usdcValue * burnedShares / shareAmount
+	// shareAmount is guaranteed positive (msg validation rejects 0
+	// and the cap check above requires shareAmount <= available).
+	deliveredUSDC := usdcValue.Mul(burnedShares).Quo(shareAmount)
 	deliveredCollat := deliveredUSDC.Mul(math.NewIntFromUint64(perptypes.USDCToCollateralMultiplier))
 
 	// Mutate pool.public_pool_info via the cohesive helper. The
@@ -673,9 +689,14 @@ func (m msgServer) ForceBurnShares(ctx context.Context, msg *types.MsgForceBurnS
 		return nil, types.ErrInvalidPoolUpdate.Wrap("pool is not the canonical LLP")
 	}
 
-	// Encode depositor index in the `owner` slot to reuse burnSharesCore.
-	depositorRef := strconv.FormatUint(msg.DepositorAccountIndex, 10)
-	resp, err := m.burnSharesCore(ctx, depositorRef, msg.PoolAccountIndex, msg.ShareAmount, true /* skipCooldown */, true /* asAuthority */)
+	// Force-burn unwinds an LP entry, so the depositor must be a real
+	// master account. ForceBurn never targets the operator path (gov
+	// authority is not the pool operator at the IF), so isOperator=false.
+	depositor, err := m.GetAccount(ctx, msg.DepositorAccountIndex)
+	if err != nil {
+		return nil, types.ErrInvalidDepositorIndex.Wrapf("%s", err.Error())
+	}
+	resp, err := m.burnSharesCore(ctx, pool, depositor, false /* isOperator */, msg.ShareAmount, true /* skipCooldown */)
 	if err != nil {
 		return nil, err
 	}

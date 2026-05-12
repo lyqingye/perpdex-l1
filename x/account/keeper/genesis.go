@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 
+	perptypes "github.com/perpdex/perpdex-l1/types"
 	"github.com/perpdex/perpdex-l1/x/account/types"
 )
 
@@ -10,6 +11,9 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 	if err := k.Params.Set(ctx, gs.Params); err != nil {
 		return err
 	}
+	// setAccount maintains both the OwnerToIndex pointer and the
+	// MasterSubAccounts index, so iterating gs.Accounts here is
+	// enough to rehydrate every secondary index without an extra pass.
 	for _, a := range gs.Accounts {
 		if err := k.setAccount(ctx, a); err != nil {
 			return err
@@ -30,10 +34,23 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 			return err
 		}
 	}
-	if err := k.NextMasterIndex.Set(ctx, gs.Counters.NextMasterAccountIndex); err != nil {
+	masterCounter := gs.Counters.NextMasterAccountIndex
+	if masterCounter < perptypes.FirstUserMasterAccountIndex {
+		// Defensive: never seed below the reserved master range so
+		// the next deposit-auto-create never reuses a genesis slot.
+		masterCounter = perptypes.FirstUserMasterAccountIndex
+	}
+	if err := k.NextMasterIndex.Set(ctx, masterCounter); err != nil {
 		return err
 	}
-	if err := k.NextSubIndex.Set(ctx, gs.Counters.NextSubAccountIndex); err != nil {
+	subCounter := gs.Counters.NextSubAccountIndex
+	if subCounter < perptypes.MinSubAccountIndex {
+		// Genesis Validate() permits 0 as an unset sentinel; coerce it
+		// (and any other below-floor value) to MinSubAccountIndex so
+		// the first allocation lands in the valid sub-account range.
+		subCounter = perptypes.MinSubAccountIndex
+	}
+	if err := k.NextSubIndex.Set(ctx, subCounter); err != nil {
 		return err
 	}
 	return nil
