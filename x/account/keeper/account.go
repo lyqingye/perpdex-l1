@@ -26,42 +26,31 @@ func (k Keeper) GetAccount(ctx context.Context, idx uint64) (types.Account, erro
 	return a, nil
 }
 
-// setAccount is the package-private write primitive for the Account
-// row. All cohesive mutator methods (UpdateAccountTradingMode,
-// UpdatePublicPoolInfo, CreatePublicPoolAccount, UpsertPublicPoolShare,
-// RemovePublicPoolShare, AddCollateral, EnsureMasterAccount,
-// CreateSubAccount) funnel through this single choke point so a future
-// AccountUpdated event / metric / audit hook can be wired here without
-// hunting every caller across the codebase. External modules MUST use
-// the cohesive methods; the primitive is intentionally unexported to
-// prevent drive-by upserts that bypass invariants and event emission.
+// createAccount is the package-private write primitive used for
+// brand-new Account rows. It writes the canonical Accounts entry AND
+// every dependent secondary index (OwnerToIndex for masters,
+// MasterSubAccounts for sub / pool rows) in one shot.
 //
-// The OwnerToIndex write is conditioned on the current pointer being
-// missing or stale so idempotent master updates (e.g. AddCollateral on
-// an existing master) don't repeatedly rewrite the same value. The
-// MasterSubAccounts index is kept in sync here for sub/pool accounts so
-// per-master queries can iterate a prefix instead of scanning the
-// entire Accounts table.
+// Callers MUST guarantee:
 //
-// TODO(events): emit AccountUpdated here once the event schema lands.
-func (k Keeper) setAccount(ctx context.Context, a types.Account) error {
+//  1. AccountIndex is freshly allocated and not present in `Accounts`
+//     (the create path is only fired by EnsureMasterAccount,
+//     CreateSubAccount, CreatePublicPoolAccount and InitGenesis).
+//  2. OwnerAddress / MasterAccountIndex are the final values for this
+//     row's lifetime — both fields are treated as immutable post-create
+//     so updateAccount never has to repair the indices.
+//
+// Splitting create from update lets the update path skip the
+// OwnerToIndex Get + compare it used to perform on every AddCollateral
+// or UpdateAccountTradingMode call.
+//
+// TODO(events): emit AccountCreated here once the event schema lands.
+func (k Keeper) createAccount(ctx context.Context, a types.Account) error {
 	if err := k.Accounts.Set(ctx, a.AccountIndex, a); err != nil {
 		return err
 	}
 	if a.OwnerAddress != "" && a.AccountType == perptypes.MasterAccountType {
-		cur, err := k.OwnerToIndex.Get(ctx, a.OwnerAddress)
-		switch {
-		case err == nil:
-			if cur != a.AccountIndex {
-				if err := k.OwnerToIndex.Set(ctx, a.OwnerAddress, a.AccountIndex); err != nil {
-					return err
-				}
-			}
-		case errors.Is(err, collections.ErrNotFound):
-			if err := k.OwnerToIndex.Set(ctx, a.OwnerAddress, a.AccountIndex); err != nil {
-				return err
-			}
-		default:
+		if err := k.OwnerToIndex.Set(ctx, a.OwnerAddress, a.AccountIndex); err != nil {
 			return err
 		}
 	}
@@ -71,6 +60,25 @@ func (k Keeper) setAccount(ctx context.Context, a types.Account) error {
 		}
 	}
 	return nil
+}
+
+// updateAccount is the package-private write primitive used for
+// in-place mutations of an existing Account row. It writes ONLY the
+// canonical Accounts entry and intentionally never touches the
+// OwnerToIndex / MasterSubAccounts secondary indices because the
+// fields they depend on (OwnerAddress, MasterAccountIndex,
+// AccountType) are immutable for the lifetime of an account.
+//
+// Cohesive mutators (AddCollateral, UpdateAccountTradingMode,
+// UpdatePublicPoolInfo, UpsertPublicPoolShare, ReducePublicPoolShare)
+// MUST funnel through this single choke point so a future
+// AccountUpdated event / metric / audit hook can be wired here without
+// hunting every caller across the codebase. External modules MUST use
+// the cohesive methods.
+//
+// TODO(events): emit AccountUpdated here once the event schema lands.
+func (k Keeper) updateAccount(ctx context.Context, a types.Account) error {
+	return k.Accounts.Set(ctx, a.AccountIndex, a)
 }
 
 // GetMasterAccountByOwner returns the (master) account associated with the
@@ -128,7 +136,7 @@ func (k Keeper) EnsureMasterAccount(ctx context.Context, owner sdk.AccAddress) (
 		Collateral:         math.ZeroInt(),
 		CreatedAt:          sdk.UnwrapSDKContext(ctx).BlockTime().UnixMilli(),
 	}
-	if err := k.setAccount(ctx, newAcc); err != nil {
+	if err := k.createAccount(ctx, newAcc); err != nil {
 		return types.Account{}, err
 	}
 	return newAcc, nil
@@ -163,7 +171,7 @@ func (k Keeper) CreateSubAccount(ctx context.Context, master types.Account) (typ
 		Collateral:         math.ZeroInt(),
 		CreatedAt:          sdk.UnwrapSDKContext(ctx).BlockTime().UnixMilli(),
 	}
-	if err := k.setAccount(ctx, sub); err != nil {
+	if err := k.createAccount(ctx, sub); err != nil {
 		return types.Account{}, err
 	}
 	return sub, nil
@@ -178,7 +186,7 @@ func (k Keeper) AddCollateral(ctx context.Context, idx uint64, delta math.Int) e
 		return err
 	}
 	a.Collateral = a.Collateral.Add(delta)
-	return k.setAccount(ctx, a)
+	return k.updateAccount(ctx, a)
 }
 
 // setAccountAsset is the package-private write primitive for the
@@ -521,7 +529,7 @@ func (k Keeper) UpdateAccountTradingMode(ctx context.Context, idx uint64, mode u
 		return err
 	}
 	a.AccountTradingMode = mode
-	return k.setAccount(ctx, a)
+	return k.updateAccount(ctx, a)
 }
 
 // UpdatePublicPoolInfo loads the pool account, runs `mut` against
@@ -548,7 +556,7 @@ func (k Keeper) UpdatePublicPoolInfo(
 	if err := mut(a.PublicPoolInfo); err != nil {
 		return types.Account{}, err
 	}
-	if err := k.setAccount(ctx, a); err != nil {
+	if err := k.updateAccount(ctx, a); err != nil {
 		return types.Account{}, err
 	}
 	return a, nil
@@ -588,7 +596,7 @@ func (k Keeper) CreatePublicPoolAccount(
 		CreatedAt:          now,
 		PublicPoolInfo:     p.Info,
 	}
-	if err := k.setAccount(ctx, pool); err != nil {
+	if err := k.createAccount(ctx, pool); err != nil {
 		return types.Account{}, err
 	}
 	return pool, nil
@@ -647,7 +655,7 @@ func (k Keeper) UpsertPublicPoolShare(
 			EntryTimestamp:  entryTimestamp,
 		})
 	}
-	return k.setAccount(ctx, master)
+	return k.updateAccount(ctx, master)
 }
 
 // ReducePublicPoolShare debits `shareAmount` (and the proportional
@@ -686,7 +694,7 @@ func (k Keeper) ReducePublicPoolShare(
 	} else {
 		master.PublicPoolShares[entryIdx] = entry
 	}
-	return k.setAccount(ctx, master)
+	return k.updateAccount(ctx, master)
 }
 
 // GetPosition returns the position; an empty zero-valued one if absent.

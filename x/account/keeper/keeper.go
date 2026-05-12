@@ -39,7 +39,9 @@ type Keeper struct {
 	// SubAccounts query can scan only the master's range instead of
 	// the entire Accounts table. The Accounts row remains the source
 	// of truth; this collection is rebuilt from genesis on import and
-	// maintained by setAccount on every sub-account write.
+	// maintained by createAccount on every sub-account creation
+	// (updateAccount never touches it because MasterAccountIndex is
+	// immutable after create).
 	MasterSubAccounts collections.KeySet[collections.Pair[uint64, uint64]]
 }
 

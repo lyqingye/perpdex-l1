@@ -11,11 +11,12 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 	if err := k.Params.Set(ctx, gs.Params); err != nil {
 		return err
 	}
-	// setAccount maintains both the OwnerToIndex pointer and the
-	// MasterSubAccounts index, so iterating gs.Accounts here is
-	// enough to rehydrate every secondary index without an extra pass.
+	// createAccount writes the canonical row PLUS every dependent
+	// secondary index (OwnerToIndex for masters, MasterSubAccounts
+	// for sub / pool rows), so iterating gs.Accounts here is enough
+	// to rehydrate every index without an extra pass.
 	for _, a := range gs.Accounts {
-		if err := k.setAccount(ctx, a); err != nil {
+		if err := k.createAccount(ctx, a); err != nil {
 			return err
 		}
 	}
