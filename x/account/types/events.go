@@ -1,6 +1,32 @@
 package types
 
-// Event types for the account module.
+// The account module emits events on TWO complementary layers:
+//
+//  1. State-change events (typed, declared in events.proto and generated
+//     into events.pb.go):
+//       - EventAccountUpdated
+//       - EventAccountAssetUpdated
+//       - EventPositionUpdated
+//     These are emitted inside the keeper write primitives
+//     (createAccount / updateAccount / setAccountAsset / setPosition)
+//     so EVERY persisted mutation produces an event, no matter which
+//     caller drove it (x/trade fills, x/funding settlement,
+//     x/liquidation, x/orderbook lock / release, etc.). Each event
+//     carries the full post-write row snapshot, so an off-chain
+//     indexer that consumes ONLY these three events can rebuild the
+//     canonical Accounts / AccountAssets / AccountPositions tables
+//     with last-write-wins semantics.
+//
+//  2. Business events (string-attribute, declared below): emitted in
+//     the x/account msg_server handlers (Deposit, Withdraw, Transfer,
+//     MintShares, …) so dashboards / wallets can show user-facing
+//     activity with caller intent (route type, target asset, amount).
+//     These events DO NOT enumerate every state mutation — for
+//     example a trade fill mutates positions / balances without ever
+//     touching the msg_server. State reconstruction MUST rely on the
+//     typed events in (1); business events are a UX convenience layer.
+
+// Event types for the account module (business / intent layer).
 const (
 	EventTypeDeposit                 = "deposit"
 	EventTypeWithdraw                = "withdraw"

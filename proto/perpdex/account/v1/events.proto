@@ -1,0 +1,42 @@
+syntax = "proto3";
+package perpdex.account.v1;
+
+import "gogoproto/gogo.proto";
+import "perpdex/account/v1/account.proto";
+
+option go_package = "github.com/perpdex/perpdex-l1/x/account/types";
+
+// State-change events: emitted on every keeper write so an off-chain
+// indexer can rebuild the canonical Accounts / AccountAssets /
+// AccountPositions tables from the event stream alone (last-write-wins
+// per primary key). These complement the higher-level business events
+// declared in events.go (Deposit / Withdraw / MintShares / ...) which
+// carry caller intent but do not enumerate every state mutation.
+
+// EventAccountUpdated is emitted every time an Account row is written
+// to the Accounts collection — both on initial creation
+// (createAccount) and on subsequent mutations (updateAccount: collateral
+// changes, trading mode flips, public pool info / shares list edits).
+// `created` distinguishes the two for indexers that want to materialise
+// a CreatedAt-only audit log alongside the canonical table.
+message EventAccountUpdated {
+  Account account = 1 [(gogoproto.nullable) = false];
+  bool created = 2;
+}
+
+// EventAccountAssetUpdated is emitted every time an AccountAsset row is
+// written — covers deposits / withdraws (AddAccountAssetBalance),
+// spot fills (TransferAccountAssetBalance), order lock / release
+// (IncreaseLockedBalance / DecreaseLockedBalance) and margin mode
+// flips (SetAccountAssetMarginMode).
+message EventAccountAssetUpdated {
+  AccountAsset account_asset = 1 [(gogoproto.nullable) = false];
+}
+
+// EventPositionUpdated is emitted every time an AccountPosition row is
+// written — covers fill apply (x/trade), funding settlement
+// (x/funding), liquidation / ADL adjustments (x/liquidation) and
+// leverage flips (SetPositionLeverage).
+message EventPositionUpdated {
+  AccountPosition position = 1 [(gogoproto.nullable) = false];
+}

@@ -29,7 +29,9 @@ func (k Keeper) GetAccount(ctx context.Context, idx uint64) (types.Account, erro
 // createAccount is the package-private write primitive used for
 // brand-new Account rows. It writes the canonical Accounts entry AND
 // every dependent secondary index (OwnerToIndex for masters,
-// MasterSubAccounts for sub / pool rows) in one shot.
+// MasterSubAccounts for sub / pool rows) in one shot, and emits a
+// typed `EventAccountUpdated{created=true}` so off-chain indexers can
+// rebuild the Accounts table from the event stream alone.
 //
 // Callers MUST guarantee:
 //
@@ -43,8 +45,6 @@ func (k Keeper) GetAccount(ctx context.Context, idx uint64) (types.Account, erro
 // Splitting create from update lets the update path skip the
 // OwnerToIndex Get + compare it used to perform on every AddCollateral
 // or UpdateAccountTradingMode call.
-//
-// TODO(events): emit AccountCreated here once the event schema lands.
 func (k Keeper) createAccount(ctx context.Context, a types.Account) error {
 	if err := k.Accounts.Set(ctx, a.AccountIndex, a); err != nil {
 		return err
@@ -59,7 +59,10 @@ func (k Keeper) createAccount(ctx context.Context, a types.Account) error {
 			return err
 		}
 	}
-	return nil
+	return sdk.UnwrapSDKContext(ctx).EventManager().EmitTypedEvent(&types.EventAccountUpdated{
+		Account: a,
+		Created: true,
+	})
 }
 
 // updateAccount is the package-private write primitive used for
@@ -69,16 +72,23 @@ func (k Keeper) createAccount(ctx context.Context, a types.Account) error {
 // fields they depend on (OwnerAddress, MasterAccountIndex,
 // AccountType) are immutable for the lifetime of an account.
 //
+// Every successful write emits a typed `EventAccountUpdated{created=false}`
+// carrying the full post-write row snapshot, so off-chain consumers can
+// keep the canonical Accounts table in sync without polling state.
+//
 // Cohesive mutators (AddCollateral, UpdateAccountTradingMode,
 // UpdatePublicPoolInfo, UpsertPublicPoolShare, ReducePublicPoolShare)
-// MUST funnel through this single choke point so a future
-// AccountUpdated event / metric / audit hook can be wired here without
-// hunting every caller across the codebase. External modules MUST use
-// the cohesive methods.
-//
-// TODO(events): emit AccountUpdated here once the event schema lands.
+// MUST funnel through this single choke point so the event / metric /
+// audit hook lives in exactly one place. External modules MUST use the
+// cohesive methods.
 func (k Keeper) updateAccount(ctx context.Context, a types.Account) error {
-	return k.Accounts.Set(ctx, a.AccountIndex, a)
+	if err := k.Accounts.Set(ctx, a.AccountIndex, a); err != nil {
+		return err
+	}
+	return sdk.UnwrapSDKContext(ctx).EventManager().EmitTypedEvent(&types.EventAccountUpdated{
+		Account: a,
+		Created: false,
+	})
 }
 
 // GetMasterAccountByOwner returns the (master) account associated with the
@@ -194,11 +204,17 @@ func (k Keeper) AddCollateral(ctx context.Context, idx uint64, delta math.Int) e
 // IncreaseLockedBalance, DecreaseLockedBalance,
 // SetAccountAssetMarginMode, TransferAccountAssetBalance) funnel
 // through here so spot balance / lock changes have a single choke
-// point for future event emission.
-//
-// TODO(events): emit SpotBalanceChanged here once the event schema lands.
+// point for event emission. Every successful write fires an
+// `EventAccountAssetUpdated` typed event carrying the full
+// post-write row snapshot, so off-chain consumers (indexers, risk
+// engines) can rebuild AccountAssets from the event stream alone.
 func (k Keeper) setAccountAsset(ctx context.Context, aa types.AccountAsset) error {
-	return k.AccountAssets.Set(ctx, collections.Join(aa.AccountIndex, aa.AssetIndex), aa)
+	if err := k.AccountAssets.Set(ctx, collections.Join(aa.AccountIndex, aa.AssetIndex), aa); err != nil {
+		return err
+	}
+	return sdk.UnwrapSDKContext(ctx).EventManager().EmitTypedEvent(&types.EventAccountAssetUpdated{
+		AccountAsset: aa,
+	})
 }
 
 // GetAccountAsset returns the (account, asset) row, zero-valued if absent.
@@ -457,11 +473,20 @@ func (k Keeper) IterateAccounts(ctx context.Context, cb func(types.Account) bool
 // setPosition is the package-private write primitive for the
 // AccountPosition row. Cohesive mutators (UpdatePosition,
 // SetPositionLeverage) funnel through here so position state has a
-// single choke point for future event emission.
-//
-// TODO(events): emit PositionUpdated here once the event schema lands.
+// single choke point for event emission. Every successful write fires
+// an `EventPositionUpdated` typed event carrying the full post-write
+// row snapshot, so off-chain consumers can mirror AccountPositions
+// without polling state — this matters because positions are also
+// mutated by cross-module callers (x/trade fills, x/funding
+// settlement, x/liquidation / x/risk) outside of x/account's msg
+// server.
 func (k Keeper) setPosition(ctx context.Context, p types.AccountPosition) error {
-	return k.AccountPositions.Set(ctx, collections.Join(p.AccountIndex, p.MarketIndex), p)
+	if err := k.AccountPositions.Set(ctx, collections.Join(p.AccountIndex, p.MarketIndex), p); err != nil {
+		return err
+	}
+	return sdk.UnwrapSDKContext(ctx).EventManager().EmitTypedEvent(&types.EventPositionUpdated{
+		Position: p,
+	})
 }
 
 // UpdatePosition is the canonical read-modify-write wrapper for
