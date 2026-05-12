@@ -17,7 +17,7 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 		return err
 	}
 	for _, m := range gs.Markets {
-		if err := k.setMarketWithIndex(ctx, nil, m); err != nil {
+		if err := k.createMarket(ctx, m); err != nil {
 			return err
 		}
 	}

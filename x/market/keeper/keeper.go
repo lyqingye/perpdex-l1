@@ -92,35 +92,58 @@ func (k Keeper) GetMarketDetails(ctx context.Context, idx uint32) (types.MarketD
 	return d, nil
 }
 
-// SetMarket is a thin wrapper around setMarketWithIndex that does NOT
-// maintain ExpiryIndex deltas — only safe for Init / Create paths
-// where there is no prior market record on disk. Update paths must use
-// setMarketWithIndex with the old record so the secondary index stays
-// in sync.
-func (k Keeper) SetMarket(ctx context.Context, m types.Market) error {
-	return k.setMarketWithIndex(ctx, nil, m)
-}
-
-// setMarketWithIndex persists `m` and atomically maintains the
-// ExpiryIndex secondary index:
-//   - If `old` is non-nil and its expiry differed from `m`, remove the
-//     stale (oldExpiry, marketIdx) entry first.
-//   - If `m.ExpiryTimestamp > 0`, register the new (newExpiry,
-//     marketIdx) entry.
+// createMarket persists a brand-new Market record. The ExpiryIndex is
+// populated only when the market is "auto-expiry eligible" — ACTIVE
+// with a future ExpiryTimestamp. Genesis may legitimately carry a
+// recovered EXPIRED market with its original ExpiryTimestamp baked in
+// for audit; such markets must NOT re-enter the auto-expiry loop, so
+// the indexing guard mirrors updateMarket's want-indexed rule.
 //
-// This is the single write-path for Market; callers MUST go through it
-// (directly or via SetMarket) so the index never drifts. Errors are
-// propagated (no `_ = ...`) so KV failures surface to the handler.
-func (k Keeper) setMarketWithIndex(ctx context.Context, old *types.Market, m types.Market) error {
+// Caller MUST have verified no record exists at `m.MarketIndex`;
+// Markets.Set unconditionally overwrites and would silently destroy a
+// real market. Used by MsgCreateMarket and InitGenesis.
+func (k Keeper) createMarket(ctx context.Context, m types.Market) error {
 	if err := k.Markets.Set(ctx, m.MarketIndex, m); err != nil {
 		return err
 	}
-	if old != nil && old.ExpiryTimestamp > 0 && old.ExpiryTimestamp != m.ExpiryTimestamp {
+	if m.Status == perptypes.MarketStatusActive && m.ExpiryTimestamp > 0 {
+		if err := k.ExpiryIndex.Set(ctx, collections.Join(m.ExpiryTimestamp, m.MarketIndex)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// updateMarket overwrites an existing Market record and keeps the
+// ExpiryIndex in sync. The secondary index only tracks markets that
+// are eligible for auto-expiry (i.e. ACTIVE with a future
+// ExpiryTimestamp). A change to either `Status` or `ExpiryTimestamp`
+// can flip eligibility, so the delta logic is:
+//
+//   - was-indexed = old was ACTIVE && old.ExpiryTimestamp > 0
+//   - want-indexed = new is ACTIVE && new.ExpiryTimestamp > 0
+//
+// Remove the (old.ExpiryTimestamp, idx) entry whenever it was indexed
+// and either the new state is no longer indexed or the timestamp
+// changed; symmetrically add the new entry whenever it should be
+// indexed and either was not before or the timestamp moved.
+//
+// Caller MUST pass the in-store record as `old` so the index delta is
+// computed against the truth on disk (passing a stale copy can leak
+// orphan entries).
+func (k Keeper) updateMarket(ctx context.Context, old, m types.Market) error {
+	if err := k.Markets.Set(ctx, m.MarketIndex, m); err != nil {
+		return err
+	}
+	wasIndexed := old.Status == perptypes.MarketStatusActive && old.ExpiryTimestamp > 0
+	wantsIndexed := m.Status == perptypes.MarketStatusActive && m.ExpiryTimestamp > 0
+	expiryChanged := old.ExpiryTimestamp != m.ExpiryTimestamp
+	if wasIndexed && (!wantsIndexed || expiryChanged) {
 		if err := k.ExpiryIndex.Remove(ctx, collections.Join(old.ExpiryTimestamp, old.MarketIndex)); err != nil {
 			return err
 		}
 	}
-	if m.ExpiryTimestamp > 0 {
+	if wantsIndexed && (!wasIndexed || expiryChanged) {
 		if err := k.ExpiryIndex.Set(ctx, collections.Join(m.ExpiryTimestamp, m.MarketIndex)); err != nil {
 			return err
 		}
@@ -136,39 +159,38 @@ func (k Keeper) SetMarketDetails(ctx context.Context, d types.MarketDetails) err
 	return k.MarketDetails.Set(ctx, d.MarketIndex, d)
 }
 
-// expireMarket is the single code path for flipping a market into
-// MarketStatusExpired. It MUST be used by both EndBlocker (auto
-// expiry on `now >= ExpiryTimestamp`) and any future governance path
-// that wants to delist a market. It:
+// expireMarket flips an ACTIVE market into terminal EXPIRED state.
+// It MUST be used by both the EndBlocker auto-expiry path and the
+// MsgUpdateMarket(NewStatus=Expired) governance path so the two paths
+// produce identical observable effects:
 //
-//  1. Writes `m` back with Status=EXPIRED through setMarketWithIndex
-//     (which drops the secondary index entry because the new expiry
-//     equals the old one and we then explicitly Remove it below).
-//  2. Removes the ExpiryIndex entry so the market is not reprocessed
-//     in subsequent EndBlocker passes.
-//  3. Invokes liquidationKeeper.ApplyExitPosition to close residual
-//     positions against the insurance fund. nil-safe: a missing
-//     LiquidationKeeper is treated as "no exit handler wired" and
-//     surfaced through EventTypeMarketExpireExitFailed so it is
-//     monitorable rather than a silent panic.
-//  4. Emits EventTypeMarketExpired regardless of whether the exit
-//     hook succeeded — the market is expired and trading must stop.
+//  1. updateMarket writes the new record. The standard delta logic
+//     drops the ExpiryIndex entry as a side-effect of the EXPIRED
+//     transition (was-indexed → not want-indexed).
+//  2. applyMarketExit closes residual positions against the insurance
+//     fund via the LiquidationKeeper hook (nil-safe) and emits both
+//     EventTypeMarketExpired and, when the exit hook failed,
+//     EventTypeMarketExpireExitFailed for monitors.
+//
+// `m` must be the in-store record (Status=ACTIVE before the call).
 func (k Keeper) expireMarket(ctx context.Context, m types.Market) error {
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	old := m
 	m.Status = perptypes.MarketStatusExpired
-	if err := k.Markets.Set(ctx, m.MarketIndex, m); err != nil {
+	if err := k.updateMarket(ctx, old, m); err != nil {
 		return err
 	}
-	if m.ExpiryTimestamp > 0 {
-		if err := k.ExpiryIndex.Remove(ctx, collections.Join(m.ExpiryTimestamp, m.MarketIndex)); err != nil {
-			// Index drift is non-fatal: the secondary index is
-			// best-effort. We still log so it shows up in
-			// post-mortems.
-			sdkCtx.Logger().Error("market: failed to remove expiry index entry",
-				"market", m.MarketIndex, "err", err)
-		}
-	}
-	exitErr := error(nil)
+	return k.applyMarketExit(ctx, m)
+}
+
+// applyMarketExit performs the post-state-write side of an EXPIRED
+// transition: invoke the liquidation hook (nil-safe) and emit the
+// expired / failure events. Separated from expireMarket so the
+// MsgUpdateMarket path, which already routes through updateMarket for
+// the field/status changes, can compose the two without a redundant
+// re-write.
+func (k Keeper) applyMarketExit(ctx context.Context, m types.Market) error {
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	var exitErr error
 	if k.liquidationKeeper == nil {
 		exitErr = errors.New("liquidation keeper not wired")
 	} else if err := k.liquidationKeeper.ApplyExitPosition(ctx, m.MarketIndex); err != nil {
@@ -187,6 +209,57 @@ func (k Keeper) expireMarket(ctx context.Context, m types.Market) error {
 		types.EventTypeMarketExpired,
 		sdk.NewAttribute(types.AttributeKeyMarketIndex, strconv.FormatUint(uint64(m.MarketIndex), 10)),
 	))
+	return nil
+}
+
+// iterateExpired walks the ExpiryIndex for every (expiry, marketIdx)
+// entry whose expiry is <= `now` and invokes `visit` on each ACTIVE
+// market, up to `budget` invocations. Stale entries (missing market
+// record, or already non-ACTIVE) are silently dropped from the index
+// — they're a recovery path for divergence, not the common case. A
+// per-market `visit` error is logged but does not abort the loop, so
+// one bad market cannot stall EndBlocker.
+//
+// The iterator is the canonical lever the EndBlocker uses to keep the
+// auto-expiry cost O(expired count) rather than O(all markets).
+func (k Keeper) iterateExpired(ctx context.Context, now int64, budget uint32, visit func(types.Market) error) error {
+	if budget == 0 {
+		return nil
+	}
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	rng := new(collections.Range[collections.Pair[int64, uint32]]).
+		EndInclusive(collections.Join(now, uint32(math.MaxUint32)))
+	iter, err := k.ExpiryIndex.Iterate(ctx, rng)
+	if err != nil {
+		return err
+	}
+	defer iter.Close()
+	processed := uint32(0)
+	for ; iter.Valid() && processed < budget; iter.Next() {
+		key, err := iter.Key()
+		if err != nil {
+			sdkCtx.Logger().Error("market: expiry index iter key", "err", err)
+			continue
+		}
+		idx := key.K2()
+		m, err := k.GetMarket(ctx, idx)
+		if err != nil {
+			sdkCtx.Logger().Error("market: expiry index drift, removing entry",
+				"market", idx, "err", err)
+			_ = k.ExpiryIndex.Remove(ctx, key)
+			continue
+		}
+		if m.Status != perptypes.MarketStatusActive {
+			_ = k.ExpiryIndex.Remove(ctx, key)
+			continue
+		}
+		if err := visit(m); err != nil {
+			sdkCtx.Logger().Error("market: visit failed",
+				"market", idx, "err", err)
+			continue
+		}
+		processed++
+	}
 	return nil
 }
 

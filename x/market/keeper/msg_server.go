@@ -101,7 +101,7 @@ func (m msgServer) CreateMarket(ctx context.Context, msg *types.MsgCreateMarket)
 	market.CreatedAt = sdk.UnwrapSDKContext(ctx).BlockTime().UnixMilli()
 	market.Status = perptypes.MarketStatusActive
 	resetRuntimeDetails(&details)
-	if err := m.setMarketWithIndex(ctx, nil, market); err != nil {
+	if err := m.createMarket(ctx, market); err != nil {
 		return nil, err
 	}
 	if err := m.SetMarketDetails(ctx, details); err != nil {
@@ -154,17 +154,18 @@ func (m msgServer) UpdateMarket(ctx context.Context, msg *types.MsgUpdateMarket)
 	market.OrderQuoteLimit = msg.NewOrderQuoteLimit
 	market.ExpiryTimestamp = msg.NewExpiryTimestamp
 	market.Status = msg.NewStatus
-	if err := m.setMarketWithIndex(ctx, &oldMarket, market); err != nil {
+	// updateMarket handles the field overlay and ExpiryIndex delta for
+	// both the plain-update case and the "transition to EXPIRED" case
+	// (in which the index entry is dropped because want-indexed
+	// becomes false). For the EXPIRED transition we additionally need
+	// to run applyMarketExit to close residual positions against the
+	// insurance fund (H4). The two helpers compose without a redundant
+	// Markets.Set so the manual delist path is now O(1) writes.
+	if err := m.updateMarket(ctx, oldMarket, market); err != nil {
 		return nil, err
 	}
-	// Status flip to EXPIRED must additionally close out positions
-	// against the insurance fund. Previously the manual MsgUpdateMarket
-	// path skipped ApplyExitPosition and broke the "EXPIRED ⇒ no open
-	// positions" invariant (H4). Routing through expireMarket keeps
-	// auto / manual paths uniform; the helper is idempotent so the
-	// double Markets.Set is harmless.
 	if msg.NewStatus == perptypes.MarketStatusExpired {
-		if err := m.expireMarket(ctx, market); err != nil {
+		if err := m.applyMarketExit(ctx, market); err != nil {
 			return nil, err
 		}
 	}
