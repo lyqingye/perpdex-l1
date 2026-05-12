@@ -128,6 +128,7 @@ func UpdateMarket(
 		NewStatus:          newStatus,
 		NewTakerFee:        market.TakerFee,
 		NewMakerFee:        market.MakerFee,
+		NewLiquidationFee:  market.LiquidationFee,
 		NewMinBaseAmount:   market.MinBaseAmount,
 		NewMinQuoteAmount:  market.MinQuoteAmount,
 		NewOrderQuoteLimit: market.OrderQuoteLimit,

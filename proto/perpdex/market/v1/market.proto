@@ -64,4 +64,13 @@ message Params {
   uint32 max_perps_market_index = 1;
   uint32 min_spot_market_index = 2;
   uint32 max_spot_market_index = 3;
+  // max_markets_expired_per_block bounds how many markets EndBlocker
+  // may expire in a single block. Without this cap, a block where many
+  // markets simultaneously cross their ExpiryTimestamp (e.g. a batched
+  // delisting) could spend the whole budget running ApplyExitPosition
+  // for every expired market and stall block production. Markets that
+  // could not be processed in one block stay in the ExpiryIndex and
+  // get picked up by the next block. 0 disables auto-expiry entirely
+  // (governance-only delisting).
+  uint32 max_markets_expired_per_block = 4;
 }

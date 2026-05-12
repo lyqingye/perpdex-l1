@@ -39,6 +39,7 @@ message MsgUpdateMarket {
   uint64 new_min_quote_amount = 7;
   int64 new_order_quote_limit = 8;
   int64 new_expiry_timestamp = 9;
+  uint32 new_liquidation_fee = 10;
 }
 
 message MsgUpdateMarketResponse {}

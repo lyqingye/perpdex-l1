@@ -30,8 +30,15 @@ message QueryMarketDetailsRequest { uint32 market_index = 1; }
 message QueryMarketDetailsResponse { MarketDetails details = 1 [(gogoproto.nullable) = false]; }
 
 message QueryMarketsRequest {
+  // market_type is the value to match against when filter_by_type is
+  // true. The default value (perps == 0) is indistinguishable from
+  // "unset" in proto3, so callers MUST set filter_by_type to opt in
+  // to filtering — including when they explicitly want perps.
   uint32 market_type = 1;
   cosmos.base.query.v1beta1.PageRequest pagination = 2;
+  // filter_by_type toggles the market_type predicate. When false the
+  // query returns every market regardless of market_type.
+  bool filter_by_type = 3;
 }
 message QueryMarketsResponse {
   repeated Market markets = 1 [(gogoproto.nullable) = false];
