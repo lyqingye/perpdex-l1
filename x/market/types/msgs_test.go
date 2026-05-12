@@ -25,10 +25,6 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// ---------------------------------------------------------------------
-// Test fixtures
-// ---------------------------------------------------------------------
-
 // validPerpMarket returns a perp market record that should pass every
 // statics check at the canonical defaults. Tests mutate one field per
 // subcase to assert each rejection path independently.
@@ -106,10 +102,6 @@ func validUpdateMarketDetailsMsg() *types.MsgUpdateMarketDetails {
 		NewOpenInterestLimit:  1_000_000,
 	}
 }
-
-// ---------------------------------------------------------------------
-// MsgCreateMarket.ValidateBasic
-// ---------------------------------------------------------------------
 
 func TestMsgCreateMarket_Valid(t *testing.T) {
 	mkt := validPerpMarket()
@@ -328,10 +320,6 @@ func TestMsgCreateMarket_RejectsNonZeroRuntimeFields(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------
-// MsgUpdateMarket.ValidateBasic
-// ---------------------------------------------------------------------
-
 func TestMsgUpdateMarket_Valid(t *testing.T) {
 	require.NoError(t, validUpdateMarketMsg().ValidateBasic())
 }
@@ -406,10 +394,6 @@ func TestMsgUpdateMarket_NegativeOrderQuoteLimit(t *testing.T) {
 	require.ErrorIs(t, m.ValidateBasic(), types.ErrInvalidParams)
 }
 
-// ---------------------------------------------------------------------
-// MsgUpdateMarketDetails.ValidateBasic
-// ---------------------------------------------------------------------
-
 func TestMsgUpdateMarketDetails_Valid(t *testing.T) {
 	require.NoError(t, validUpdateMarketDetailsMsg().ValidateBasic())
 }
@@ -461,10 +445,6 @@ func TestMsgUpdateMarketDetails_OpenInterestLimitTooHigh(t *testing.T) {
 	m.NewOpenInterestLimit = perptypes.MaxOrderBaseAmount + 1
 	require.ErrorIs(t, m.ValidateBasic(), types.ErrInvalidParams)
 }
-
-// ---------------------------------------------------------------------
-// MsgUpdateParams.ValidateBasic
-// ---------------------------------------------------------------------
 
 func TestMsgUpdateParams_Valid(t *testing.T) {
 	m := &types.MsgUpdateParams{
@@ -534,10 +514,6 @@ func TestMsgUpdateParams_MaxMarketsZero(t *testing.T) {
 	}
 	require.NoError(t, m.ValidateBasic())
 }
-
-// ---------------------------------------------------------------------
-// Params helper methods
-// ---------------------------------------------------------------------
 
 func TestParams_IsValidIndex(t *testing.T) {
 	p := types.DefaultParams()

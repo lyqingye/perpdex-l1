@@ -66,7 +66,6 @@ func (k *Keeper) SetLiquidationKeeper(l types.LiquidationKeeper) { k.liquidation
 
 func (k Keeper) Authority() string { return k.authority }
 
-// GetMarket returns a Market or ErrMarketNotFound.
 func (k Keeper) GetMarket(ctx context.Context, idx uint32) (types.Market, error) {
 	m, err := k.Markets.Get(ctx, idx)
 	if err != nil {
@@ -335,21 +334,17 @@ func checkedAddInt64(a, b int64) (int64, error) {
 	return a + b, nil
 }
 
-// IsPerpsMarket reports whether the market index falls in the
-// perpetual range defined by the current chain Params.
 func (k Keeper) IsPerpsMarket(ctx context.Context, idx uint32) bool {
 	p, err := k.Params.Get(ctx)
 	if err != nil {
 		// Fall back to the chain-wide constants if Params are
 		// unavailable (e.g. very early in app boot before
-		// InitGenesis). This matches the pre-refactor behaviour.
+		// InitGenesis).
 		return idx <= perptypes.MaxPerpsMarketIndex && idx != perptypes.NilMarketIndex
 	}
 	return p.IsPerpsIndex(idx)
 }
 
-// IsSpotMarket reports whether the market index falls in the spot
-// range defined by the current chain Params.
 func (k Keeper) IsSpotMarket(ctx context.Context, idx uint32) bool {
 	p, err := k.Params.Get(ctx)
 	if err != nil {
@@ -358,7 +353,6 @@ func (k Keeper) IsSpotMarket(ctx context.Context, idx uint32) bool {
 	return p.IsSpotIndex(idx)
 }
 
-// IterateMarkets walks all markets in index order.
 func (k Keeper) IterateMarkets(ctx context.Context, cb func(types.Market) bool) error {
 	iter, err := k.Markets.Iterate(ctx, nil)
 	if err != nil {

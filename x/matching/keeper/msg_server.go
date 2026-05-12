@@ -102,7 +102,6 @@ func (m msgServer) CreateOrder(ctx context.Context, msg *types.MsgCreateOrder) (
 	if err := m.checkPreLiquidationGate(ctx, msg.AccountIndex, msg.MarketIndex, msg.ReduceOnly); err != nil {
 		return nil, err
 	}
-	// Market-configured minima and per-order quote cap.
 	if market.MinBaseAmount > 0 && msg.BaseAmount < market.MinBaseAmount {
 		return nil, types.ErrInvalidOrder.Wrapf("base_amount %d below market min %d", msg.BaseAmount, market.MinBaseAmount)
 	}
@@ -172,7 +171,6 @@ func (m msgServer) CreateOrder(ctx context.Context, msg *types.MsgCreateOrder) (
 		}
 	}
 
-	// Allocate order_index and nonce.
 	idx, err := m.bookKeeper.AllocateOrderIndex(ctx)
 	if err != nil {
 		return nil, err
@@ -224,12 +222,6 @@ func (m msgServer) CreateOrder(ctx context.Context, msg *types.MsgCreateOrder) (
 	}
 	order.Status = status
 
-	// IOC residue is rejected — terminal cancellation; everything else
-	// either rests on the book (Open / PartiallyFilled with remaining
-	// base) or is fully filled. OpenOrder branches internally on
-	// order.Status: terminal orders are persisted without entry/index;
-	// non-terminal orders are inserted with the right indexes in one
-	// atomic step.
 	if msg.TimeInForce == perptypes.IOC && order.RemainingBaseAmount > 0 {
 		order.Status = perptypes.OrderStatusCancelled
 	}
@@ -426,7 +418,6 @@ func (m msgServer) ModifyOrder(ctx context.Context, msg *types.MsgModifyOrder) (
 	} else if !ok {
 		return nil, types.ErrUnauthorized
 	}
-	// Only resting, modifiable orders can be modified.
 	switch o.Status {
 	case perptypes.OrderStatusOpen, perptypes.OrderStatusPartiallyFilled:
 		if o.RemainingBaseAmount == 0 {

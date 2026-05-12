@@ -57,9 +57,7 @@ func (s *stubAccountKeeper) IterateAccounts(_ context.Context, _ func(accounttyp
 }
 
 // IterateAccountPositions yields s.pos when the seeded account matches.
-// Skips empty positions (Position == 0) so behaviour matches the real
-// keeper closely enough for the slice of tests that exercise the
-// MaxPerpsMarketIndex full-scan code paths after the iterator refactor.
+// Empty positions are skipped to mirror the real keeper.
 func (s *stubAccountKeeper) IterateAccountPositions(
 	_ context.Context,
 	accountIdx uint64,
@@ -392,7 +390,6 @@ func TestIsValidRiskChangeFrom_PreLiquidationRejectsMMRGrowth(t *testing.T) {
 	// Snapshot pre-state: PRE class.
 	pre, err := k.SnapshotRisk(ctx, 1)
 	require.NoError(t, err)
-	// Sanity: pre is PRE.
 	preStatus, err := k.GetHealthStatus(ctx, 1)
 	require.NoError(t, err)
 	require.Equal(t, perptypes.HealthPreLiquidation, preStatus)

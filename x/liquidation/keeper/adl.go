@@ -92,7 +92,6 @@ func (k Keeper) BuildADLQueue(
 		}
 		uPnL := pos.UnrealizedPnL(snap.MarkPrice)
 		if !uPnL.IsPositive() {
-			// Losing or zero-PnL positions are not candidates.
 			return false
 		}
 		leverage := computeLeverage(snap.CrossRisk)

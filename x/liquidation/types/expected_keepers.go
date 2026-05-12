@@ -28,8 +28,7 @@ type AccountKeeper interface {
 	AddCollateral(ctx context.Context, idx uint64, delta math.Int) error
 	IterateAccounts(ctx context.Context, cb func(accounttypes.Account) bool) error
 	// IterateAccountPositions walks every persisted position row owned by
-	// `accountIdx`. Callback returns true to stop. Used by processAccount
-	// and rankVictimPositionsByUPnL in lieu of MaxPerpsMarketIndex scans.
+	// `accountIdx`. Callback returns true to stop.
 	IterateAccountPositions(ctx context.Context, accountIdx uint64, cb func(accounttypes.AccountPosition) bool) error
 	IsAuthorized(ctx context.Context, signer string, idx uint64) (bool, error)
 }

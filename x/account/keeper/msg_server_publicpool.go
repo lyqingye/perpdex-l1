@@ -12,8 +12,6 @@ import (
 	"github.com/perpdex/perpdex-l1/x/account/types"
 )
 
-// ---------- CreatePublicPool ----------
-
 // CreatePublicPool creates a new pool sub-account whose master is
 // `msg.MasterAccountIndex`. The master pays
 // `initial_total_shares * INITIAL_POOL_SHARE_VALUE * USDC_TO_COLLATERAL`
@@ -39,12 +37,10 @@ func (m msgServer) CreatePublicPool(ctx context.Context, msg *types.MsgCreatePub
 	resolvedType := perptypes.PublicPoolAccountType
 	resolvedMode := perptypes.AccountTradingModeSimple
 
-	// Compute seed collateral = initial_total_shares * INITIAL_POOL_SHARE_VALUE * USDC_TO_COLLATERAL.
 	seedUSDC := math.NewIntFromUint64(msg.InitialTotalShares).
 		Mul(math.NewIntFromUint64(perptypes.InitialPoolShareValue))
 	seedCollat := seedUSDC.Mul(math.NewIntFromUint64(perptypes.USDCToCollateralMultiplier))
 
-	// Pre-flight: master must have enough collateral.
 	if master.Collateral.LT(seedCollat) {
 		return nil, types.ErrInsufficientFunds.Wrapf(
 			"need %s, have %s", seedCollat.String(), master.Collateral.String(),
@@ -101,8 +97,6 @@ func (m msgServer) CreatePublicPool(ctx context.Context, msg *types.MsgCreatePub
 	))
 	return &types.MsgCreatePublicPoolResponse{PoolAccountIndex: pool.AccountIndex}, nil
 }
-
-// ---------- UpdatePublicPool ----------
 
 // UpdatePublicPool flips status / operator_fee / min_operator_share_rate.
 // Sender must be the pool's master owner. The pool must be ACTIVE
@@ -198,7 +192,6 @@ func (m msgServer) assertPoolEmpty(ctx context.Context, pool types.Account) erro
 			"pool has %d open order(s)", pool.TotalOrderCount,
 		)
 	}
-	// Walk positions for this pool index.
 	var firstNonZero *types.AccountPosition
 	if err := m.IterateAccountPositions(ctx, pool.AccountIndex, func(p types.AccountPosition) bool {
 		if !p.BaseSize.IsZero() {
@@ -217,8 +210,6 @@ func (m msgServer) assertPoolEmpty(ctx context.Context, pool types.Account) erro
 	}
 	return nil
 }
-
-// ---------- helpers shared by mint/burn ----------
 
 // resolveSenderMaster returns sender's master account, used by mint/burn
 // to identify the LP account row for the share entry.
@@ -269,8 +260,6 @@ func (m msgServer) isPoolOperator(ctx context.Context, pool types.Account, sende
 	}
 	return master.OwnerAddress == sender, nil
 }
-
-// ---------- MintShares ----------
 
 // MintShares deposits sender's master collateral into the pool and
 // allocates fresh shares at the current NAV. Principal is the cumulative
@@ -329,7 +318,6 @@ func (m msgServer) MintShares(ctx context.Context, msg *types.MsgMintShares) (*t
 		return nil, err
 	}
 
-	// Move funds: master.collateral -> pool.collateral.
 	if err := m.AddCollateral(ctx, master.AccountIndex, collatDelta.Neg()); err != nil {
 		return nil, err
 	}
@@ -372,8 +360,6 @@ func (m msgServer) MintShares(ctx context.Context, msg *types.MsgMintShares) (*t
 	))
 	return &types.MsgMintSharesResponse{ShareAmount: shareAmount}, nil
 }
-
-// ---------- BurnShares ----------
 
 // BurnShares redeems sender's shares from the pool back to USDC.
 // Cooldown applies to LLP + non-operator burns. operator_fee_share
@@ -482,7 +468,6 @@ func (m msgServer) burnSharesCore(
 		}
 	}
 
-	// Compute pre-fee redemption USDC value.
 	usdcValue, err := m.SharesToUSDCValue(ctx, poolIdx, shareAmount)
 	if err != nil {
 		return nil, err
@@ -497,7 +482,6 @@ func (m msgServer) burnSharesCore(
 	if !isOperator {
 		ownedShares := depositor.PublicPoolShares[entryIdx].ShareAmount
 		entryUSDC := depositor.PublicPoolShares[entryIdx].PrincipalAmount
-		// usdc_paid_for_shares = entry_usdc * share_amount / owned_shares
 		usdcPaid := entryUSDC.Mul(shareAmount).Quo(ownedShares)
 		if usdcValue.GT(usdcPaid) && info.OperatorFee > 0 {
 			tav, err := m.riskKeeper.GetTotalAccountValue(ctx, poolIdx)
@@ -546,10 +530,8 @@ func (m msgServer) burnSharesCore(
 			// Operator-fee shares are awarded to the operator.
 			info.OperatorShares = info.OperatorShares.Add(operatorFeeShares)
 		}
-		// Non-frozen pools must always respect the operator floor, including
-		// when an operator burn drove OperatorShares to zero (previously the
-		// IsPositive guard let that edge case bypass the check, letting the
-		// operator withdraw their skin-in-the-game entirely).
+		// Non-frozen pools must always respect the operator floor,
+		// including when an operator burn drove OperatorShares to zero.
 		if !frozen && !CheckMinOperatorShareRate(*info) {
 			return types.ErrOperatorRateViolation
 		}
@@ -581,8 +563,6 @@ func (m msgServer) burnSharesCore(
 	))
 	return &types.MsgBurnSharesResponse{UsdcAmount: deliveredUSDC.Uint64()}, nil
 }
-
-// ---------- StrategyTransfer ----------
 
 // StrategyTransfer reallocates collateral between IF strategy buckets.
 // Pool must be IF, non-frozen, sender must be the pool operator,
@@ -642,8 +622,6 @@ func (m msgServer) StrategyTransfer(ctx context.Context, msg *types.MsgStrategyT
 	))
 	return &types.MsgStrategyTransferResponse{}, nil
 }
-
-// ---------- ForceBurnShares ----------
 
 // ForceBurnShares is the gov-authority escape hatch on the LLP pool.
 // Bypasses the cooldown, otherwise mirrors BurnShares.

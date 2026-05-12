@@ -187,7 +187,7 @@ func (m msgServer) UpdateMarket(ctx context.Context, msg *types.MsgUpdateMarket)
 	// becomes false). For the EXPIRED transition we additionally need
 	// to run applyMarketExit to close residual positions against the
 	// insurance fund (H4). The two helpers compose without a redundant
-	// Markets.Set so the manual delist path is now O(1) writes.
+	// Markets.Set so the manual delist path stays O(1) writes.
 	if err := m.updateMarket(ctx, oldMarket, market); err != nil {
 		return nil, err
 	}

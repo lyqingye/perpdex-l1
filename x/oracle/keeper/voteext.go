@@ -3,7 +3,6 @@ package keeper
 import (
 	"bytes"
 	"errors"
-	"fmt"
 
 	abci "github.com/cometbft/cometbft/abci/types"
 	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
@@ -288,12 +287,3 @@ func CountCommittedVotes(ext abci.ExtendedCommitInfo) (committedPower, totalPowe
 // helpers that need a sentinel for ProcessProposal callers.
 var ErrInvalidExtendedCommit = errors.New("oracle: invalid extended commit")
 
-// describeRejection wraps abci.ResponseProcessProposal with a string so
-// log lines can give operators a cause without having to plumb errors
-// through cometbft's response shape.
-func describeRejection(reason string) *abci.ResponseProcessProposal {
-	_ = fmt.Sprintf("oracle: rejecting proposal: %s", reason)
-	return rejectProposal()
-}
-
-var _ = describeRejection // retained for future telemetry hooks

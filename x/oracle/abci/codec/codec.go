@@ -52,7 +52,6 @@ type ExtendedCommitCodec interface {
 // RawVoteExtensionCodec is the no-compression VoteExtensionCodec.
 type RawVoteExtensionCodec struct{}
 
-// NewRawVoteExtensionCodec returns the raw VE codec.
 func NewRawVoteExtensionCodec() RawVoteExtensionCodec { return RawVoteExtensionCodec{} }
 
 func (RawVoteExtensionCodec) Encode(v oracletypes.OracleVote) ([]byte, error) {
@@ -77,7 +76,6 @@ func (RawVoteExtensionCodec) Decode(bz []byte) (oracletypes.OracleVote, error) {
 // RawExtendedCommitCodec is the no-compression ExtendedCommitCodec.
 type RawExtendedCommitCodec struct{}
 
-// NewRawExtendedCommitCodec returns the raw EC codec.
 func NewRawExtendedCommitCodec() RawExtendedCommitCodec { return RawExtendedCommitCodec{} }
 
 func (RawExtendedCommitCodec) Encode(ec cometabci.ExtendedCommitInfo) ([]byte, error) {
@@ -149,7 +147,6 @@ type ZstdVoteExtensionCodec struct {
 	decoder *zstd.Decoder
 }
 
-// NewZstdVoteExtensionCodec wraps `inner` in a zstd frame.
 func NewZstdVoteExtensionCodec(inner VoteExtensionCodec) (*ZstdVoteExtensionCodec, error) {
 	enc, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest))
 	if err != nil {

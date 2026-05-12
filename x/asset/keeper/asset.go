@@ -121,7 +121,6 @@ func (k Keeper) AllAssets(ctx context.Context) ([]types.Asset, error) {
 	return out, nil
 }
 
-// HasDenom reports whether the denom is already registered.
 func (k Keeper) HasDenom(ctx context.Context, denom string) (bool, error) {
 	return k.DenomToIndex.Has(ctx, denom)
 }

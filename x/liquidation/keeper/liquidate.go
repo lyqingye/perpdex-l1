@@ -54,8 +54,6 @@ func (k Keeper) Liquidate(ctx context.Context, victim uint64, marketIdx uint32, 
 	if pos.BaseSize.IsZero() {
 		return types.ErrNotLiquidatable.Wrap("victim has no position")
 	}
-	// Determine the relevant health (cross account vs isolated
-	// position) based on the victim's margin mode for this market.
 	status, err := k.victimHealthForPosition(ctx, victim, marketIdx, pos)
 	if err != nil {
 		return err
@@ -99,11 +97,6 @@ func (k Keeper) Liquidate(ctx context.Context, victim uint64, marketIdx uint32, 
 		return err
 	}
 
-	// Drive the close-out through the public order book. The matching
-	// keeper synthesises a victim-owned LIQUIDATION_ORDER + IOC +
-	// reduce_only and consumes opposite makers at prices that improve
-	// on the zero price. The synthetic taker is never persisted; IOC
-	// residue is silently discarded.
 	var filled uint64
 	if k.matchingKeeper != nil {
 		filled, err = k.matchingKeeper.MatchLiquidationOrder(

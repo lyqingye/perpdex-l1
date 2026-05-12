@@ -27,8 +27,6 @@ func (a *Account) NormalizeIntFields() {
 	}
 }
 
-// NormalizeIntFields rewrites every nil math.Int on the spot-asset row
-// to math.ZeroInt().
 func (a *AccountAsset) NormalizeIntFields() {
 	if a.Balance.IsNil() {
 		a.Balance = math.ZeroInt()

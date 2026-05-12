@@ -6,7 +6,6 @@ import (
 	perptypes "github.com/perpdex/perpdex-l1/types"
 )
 
-// NormalizeIntFields rewrites every nil math.Int on the row to math.ZeroInt().
 func (d *MarketDetails) NormalizeIntFields() {
 	if d.FundingRatePrefixSum.IsNil() {
 		d.FundingRatePrefixSum = math.ZeroInt()

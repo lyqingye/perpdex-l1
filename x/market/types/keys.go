@@ -11,7 +11,6 @@ const (
 // allocation leaves 0x04..0xFF available for future indices without
 // reshaping the layout.
 var (
-	// ParamsKey stores the singleton market.Params (collections.Item).
 	ParamsKey = []byte{0x00}
 	// MarketKey is the prefix for the per-index Market record
 	// (collections.Map[uint32, Market]). Holds the static,

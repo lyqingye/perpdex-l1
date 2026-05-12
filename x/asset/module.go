@@ -26,7 +26,6 @@ var (
 	_ module.HasServices    = AppModule{}
 )
 
-// AppModuleBasic implements module.AppModuleBasic.
 type AppModuleBasic struct {
 	cdc codec.Codec
 }

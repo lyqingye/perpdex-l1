@@ -86,7 +86,6 @@ func (k Keeper) processAccount(
 	// positions.
 	healthyCross := crossStatus == perptypes.HealthHealthy || crossStatus == perptypes.HealthPreLiquidation
 
-	// Walk only persisted position rows.
 	var iterErr error
 	if err := k.accountKeeper.IterateAccountPositions(ctx, a.AccountIndex, func(pos accounttypes.AccountPosition) bool {
 		if pos.BaseSize.IsZero() {
@@ -110,7 +109,6 @@ func (k Keeper) processAccount(
 			return false
 		}
 
-		// Flag for keeper bots.
 		flag := types.LiquidationFlag{
 			AccountIndex:   a.AccountIndex,
 			MarketIndex:    marketIdx,

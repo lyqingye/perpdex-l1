@@ -14,7 +14,5 @@ var (
 	ErrAssetDisabled        = errors.Register(ModuleName, 8, "asset is disabled")
 	// ErrInvalidModuleParams flags an invalid Params struct (module-wide
 	// configuration). ErrInvalidAssetParams flags an invalid Asset row.
-	// Code 9 is retained to keep the on-chain code stable across the
-	// rename from ErrInvalidParams.
 	ErrInvalidModuleParams = errors.Register(ModuleName, 9, "invalid module params")
 )

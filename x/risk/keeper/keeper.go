@@ -14,31 +14,10 @@ import (
 )
 
 // Keeper implements the pure risk computations described in 16-risk.md
-// and the "Liquidations & LLP" specification. The keeper owns
-// only the module Params; pre-state RiskParameters used by the
-// post-state regression check live in a function-local
-// `types.PreRiskSnapshot` value threaded through by the caller.
-//
-// The keeper code is split across several files for navigability:
-//
-//   - keeper.go   : Keeper struct + constructor + universally-shared
-//                   helpers (Authority, resolveMarkPrice,
-//                   GetMarkAndMarketDetails). Per-RP health classification
-//                   lives on RiskParameters itself in x/risk/types so
-//                   liquidation-side callers can classify locally without
-//                   re-aggregating state.
-//   - cross.go    : cross-margin aggregation (ComputeCrossRisk,
-//                   GetHealthStatus, GetTotalAccountValue,
-//                   GetAvailableCollateral, GetAvailableUsdcCollateral)
-//                   and the per-cross half of IsValidRiskChangeFrom.
-//   - isolated.go : isolated-margin per-position equivalents
-//                   (ComputeIsolatedRisk, GetIsolatedHealthStatus,
-//                   IterateIsolatedPositions, isIsolatedRiskChangeValid).
-//   - risk_change.go : IsValidRiskChangeFrom, SnapshotRisk, and classifyChange;
-//                      stitches cross + isolated together.
-//   - liquidation.go : liquidation-specific math
-//                      (GetPositionZeroPrice, SimulateRiskAfterTakeover,
-//                      GetLiquidationRiskSnapshot, GetZeroPriceSnapshot).
+// and the "Liquidations & LLP" specification. The keeper owns only the
+// module Params; pre-state RiskParameters used by the post-state
+// regression check live in a function-local `types.PreRiskSnapshot`
+// value threaded through by the caller.
 //
 // Schema byte prefixes 0x01 / 0x02 were used for the now-removed
 // pre-state KV caches; future schema additions MUST pick a fresh

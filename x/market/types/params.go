@@ -52,14 +52,10 @@ func (p Params) Validate() error {
 	return nil
 }
 
-// IsPerpsIndex reports whether the given market_index falls in the
-// perps range as defined by p.
 func (p Params) IsPerpsIndex(idx uint32) bool {
 	return idx <= p.MaxPerpsMarketIndex && idx != perptypes.NilMarketIndex
 }
 
-// IsSpotIndex reports whether the given market_index falls in the spot
-// range as defined by p.
 func (p Params) IsSpotIndex(idx uint32) bool {
 	return idx >= p.MinSpotMarketIndex && idx <= p.MaxSpotMarketIndex
 }

@@ -183,8 +183,7 @@ func (k Keeper) matchLiquidation(
 		if errors.Is(err, errTakerRejected) {
 			// Recoverable taker rejection on the victim: prior
 			// fills are retained, residue is dropped by the IOC
-			// caller. Mirrors the legacy fillStepTakerAbort
-			// behavior of the old matchLiquidationLoop.
+			// caller.
 			return totalFilled, nil
 		}
 		if err != nil {

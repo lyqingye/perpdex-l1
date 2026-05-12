@@ -1,12 +1,9 @@
 package types
 
 const (
-	// ModuleName is the name of the asset module.
 	ModuleName = "asset"
-	// StoreKey is the default store key used by x/asset.
-	StoreKey = ModuleName
-	// RouterKey is the message router key.
-	RouterKey = ModuleName
+	StoreKey   = ModuleName
+	RouterKey  = ModuleName
 )
 
 // Collections prefixes for x/asset (matches design doc 11-asset.md §4).

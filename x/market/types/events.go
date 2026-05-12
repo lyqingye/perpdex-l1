@@ -1,6 +1,5 @@
 package types
 
-// Event types for the market module.
 const (
 	// EventTypeMarketCreated is emitted by MsgCreateMarket when a new
 	// market is persisted. It carries enough metadata for indexers to
@@ -38,7 +37,6 @@ const (
 	EventTypeMarketExpireExitFailed = "market_expire_exit_failed"
 )
 
-// Attribute keys for market events.
 const (
 	AttributeKeyMarketIndex          = "market_index"
 	AttributeKeyMarketType           = "market_type"
