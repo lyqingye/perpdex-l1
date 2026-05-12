@@ -40,12 +40,11 @@ func (p Params) Validate() error {
 			p.MaxPerpsMarketIndex, perptypes.NilMarketIndex,
 		)
 	}
-	if uint32(p.MaxSpotMarketIndex) >= perptypes.NilMarketIndex && p.MaxSpotMarketIndex != perptypes.MaxSpotMarketIndex {
-		// MaxSpotMarketIndex (4094) is already > NilMarketIndex (255)
-		// in the canonical layout; that is fine because spot indices
-		// live in their own range. The check above only guards perps.
-		_ = p.MaxSpotMarketIndex
-	}
+	// NilMarketIndex (255) deliberately falls inside the canonical
+	// spot range (256..4094) because perps and spot have disjoint
+	// ranges and "no market" is encoded uniformly. No upper-bound
+	// check applies to MaxSpotMarketIndex beyond the perps/spot
+	// ordering enforced above.
 	// MaxMarketsExpiredPerBlock is intentionally allowed to be 0 to
 	// give operators an emergency switch that disables the EndBlocker
 	// auto-expiry path (governance must then call MsgUpdateMarket

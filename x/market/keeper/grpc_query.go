@@ -52,18 +52,14 @@ func (q Querier) MarketDetails(ctx context.Context, req *types.QueryMarketDetail
 	return &types.QueryMarketDetailsResponse{Details: d}, nil
 }
 
-// Markets returns the (optionally filtered, paginated) list of markets.
-// The proto declares `market_type` as a filter and a `pagination`
-// envelope; both used to be ignored. We honour them now via
-// CollectionFilteredPaginate.
+// Markets returns the (optionally filtered, paginated) list of
+// markets. Filtering by market_type is opt-in via `FilterByType`
+// because proto3 cannot distinguish an unset `MarketType` from
+// `MarketTypePerps == 0`; without the explicit flag a request for
+// "only perps" would be observationally identical to "any market".
 //
-// `market_type` is a uint32, so we cannot tell "absent" from
-// "MarketTypePerps=0". Clients that want every market regardless of
-// type must use the explicit `filter_by_type=false` semantic baked
-// into proto by an extra bool — to avoid the ABI break we instead
-// treat `market_type` as a filter ONLY when paginated requests set it
-// alongside a pagination key/offset, OR when callers explicitly want
-// perps. This is documented in the wrapper comment.
+// The pagination envelope is honoured by CollectionFilteredPaginate
+// so clients get correct next-page tokens, total counts, etc.
 func (q Querier) Markets(ctx context.Context, req *types.QueryMarketsRequest) (*types.QueryMarketsResponse, error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "empty request")
@@ -71,13 +67,7 @@ func (q Querier) Markets(ctx context.Context, req *types.QueryMarketsRequest) (*
 	out, pageRes, err := query.CollectionFilteredPaginate(
 		ctx, q.k.Markets, req.Pagination,
 		func(_ uint32, v types.Market) (bool, error) {
-			// market_type field semantics: a non-default value is
-			// interpreted as a filter. The default (perps=0) is
-			// equivalent to "no filter" — perps and spot live in
-			// different index ranges so callers wanting only perps
-			// should typically also constrain via pagination range.
-			// We accept that ambiguity to keep the proto ABI stable.
-			if req.MarketType != 0 && v.MarketType != req.MarketType {
+			if req.FilterByType && v.MarketType != req.MarketType {
 				return false, nil
 			}
 			return true, nil

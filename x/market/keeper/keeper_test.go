@@ -766,8 +766,32 @@ func TestQueryMarkets_FilterByType(t *testing.T) {
 	_, err = env.srv.CreateMarket(env.ctx, validCreateSpotMsg(perptypes.MinSpotMarketIndex, perptypes.LITAssetIndex))
 	require.NoError(t, err)
 
-	resp, err := env.q.Markets(env.ctx, &types.QueryMarketsRequest{MarketType: perptypes.MarketTypeSpot})
+	// Spot-only filter.
+	resp, err := env.q.Markets(env.ctx, &types.QueryMarketsRequest{
+		FilterByType: true,
+		MarketType:   perptypes.MarketTypeSpot,
+	})
 	require.NoError(t, err)
 	require.Len(t, resp.Markets, 1)
 	require.Equal(t, perptypes.MarketTypeSpot, resp.Markets[0].MarketType)
+
+	// Perps-only filter (regression for proto3 default-value
+	// ambiguity: MarketTypePerps == 0 is indistinguishable from
+	// "unset", so the FilterByType flag is the only way to disambiguate).
+	resp, err = env.q.Markets(env.ctx, &types.QueryMarketsRequest{
+		FilterByType: true,
+		MarketType:   perptypes.MarketTypePerps,
+	})
+	require.NoError(t, err)
+	require.Len(t, resp.Markets, 1)
+	require.Equal(t, perptypes.MarketTypePerps, resp.Markets[0].MarketType)
+
+	// FilterByType=false ignores MarketType (even when set to
+	// MarketTypeSpot) and returns both markets.
+	resp, err = env.q.Markets(env.ctx, &types.QueryMarketsRequest{
+		FilterByType: false,
+		MarketType:   perptypes.MarketTypeSpot,
+	})
+	require.NoError(t, err)
+	require.Len(t, resp.Markets, 2)
 }
