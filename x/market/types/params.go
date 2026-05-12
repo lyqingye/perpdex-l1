@@ -30,22 +30,20 @@ func (p Params) Validate() error {
 	if p.MinSpotMarketIndex > p.MaxSpotMarketIndex {
 		return ErrInvalidParams.Wrap("min_spot_market_index > max_spot_market_index")
 	}
-	// NilMarketIndex (255) is reserved chain-wide for "no market". The
-	// upper bound of every range must stay strictly below it so that a
-	// NilMarketIndex value cannot accidentally resolve to a real
-	// market.
+	// NilMarketIndex (255) is reserved chain-wide for "no market".
+	// The perps range starts at 0, so its upper bound MUST stay
+	// strictly below NilMarketIndex; otherwise governance could grow
+	// it past 255 and collide with the sentinel. The spot range is
+	// not symmetric: it starts at MinSpotMarketIndex (canonical 2048,
+	// well above 255), so NilMarketIndex always falls in the gap
+	// between the two ranges and the spot upper bound needs no
+	// nil-guard.
 	if uint32(p.MaxPerpsMarketIndex) >= perptypes.NilMarketIndex {
 		return ErrInvalidParams.Wrapf(
 			"max_perps_market_index=%d must be < NilMarketIndex=%d",
 			p.MaxPerpsMarketIndex, perptypes.NilMarketIndex,
 		)
 	}
-	// NilMarketIndex (255) sits in the gap between the perps range
-	// (0..MaxPerpsMarketIndex, canonical 254) and the spot range
-	// (MinSpotMarketIndex..MaxSpotMarketIndex, canonical 2048..4094).
-	// Because that gap is exclusively reserved, no spot index can
-	// ever collide with NilMarketIndex — only the perps upper bound
-	// needs the explicit `< NilMarketIndex` guard above.
 	// MaxMarketsExpiredPerBlock is intentionally allowed to be 0 to
 	// give operators an emergency switch that disables the EndBlocker
 	// auto-expiry path (governance must then call MsgUpdateMarket
