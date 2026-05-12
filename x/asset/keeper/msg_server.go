@@ -20,6 +20,9 @@ func NewMsgServerImpl(k Keeper) types.MsgServer { return &msgServer{Keeper: k} }
 var _ types.MsgServer = msgServer{}
 
 func (m msgServer) RegisterAsset(ctx context.Context, msg *types.MsgRegisterAsset) (*types.MsgRegisterAssetResponse, error) {
+	if err := msg.ValidateBasic(); err != nil {
+		return nil, err
+	}
 	if msg.Authority != m.authority {
 		return nil, types.ErrInvalidAuthority.Wrapf("expected %s, got %s", m.authority, msg.Authority)
 	}
@@ -87,6 +90,9 @@ func (m msgServer) RegisterAsset(ctx context.Context, msg *types.MsgRegisterAsse
 }
 
 func (m msgServer) UpdateAsset(ctx context.Context, msg *types.MsgUpdateAsset) (*types.MsgUpdateAssetResponse, error) {
+	if err := msg.ValidateBasic(); err != nil {
+		return nil, err
+	}
 	if msg.Authority != m.authority {
 		return nil, types.ErrInvalidAuthority
 	}
@@ -104,11 +110,11 @@ func (m msgServer) UpdateAsset(ctx context.Context, msg *types.MsgUpdateAsset) (
 }
 
 func (m msgServer) UpdateParams(ctx context.Context, msg *types.MsgUpdateParams) (*types.MsgUpdateParamsResponse, error) {
+	if err := msg.ValidateBasic(); err != nil {
+		return nil, err
+	}
 	if msg.Authority != m.authority {
 		return nil, types.ErrInvalidAuthority
-	}
-	if err := msg.Params.Validate(); err != nil {
-		return nil, err
 	}
 	if err := m.Params.Set(ctx, msg.Params); err != nil {
 		return nil, err

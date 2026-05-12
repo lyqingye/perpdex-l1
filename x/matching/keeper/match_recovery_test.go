@@ -236,6 +236,10 @@ func TestCreateOrder_PerpOpenOrderCap(t *testing.T) {
 			TimeInForce:      perptypes.GTT,
 			Price:            1000,
 			BaseAmount:       1,
+			// MsgCreateOrder.ValidateBasic enforces Expiry > 0
+			// for GTT orders; the cap test does not care about
+			// the actual expiry value, just that the order rests.
+			Expiry: 1,
 		}
 	}
 
@@ -272,6 +276,8 @@ func TestCreateOrder_IOCBypassesCap(t *testing.T) {
 		ClientOrderIndex: 1, IsAsk: true,
 		OrderType: perptypes.LimitOrder, TimeInForce: perptypes.GTT,
 		Price: 1000, BaseAmount: 1,
+		// GTT requires Expiry > 0 (MsgCreateOrder.ValidateBasic).
+		Expiry: 1,
 	})
 	require.NoError(t, err)
 
