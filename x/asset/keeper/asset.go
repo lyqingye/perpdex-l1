@@ -70,14 +70,13 @@ func (k Keeper) CreateAsset(ctx context.Context, a types.Asset) error {
 	return k.DenomToIndex.Set(ctx, a.Denom, a.AssetIndex)
 }
 
-// UpdateAsset overwrites an existing asset row, keeping the denom
-// index consistent. The row at `a.AssetIndex` must already exist. If
-// the caller supplies a different denom than what's stored, the stale
-// DenomToIndex pointer is removed and the new one is added — and the
-// new denom must not already be in use by another asset. Today's
-// MsgUpdateAsset does not expose denom mutation, but routing every
-// future writer (gov, migrations, tests) through this method keeps the
-// secondary index correct by construction.
+// UpdateAsset overwrites an existing asset row. The row at
+// `a.AssetIndex` must already exist, and `a.Denom` must match the
+// stored denom — denom is the asset's permanent on-chain identity
+// (bank balances, IBC vouchers, indexer joins, wallet UX all key on
+// it), so we enforce immutability at the storage layer rather than
+// trusting msg-server omissions. A future "denom migration" feature,
+// if ever needed, must come as a separate, audited code path.
 func (k Keeper) UpdateAsset(ctx context.Context, a types.Asset) error {
 	if a.AssetIndex == perptypes.NilAssetIndex {
 		return types.ErrInvalidAssetParams.Wrap("asset_index must not be nil")
@@ -90,19 +89,10 @@ func (k Keeper) UpdateAsset(ctx context.Context, a types.Asset) error {
 		return err
 	}
 	if prev.Denom != a.Denom {
-		if exists, err := k.DenomToIndex.Has(ctx, a.Denom); err != nil {
-			return err
-		} else if exists {
-			return types.ErrAssetExists.Wrapf("denom=%s already mapped", a.Denom)
-		}
-		if prev.Denom != "" {
-			if err := k.DenomToIndex.Remove(ctx, prev.Denom); err != nil {
-				return err
-			}
-		}
-		if err := k.DenomToIndex.Set(ctx, a.Denom, a.AssetIndex); err != nil {
-			return err
-		}
+		return types.ErrInvalidAssetParams.Wrapf(
+			"asset_index=%d denom is immutable (current=%q, new=%q)",
+			a.AssetIndex, prev.Denom, a.Denom,
+		)
 	}
 	return k.Assets.Set(ctx, a.AssetIndex, a)
 }

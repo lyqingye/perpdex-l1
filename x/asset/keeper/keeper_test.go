@@ -524,40 +524,40 @@ func TestKeeperUpdateAsset_RejectsMissingAsset(t *testing.T) {
 	require.ErrorIs(t, err, types.ErrAssetNotFound)
 }
 
-// TestKeeperUpdateAsset_DenomChange_MaintainsIndex is the headline check
-// for the split: changing denom must atomically drop the old
-// DenomToIndex mapping and install the new one, with no orphan rows.
-func TestKeeperUpdateAsset_DenomChange_MaintainsIndex(t *testing.T) {
+// TestKeeperUpdateAsset_DenomIsImmutable asserts the storage-layer
+// invariant: denom is the asset's permanent identity and cannot be
+// changed via UpdateAsset, even though the in-memory Asset struct has
+// the field. msg_server.MsgUpdateAsset doesn't expose denom either, so
+// this is defense-in-depth.
+func TestKeeperUpdateAsset_DenomIsImmutable(t *testing.T) {
 	env := newTestEnv(t)
 	require.NoError(t, env.keeper.CreateAsset(env.ctx, sampleAsset(4, "ubtc", "BTC")))
 
-	updated := sampleAsset(4, "ubtc-v2", "BTC")
-	require.NoError(t, env.keeper.UpdateAsset(env.ctx, updated))
+	rogue := sampleAsset(4, "ubtc-v2", "BTC")
+	err := env.keeper.UpdateAsset(env.ctx, rogue)
+	require.ErrorIs(t, err, types.ErrInvalidAssetParams)
 
-	// Old denom must no longer resolve.
-	_, err := env.keeper.GetAssetByDenom(env.ctx, "ubtc")
-	require.ErrorIs(t, err, types.ErrAssetNotFound)
-
-	// New denom must resolve to the same asset_index.
-	got, err := env.keeper.GetAssetByDenom(env.ctx, "ubtc-v2")
-	require.NoError(t, err)
-	require.EqualValues(t, 4, got.AssetIndex)
-}
-
-// TestKeeperUpdateAsset_RejectsDenomCollision prevents an UpdateAsset
-// from rerouting its denom to one already mapped by another asset.
-func TestKeeperUpdateAsset_RejectsDenomCollision(t *testing.T) {
-	env := newTestEnv(t)
-	require.NoError(t, env.keeper.CreateAsset(env.ctx, sampleAsset(4, "ubtc", "BTC")))
-	require.NoError(t, env.keeper.CreateAsset(env.ctx, sampleAsset(5, "ueth", "ETH")))
-
-	// Try to move BTC's denom to "ueth", which is already in use.
-	bad := sampleAsset(4, "ueth", "BTC")
-	err := env.keeper.UpdateAsset(env.ctx, bad)
-	require.ErrorIs(t, err, types.ErrAssetExists)
-
-	// Original mappings should remain intact.
+	// Original mapping must be untouched.
 	got, err := env.keeper.GetAssetByDenom(env.ctx, "ubtc")
 	require.NoError(t, err)
 	require.EqualValues(t, 4, got.AssetIndex)
+	_, err = env.keeper.GetAssetByDenom(env.ctx, "ubtc-v2")
+	require.ErrorIs(t, err, types.ErrAssetNotFound)
+}
+
+// TestKeeperUpdateAsset_SameDenomSucceeds keeps the happy path covered:
+// mutating other fields while preserving denom must succeed.
+func TestKeeperUpdateAsset_SameDenomSucceeds(t *testing.T) {
+	env := newTestEnv(t)
+	require.NoError(t, env.keeper.CreateAsset(env.ctx, sampleAsset(4, "ubtc", "BTC")))
+
+	a := sampleAsset(4, "ubtc", "BTC")
+	a.MinTransferAmount = 42
+	a.Enabled = false
+	require.NoError(t, env.keeper.UpdateAsset(env.ctx, a))
+
+	got, err := env.keeper.GetAsset(env.ctx, 4)
+	require.NoError(t, err)
+	require.EqualValues(t, 42, got.MinTransferAmount)
+	require.False(t, got.Enabled)
 }
