@@ -37,11 +37,9 @@ func (m msgServer) RegisterAsset(ctx context.Context, msg *types.MsgRegisterAsse
 		return nil, err
 	}
 
-	if exists, err := m.HasDenom(ctx, msg.Denom); err != nil {
-		return nil, err
-	} else if exists {
-		return nil, types.ErrAssetExists.Wrapf("denom=%s", msg.Denom)
-	}
+	// Display-name uniqueness is a business rule (case-folded), not an
+	// index, so it stays in the msg server. Denom + asset_index
+	// uniqueness are enforced atomically by Keeper.CreateAsset below.
 	if nameTaken, err := m.HasDisplayName(ctx, msg.DisplayName); err != nil {
 		return nil, err
 	} else if nameTaken {
@@ -95,7 +93,7 @@ func (m msgServer) RegisterAsset(ctx context.Context, msg *types.MsgRegisterAsse
 		Enabled:             true,
 		CreatedAt:           sdkCtx.BlockTime().UnixMilli(),
 	}
-	if err := m.SetAsset(ctx, asset); err != nil {
+	if err := m.CreateAsset(ctx, asset); err != nil {
 		return nil, err
 	}
 
@@ -136,7 +134,9 @@ func (m msgServer) UpdateAsset(ctx context.Context, msg *types.MsgUpdateAsset) (
 	a.MinTransferAmount = msg.MinTransferAmount
 	a.MinWithdrawalAmount = msg.MinWithdrawalAmount
 	a.Enabled = msg.Enabled
-	if err := m.SetAsset(ctx, a); err != nil {
+	// Explicit Keeper.UpdateAsset because msgServer.UpdateAsset (this
+	// method) shadows the promoted Keeper method.
+	if err := m.Keeper.UpdateAsset(ctx, a); err != nil {
 		return nil, err
 	}
 

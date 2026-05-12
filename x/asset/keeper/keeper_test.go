@@ -38,6 +38,16 @@ type testEnv struct {
 
 func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()
+	env := newEmptyTestEnv(t)
+	require.NoError(t, env.keeper.InitGenesis(env.ctx, *types.DefaultGenesis()))
+	return env
+}
+
+// newEmptyTestEnv builds a keeper with an empty store — no InitGenesis
+// has been run yet. Used by tests that exercise InitGenesis itself
+// (e.g. the export → import round-trip).
+func newEmptyTestEnv(t *testing.T) *testEnv {
+	t.Helper()
 
 	cfg := sdk.GetConfig()
 	cfg.SetBech32PrefixForAccount("px", "pxpub")
@@ -53,8 +63,6 @@ func newTestEnv(t *testing.T) *testEnv {
 		runtime.NewKVStoreService(keys[types.StoreKey]),
 		testAuthority,
 	)
-	require.NoError(t, k.InitGenesis(ctx, *types.DefaultGenesis()))
-
 	return &testEnv{
 		ctx:    ctx,
 		keeper: k,
@@ -98,7 +106,7 @@ func TestInitGenesis_SeedsUSDC(t *testing.T) {
 // replaces the old in-handler "loop until >= MinAssetIndex" hack: a
 // genesis with NextAssetIndex == 0 still ends up safely seeded.
 func TestInitGenesis_NormalisesNextIndex(t *testing.T) {
-	env := newTestEnv(t)
+	env := newEmptyTestEnv(t)
 
 	gs := types.DefaultGenesis()
 	gs.NextAssetIndex = 0
@@ -410,7 +418,7 @@ func TestExportGenesis_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, gs.Validate())
 
-	env2 := newTestEnv(t)
+	env2 := newEmptyTestEnv(t)
 	require.NoError(t, env2.keeper.InitGenesis(env2.ctx, *gs))
 
 	usdc, err := env2.keeper.GetAsset(env2.ctx, perptypes.USDCAssetIndex)
@@ -455,4 +463,101 @@ func TestQuery_AssetByDenom_NotFoundError(t *testing.T) {
 	env := newTestEnv(t)
 	_, err := env.q.AssetByDenom(env.ctx, &types.QueryAssetByDenomRequest{Denom: "ubogus"})
 	require.Error(t, err)
+}
+
+// sampleAsset builds a minimal asset record for the keeper-level
+// CreateAsset / UpdateAsset tests; tests override fields they care
+// about.
+func sampleAsset(idx uint32, denom, name string) types.Asset {
+	return types.Asset{
+		AssetIndex:          idx,
+		Denom:               denom,
+		DisplayName:         name,
+		Decimals:            8,
+		ExtensionMultiplier: 1,
+		MinTransferAmount:   1,
+		MinWithdrawalAmount: 1,
+		MarginMode:          perptypes.MarginModeDisabled,
+		Enabled:             true,
+	}
+}
+
+func TestKeeperCreateAsset_RejectsNilIndex(t *testing.T) {
+	env := newEmptyTestEnv(t)
+	err := env.keeper.CreateAsset(env.ctx, sampleAsset(perptypes.NilAssetIndex, "ubtc", "BTC"))
+	require.ErrorIs(t, err, types.ErrInvalidAssetParams)
+}
+
+func TestKeeperCreateAsset_RejectsDuplicateIndex(t *testing.T) {
+	env := newTestEnv(t) // USDC seeded at idx 3
+	err := env.keeper.CreateAsset(env.ctx, sampleAsset(perptypes.USDCAssetIndex, "ubtc", "BTC"))
+	require.ErrorIs(t, err, types.ErrAssetExists)
+}
+
+func TestKeeperCreateAsset_RejectsDuplicateDenom(t *testing.T) {
+	env := newTestEnv(t) // USDC seeded with denom "uusdc"
+	err := env.keeper.CreateAsset(env.ctx, sampleAsset(4, "uusdc", "BTC"))
+	require.ErrorIs(t, err, types.ErrAssetExists)
+}
+
+func TestKeeperCreateAsset_Success(t *testing.T) {
+	env := newTestEnv(t)
+	require.NoError(t, env.keeper.CreateAsset(env.ctx, sampleAsset(4, "ubtc", "BTC")))
+	got, err := env.keeper.GetAsset(env.ctx, 4)
+	require.NoError(t, err)
+	require.Equal(t, "ubtc", got.Denom)
+
+	byDenom, err := env.keeper.GetAssetByDenom(env.ctx, "ubtc")
+	require.NoError(t, err)
+	require.EqualValues(t, 4, byDenom.AssetIndex)
+}
+
+func TestKeeperUpdateAsset_RejectsNilIndex(t *testing.T) {
+	env := newEmptyTestEnv(t)
+	err := env.keeper.UpdateAsset(env.ctx, sampleAsset(perptypes.NilAssetIndex, "ubtc", "BTC"))
+	require.ErrorIs(t, err, types.ErrInvalidAssetParams)
+}
+
+func TestKeeperUpdateAsset_RejectsMissingAsset(t *testing.T) {
+	env := newTestEnv(t)
+	err := env.keeper.UpdateAsset(env.ctx, sampleAsset(99, "ubtc", "BTC"))
+	require.ErrorIs(t, err, types.ErrAssetNotFound)
+}
+
+// TestKeeperUpdateAsset_DenomChange_MaintainsIndex is the headline check
+// for the split: changing denom must atomically drop the old
+// DenomToIndex mapping and install the new one, with no orphan rows.
+func TestKeeperUpdateAsset_DenomChange_MaintainsIndex(t *testing.T) {
+	env := newTestEnv(t)
+	require.NoError(t, env.keeper.CreateAsset(env.ctx, sampleAsset(4, "ubtc", "BTC")))
+
+	updated := sampleAsset(4, "ubtc-v2", "BTC")
+	require.NoError(t, env.keeper.UpdateAsset(env.ctx, updated))
+
+	// Old denom must no longer resolve.
+	_, err := env.keeper.GetAssetByDenom(env.ctx, "ubtc")
+	require.ErrorIs(t, err, types.ErrAssetNotFound)
+
+	// New denom must resolve to the same asset_index.
+	got, err := env.keeper.GetAssetByDenom(env.ctx, "ubtc-v2")
+	require.NoError(t, err)
+	require.EqualValues(t, 4, got.AssetIndex)
+}
+
+// TestKeeperUpdateAsset_RejectsDenomCollision prevents an UpdateAsset
+// from rerouting its denom to one already mapped by another asset.
+func TestKeeperUpdateAsset_RejectsDenomCollision(t *testing.T) {
+	env := newTestEnv(t)
+	require.NoError(t, env.keeper.CreateAsset(env.ctx, sampleAsset(4, "ubtc", "BTC")))
+	require.NoError(t, env.keeper.CreateAsset(env.ctx, sampleAsset(5, "ueth", "ETH")))
+
+	// Try to move BTC's denom to "ueth", which is already in use.
+	bad := sampleAsset(4, "ueth", "BTC")
+	err := env.keeper.UpdateAsset(env.ctx, bad)
+	require.ErrorIs(t, err, types.ErrAssetExists)
+
+	// Original mappings should remain intact.
+	got, err := env.keeper.GetAssetByDenom(env.ctx, "ubtc")
+	require.NoError(t, err)
+	require.EqualValues(t, 4, got.AssetIndex)
 }

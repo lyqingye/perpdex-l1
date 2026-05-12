@@ -46,29 +46,65 @@ func (k Keeper) GetAssetByDenom(ctx context.Context, denom string) (types.Asset,
 	return k.GetAsset(ctx, idx)
 }
 
-// SetAsset stores the asset and refreshes the denom index. If the row
-// already exists with a different denom, the stale DenomToIndex entry
-// is deleted so the secondary index never points at a retired denom.
-// Today's MsgUpdateAsset does not expose denom mutation, but keeping
-// this invariant local to SetAsset means future writers (governance,
-// migrations, tests) cannot accidentally orphan a denom mapping.
-func (k Keeper) SetAsset(ctx context.Context, a types.Asset) error {
+// CreateAsset inserts a brand-new asset and its denom index. It refuses
+// to overwrite an existing row (use UpdateAsset for that) and rejects
+// any denom collision against the secondary index. Display-name
+// uniqueness is a higher-level rule and stays in the msg server.
+func (k Keeper) CreateAsset(ctx context.Context, a types.Asset) error {
 	if a.AssetIndex == perptypes.NilAssetIndex {
 		return types.ErrInvalidAssetParams.Wrap("asset_index must not be nil")
 	}
-	prev, err := k.Assets.Get(ctx, a.AssetIndex)
-	if err != nil && !errors.Is(err, collections.ErrNotFound) {
+	if exists, err := k.Assets.Has(ctx, a.AssetIndex); err != nil {
 		return err
+	} else if exists {
+		return types.ErrAssetExists.Wrapf("asset_index=%d", a.AssetIndex)
 	}
-	if err == nil && prev.Denom != "" && prev.Denom != a.Denom {
-		if err := k.DenomToIndex.Remove(ctx, prev.Denom); err != nil {
-			return err
-		}
+	if exists, err := k.DenomToIndex.Has(ctx, a.Denom); err != nil {
+		return err
+	} else if exists {
+		return types.ErrAssetExists.Wrapf("denom=%s", a.Denom)
 	}
 	if err := k.Assets.Set(ctx, a.AssetIndex, a); err != nil {
 		return err
 	}
 	return k.DenomToIndex.Set(ctx, a.Denom, a.AssetIndex)
+}
+
+// UpdateAsset overwrites an existing asset row, keeping the denom
+// index consistent. The row at `a.AssetIndex` must already exist. If
+// the caller supplies a different denom than what's stored, the stale
+// DenomToIndex pointer is removed and the new one is added — and the
+// new denom must not already be in use by another asset. Today's
+// MsgUpdateAsset does not expose denom mutation, but routing every
+// future writer (gov, migrations, tests) through this method keeps the
+// secondary index correct by construction.
+func (k Keeper) UpdateAsset(ctx context.Context, a types.Asset) error {
+	if a.AssetIndex == perptypes.NilAssetIndex {
+		return types.ErrInvalidAssetParams.Wrap("asset_index must not be nil")
+	}
+	prev, err := k.Assets.Get(ctx, a.AssetIndex)
+	if err != nil {
+		if errors.Is(err, collections.ErrNotFound) {
+			return types.ErrAssetNotFound.Wrapf("asset_index=%d", a.AssetIndex)
+		}
+		return err
+	}
+	if prev.Denom != a.Denom {
+		if exists, err := k.DenomToIndex.Has(ctx, a.Denom); err != nil {
+			return err
+		} else if exists {
+			return types.ErrAssetExists.Wrapf("denom=%s already mapped", a.Denom)
+		}
+		if prev.Denom != "" {
+			if err := k.DenomToIndex.Remove(ctx, prev.Denom); err != nil {
+				return err
+			}
+		}
+		if err := k.DenomToIndex.Set(ctx, a.Denom, a.AssetIndex); err != nil {
+			return err
+		}
+	}
+	return k.Assets.Set(ctx, a.AssetIndex, a)
 }
 
 // AllAssets returns every registered asset in asset_index order.

@@ -20,7 +20,7 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 	}
 	maxSeenIdx := uint32(0)
 	for _, a := range gs.Assets {
-		if err := k.SetAsset(ctx, a); err != nil {
+		if err := k.CreateAsset(ctx, a); err != nil {
 			return err
 		}
 		if a.AssetIndex > maxSeenIdx {
