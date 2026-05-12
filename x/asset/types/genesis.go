@@ -8,34 +8,11 @@ import (
 	perptypes "github.com/perpdex/perpdex-l1/types"
 )
 
-// MaxAssetDecimals caps the on-chain `decimals` field. 18 covers every
-// EVM-era token (WETH, DAI, ...) without exposing the chain to silly
-// values like 255 that downstream math would have to special-case.
-const MaxAssetDecimals = uint32(18)
-
-// MaxExtensionMultiplier caps `extension_multiplier`. The internal
-// USDC collateral precision is 10^12 (`USDCToCollateralMultiplier =
-// 1_000_000`), so 10^18 leaves comfortable headroom for assets that
-// extend further while preventing pathologically large multipliers
-// that would let a single deposit produce astronomically large
-// `math.Int` balances.
-const MaxExtensionMultiplier = uint64(1_000_000_000_000_000_000)
-
-// MaxAssetDisplayNameLen caps display_name. Generous enough for normal
-// labels (e.g. "USDC", "wstETH") but bounded so the field can't grow
-// into a kilobyte memo.
-const MaxAssetDisplayNameLen = 32
-
-// canonicalUSDCDisplayName is the reserved display_name for the
-// margin-enabled USDC asset. Matching is done case-insensitively after
-// trimming whitespace so subtle variants ("usdc", " USDC ", "Usdc")
-// cannot be used to register a look-alike.
-const canonicalUSDCDisplayName = "USDC"
-
-// canonicalUSDCDenom is the reserved bank denom for USDC. The default
-// genesis seeds this denom at `USDCAssetIndex` with margin enabled;
-// no other registration path may reuse it.
-const canonicalUSDCDenom = "uusdc"
+// Asset metadata bounds and the canonical USDC identity strings live
+// in `github.com/perpdex/perpdex-l1/types` next to the existing asset
+// index constants (MinAssetIndex / MaxAssetIndex / USDCAssetIndex /
+// ...) so every protocol-level invariant is discoverable from one
+// place. See `perptypes.MaxAssetDecimals`, `perptypes.USDCDenom`, etc.
 
 // DefaultGenesis returns the default GenesisState for x/asset. The default
 // genesis seeds USDC at the canonical asset_index (3) so that perp markets
@@ -43,8 +20,8 @@ const canonicalUSDCDenom = "uusdc"
 func DefaultGenesis() *GenesisState {
 	usdc := Asset{
 		AssetIndex:          perptypes.USDCAssetIndex,
-		Denom:               canonicalUSDCDenom,
-		DisplayName:         canonicalUSDCDisplayName,
+		Denom:               perptypes.USDCDenom,
+		DisplayName:         perptypes.USDCDisplayName,
 		Decimals:            6,
 		ExtensionMultiplier: perptypes.USDCToCollateralMultiplier,
 		MinTransferAmount:   perptypes.MinPartialTransferAmount,
@@ -64,13 +41,13 @@ func DefaultGenesis() *GenesisState {
 // surrounding whitespace and case-folding, equals the canonical USDC
 // label. The msg path uses this to reject look-alike registrations.
 func IsCanonicalUSDCDisplayName(name string) bool {
-	return strings.EqualFold(strings.TrimSpace(name), canonicalUSDCDisplayName)
+	return strings.EqualFold(strings.TrimSpace(name), perptypes.USDCDisplayName)
 }
 
 // IsCanonicalUSDCDenom returns true when the supplied denom matches the
 // reserved USDC bank denom (case-sensitive — bank denoms are exact).
 func IsCanonicalUSDCDenom(denom string) bool {
-	return denom == canonicalUSDCDenom
+	return denom == perptypes.USDCDenom
 }
 
 // validateAssetEntry sanity-checks a single Asset row. Called by
@@ -84,22 +61,22 @@ func validateAssetEntry(a Asset) error {
 	if a.DisplayName == "" {
 		return ErrInvalidAssetParams.Wrapf("asset_index=%d display_name must be set", a.AssetIndex)
 	}
-	if len(a.DisplayName) > MaxAssetDisplayNameLen {
+	if len(a.DisplayName) > perptypes.MaxAssetDisplayNameLen {
 		return ErrInvalidAssetParams.Wrapf(
 			"asset_index=%d display_name length=%d exceeds max %d",
-			a.AssetIndex, len(a.DisplayName), MaxAssetDisplayNameLen,
+			a.AssetIndex, len(a.DisplayName), perptypes.MaxAssetDisplayNameLen,
 		)
 	}
-	if a.Decimals == 0 || a.Decimals > MaxAssetDecimals {
+	if a.Decimals == 0 || a.Decimals > perptypes.MaxAssetDecimals {
 		return ErrInvalidAssetParams.Wrapf(
 			"asset_index=%d decimals=%d out of range (1..%d)",
-			a.AssetIndex, a.Decimals, MaxAssetDecimals,
+			a.AssetIndex, a.Decimals, perptypes.MaxAssetDecimals,
 		)
 	}
-	if a.ExtensionMultiplier == 0 || a.ExtensionMultiplier > MaxExtensionMultiplier {
+	if a.ExtensionMultiplier == 0 || a.ExtensionMultiplier > perptypes.MaxExtensionMultiplier {
 		return ErrInvalidAssetParams.Wrapf(
 			"asset_index=%d extension_multiplier=%d out of range (1..%d)",
-			a.AssetIndex, a.ExtensionMultiplier, MaxExtensionMultiplier,
+			a.AssetIndex, a.ExtensionMultiplier, perptypes.MaxExtensionMultiplier,
 		)
 	}
 	if a.MinTransferAmount == 0 {
@@ -132,16 +109,16 @@ func validateAssetEntry(a Asset) error {
 func validateUSDCBinding(a Asset) error {
 	marginEnabled := a.MarginMode == perptypes.MarginModeEnabled
 	if a.AssetIndex == perptypes.USDCAssetIndex {
-		if a.Denom != canonicalUSDCDenom {
+		if a.Denom != perptypes.USDCDenom {
 			return ErrUSDCMarginConstraint.Wrapf(
 				"asset_index=%d must use denom %q (got %q)",
-				a.AssetIndex, canonicalUSDCDenom, a.Denom,
+				a.AssetIndex, perptypes.USDCDenom, a.Denom,
 			)
 		}
-		if a.DisplayName != canonicalUSDCDisplayName {
+		if a.DisplayName != perptypes.USDCDisplayName {
 			return ErrUSDCMarginConstraint.Wrapf(
 				"asset_index=%d must use display_name %q (got %q)",
-				a.AssetIndex, canonicalUSDCDisplayName, a.DisplayName,
+				a.AssetIndex, perptypes.USDCDisplayName, a.DisplayName,
 			)
 		}
 		if !marginEnabled {

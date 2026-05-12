@@ -114,14 +114,14 @@ func TestGenesisValidate_DecimalsTooLarge(t *testing.T) {
 // New: extension_multiplier above the ceiling is rejected.
 func TestGenesisValidate_ExtensionMultiplierTooLarge(t *testing.T) {
 	gs := DefaultGenesis()
-	gs.Assets[0].ExtensionMultiplier = MaxExtensionMultiplier + 1
+	gs.Assets[0].ExtensionMultiplier = perptypes.MaxExtensionMultiplier + 1
 	require.ErrorIs(t, gs.Validate(), ErrInvalidAssetParams)
 }
 
 // New: display_name longer than the cap is rejected.
 func TestGenesisValidate_DisplayNameTooLong(t *testing.T) {
 	gs := DefaultGenesis()
-	gs.Assets[0].DisplayName = strings.Repeat("A", MaxAssetDisplayNameLen+1)
+	gs.Assets[0].DisplayName = strings.Repeat("A", perptypes.MaxAssetDisplayNameLen+1)
 	require.ErrorIs(t, gs.Validate(), ErrInvalidAssetParams)
 }
 

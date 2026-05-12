@@ -237,7 +237,7 @@ func TestRegisterAsset_RejectsDecimalsZero(t *testing.T) {
 func TestRegisterAsset_RejectsExtensionMultiplierTooLarge(t *testing.T) {
 	env := newTestEnv(t)
 	m := validRegisterMsg()
-	m.ExtensionMultiplier = types.MaxExtensionMultiplier + 1
+	m.ExtensionMultiplier = perptypes.MaxExtensionMultiplier + 1
 	_, err := env.srv.RegisterAsset(env.ctx, m)
 	require.ErrorIs(t, err, types.ErrInvalidAssetParams)
 }
@@ -253,7 +253,7 @@ func TestRegisterAsset_RejectsBadDenom(t *testing.T) {
 func TestRegisterAsset_RejectsLongDisplayName(t *testing.T) {
 	env := newTestEnv(t)
 	m := validRegisterMsg()
-	m.DisplayName = strings.Repeat("A", types.MaxAssetDisplayNameLen+1)
+	m.DisplayName = strings.Repeat("A", perptypes.MaxAssetDisplayNameLen+1)
 	_, err := env.srv.RegisterAsset(env.ctx, m)
 	require.ErrorIs(t, err, types.ErrInvalidAssetParams)
 }

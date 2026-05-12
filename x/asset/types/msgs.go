@@ -31,23 +31,24 @@ func (m *MsgRegisterAsset) ValidateBasic() error {
 	if m.DisplayName == "" {
 		return ErrInvalidAssetParams.Wrap("display_name must be set")
 	}
-	if len(m.DisplayName) > MaxAssetDisplayNameLen {
+	if len(m.DisplayName) > perptypes.MaxAssetDisplayNameLen {
 		return ErrInvalidAssetParams.Wrapf(
-			"display_name length=%d exceeds max %d", len(m.DisplayName), MaxAssetDisplayNameLen,
+			"display_name length=%d exceeds max %d",
+			len(m.DisplayName), perptypes.MaxAssetDisplayNameLen,
 		)
 	}
 	if IsCanonicalUSDCDisplayName(m.DisplayName) {
 		return ErrUSDCMarginConstraint.Wrap("display_name \"USDC\" is reserved for the genesis-seeded USDC asset")
 	}
-	if m.Decimals == 0 || m.Decimals > MaxAssetDecimals {
+	if m.Decimals == 0 || m.Decimals > perptypes.MaxAssetDecimals {
 		return ErrInvalidAssetParams.Wrapf(
-			"decimals=%d out of range (1..%d)", m.Decimals, MaxAssetDecimals,
+			"decimals=%d out of range (1..%d)", m.Decimals, perptypes.MaxAssetDecimals,
 		)
 	}
-	if m.ExtensionMultiplier == 0 || m.ExtensionMultiplier > MaxExtensionMultiplier {
+	if m.ExtensionMultiplier == 0 || m.ExtensionMultiplier > perptypes.MaxExtensionMultiplier {
 		return ErrInvalidAssetParams.Wrapf(
 			"extension_multiplier=%d out of range (1..%d)",
-			m.ExtensionMultiplier, MaxExtensionMultiplier,
+			m.ExtensionMultiplier, perptypes.MaxExtensionMultiplier,
 		)
 	}
 	if m.MinTransferAmount == 0 {

@@ -65,6 +65,32 @@ const (
 	MinAssetIndex    = uint32(1)
 	MaxAssetIndex    = uint32(62)
 	NilAssetIndex    = uint32(0)
+
+	// USDCDenom is the canonical bank denom assigned to the
+	// genesis-seeded USDC margin asset. Reserved from runtime
+	// MsgRegisterAsset use; only the genesis seed may bind it.
+	USDCDenom = "uusdc"
+	// USDCDisplayName is the canonical human label for USDC. Reserved
+	// from runtime use; comparisons are case-insensitive (assets.go
+	// trims whitespace + folds case before comparing).
+	USDCDisplayName = "USDC"
+
+	// MaxAssetDecimals caps the on-chain `decimals` field. 18 covers
+	// every EVM-era token (WETH, DAI, ...) without exposing the chain
+	// to silly values like 255 that downstream math would have to
+	// special-case.
+	MaxAssetDecimals = uint32(18)
+	// MaxExtensionMultiplier caps `extension_multiplier`. The internal
+	// USDC collateral precision is 10^12 (USDCToCollateralMultiplier =
+	// 1_000_000), so 10^18 leaves comfortable headroom for assets that
+	// extend further while preventing pathologically large multipliers
+	// that would let a single deposit produce astronomically large
+	// math.Int balances.
+	MaxExtensionMultiplier = uint64(1_000_000_000_000_000_000)
+	// MaxAssetDisplayNameLen caps display_name. Generous enough for
+	// normal labels (e.g. "USDC", "wstETH") but bounded so the field
+	// can't grow into a kilobyte memo.
+	MaxAssetDisplayNameLen = 32
 )
 
 // Order constants.
