@@ -45,9 +45,14 @@ func validMarginChain(defaultImf, minImf, maintenanceMf, closeOutMf uint32) bool
 }
 
 // validateMarketIndexForType checks that market_index falls in the
-// canonical range for its declared market_type. Stateless: relies only
-// on the chain-wide constants. Keeper-level Params drift is caught
-// separately in the msg_server when the market is created/updated.
+// canonical range for its declared market_type. Stateless: relies
+// only on the chain-wide constants in `types/constants.go`.
+//
+// Note: the canonical constants are the absolute upper bound. The
+// *current* Params range can be narrower (governance may shrink
+// MaxPerpsMarketIndex over time). Drift between constants and Params
+// is caught in msg_server.CreateMarket, which reads Params and
+// rejects out-of-range indices before they reach the store.
 func validateMarketIndexForType(idx, marketType uint32) error {
 	if idx == perptypes.NilMarketIndex {
 		return ErrMarketIndexExceed.Wrap("market_index must not equal NilMarketIndex")

@@ -40,11 +40,12 @@ func (p Params) Validate() error {
 			p.MaxPerpsMarketIndex, perptypes.NilMarketIndex,
 		)
 	}
-	// NilMarketIndex (255) deliberately falls inside the canonical
-	// spot range (256..4094) because perps and spot have disjoint
-	// ranges and "no market" is encoded uniformly. No upper-bound
-	// check applies to MaxSpotMarketIndex beyond the perps/spot
-	// ordering enforced above.
+	// NilMarketIndex (255) sits in the gap between the perps range
+	// (0..MaxPerpsMarketIndex, canonical 254) and the spot range
+	// (MinSpotMarketIndex..MaxSpotMarketIndex, canonical 2048..4094).
+	// Because that gap is exclusively reserved, no spot index can
+	// ever collide with NilMarketIndex — only the perps upper bound
+	// needs the explicit `< NilMarketIndex` guard above.
 	// MaxMarketsExpiredPerBlock is intentionally allowed to be 0 to
 	// give operators an emergency switch that disables the EndBlocker
 	// auto-expiry path (governance must then call MsgUpdateMarket

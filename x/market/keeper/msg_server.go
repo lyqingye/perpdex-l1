@@ -64,6 +64,33 @@ func (m msgServer) CreateMarket(ctx context.Context, msg *types.MsgCreateMarket)
 	if exists {
 		return nil, types.ErrMarketExists
 	}
+	// market_index must additionally fall in the *current* Params
+	// range. ValidateBasic only enforces the compile-time perp/spot
+	// constants — once governance has narrowed the live range (for
+	// example MaxPerpsMarketIndex shrunk from 254 to 10), a stateless
+	// check would still admit a perps create with index=20. Read
+	// Params here so the gov-driven range is authoritative.
+	params, err := m.Params.Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	switch market.MarketType {
+	case perptypes.MarketTypePerps:
+		if !params.IsPerpsIndex(market.MarketIndex) {
+			return nil, types.ErrMarketIndexExceed.Wrapf(
+				"market_index=%d outside current perps Params range (0..%d)",
+				market.MarketIndex, params.MaxPerpsMarketIndex,
+			)
+		}
+	case perptypes.MarketTypeSpot:
+		if !params.IsSpotIndex(market.MarketIndex) {
+			return nil, types.ErrMarketIndexExceed.Wrapf(
+				"market_index=%d outside current spot Params range (%d..%d)",
+				market.MarketIndex,
+				params.MinSpotMarketIndex, params.MaxSpotMarketIndex,
+			)
+		}
+	}
 	// QuoteAsset must exist and be enabled. Perps quote must be USDC
 	// (the only margin-enabled asset in the genesis seed; see
 	// x/asset). Spot base must also exist + be enabled.

@@ -301,6 +301,37 @@ func TestCreateMarket_SpotChecksBaseAsset(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestCreateMarket_RejectsIndexOutsideShrunkParams locks down that
+// CreateMarket reads the current Params for the perps/spot range, not
+// the compile-time constants. Governance can legitimately tighten the
+// upper bound after launch; without this stateful check a freshly
+// narrowed range would only be enforced for future MsgUpdateParams
+// calls while still admitting MsgCreateMarket up to the old constant.
+func TestCreateMarket_RejectsIndexOutsideShrunkParams(t *testing.T) {
+	env := newTestEnv(t)
+
+	// Shrink the perps range so only indices 0..10 are admissible.
+	p, _ := env.keeper.Params.Get(env.ctx)
+	p.MaxPerpsMarketIndex = 10
+	require.NoError(t, env.keeper.Params.Set(env.ctx, p))
+
+	// index=5 is fine.
+	_, err := env.srv.CreateMarket(env.ctx, validCreatePerpMsg(5))
+	require.NoError(t, err)
+
+	// index=20 still passes ValidateBasic (perptypes.MaxPerpsMarketIndex
+	// is 254) but the keeper must reject it against the live Params.
+	_, err = env.srv.CreateMarket(env.ctx, validCreatePerpMsg(20))
+	require.ErrorIs(t, err, types.ErrMarketIndexExceed)
+
+	// Symmetric guard on the spot side: shrink the spot range.
+	p.MaxSpotMarketIndex = perptypes.MinSpotMarketIndex + 5
+	require.NoError(t, env.keeper.Params.Set(env.ctx, p))
+	_, err = env.srv.CreateMarket(env.ctx,
+		validCreateSpotMsg(perptypes.MinSpotMarketIndex+10, perptypes.LITAssetIndex))
+	require.ErrorIs(t, err, types.ErrMarketIndexExceed)
+}
+
 func TestCreateMarket_SpotRejectsDisabledBase(t *testing.T) {
 	env := newTestEnv(t)
 	a := env.asset.assets[perptypes.LITAssetIndex]
