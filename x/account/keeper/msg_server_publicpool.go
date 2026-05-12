@@ -22,31 +22,9 @@ import (
 // When master == InsuranceFundOperatorAccountIdx the new pool is
 // INSURANCE_FUND + UNIFIED; otherwise PUBLIC_POOL + SIMPLE.
 func (m msgServer) CreatePublicPool(ctx context.Context, msg *types.MsgCreatePublicPool) (*types.MsgCreatePublicPoolResponse, error) {
-	if msg.InitialTotalShares == 0 {
-		return nil, types.ErrInvalidParams.Wrap("initial_total_shares must be > 0")
-	}
-	// MsgCreatePublicPool only spawns regular PUBLIC_POOL pools. The
-	// canonical Insurance Fund pool lives at
-	// InsuranceFundOperatorAccountIdx and is wired by genesis; its
-	// state is mutated via MsgUpdatePublicPool / MsgStrategyTransfer
-	// authenticated by gov authority.
-	if msg.AccountType != perptypes.PublicPoolAccountType {
-		return nil, types.ErrInvalidAccountType.Wrapf(
-			"account_type must be PUBLIC_POOL(%d); IF pool is genesis-only",
-			perptypes.PublicPoolAccountType,
-		)
-	}
-	if msg.OperatorFee >= uint32(perptypes.FeeTick) {
-		return nil, types.ErrInvalidParams.Wrapf(
-			"operator_fee must be < FeeTick(%d)", perptypes.FeeTick,
-		)
-	}
-	if msg.MinOperatorShareRate > perptypes.ShareTick {
-		return nil, types.ErrInvalidParams.Wrapf(
-			"min_operator_share_rate must be <= ShareTick(%d)", perptypes.ShareTick,
-		)
-	}
-
+	// Stateless guards (initial_total_shares > 0, account_type ==
+	// PUBLIC_POOL, operator_fee < FeeTick, min_operator_share_rate <=
+	// ShareTick) live in MsgCreatePublicPool.ValidateBasic.
 	master, err := m.GetAccount(ctx, msg.MasterAccountIndex)
 	if err != nil {
 		return nil, err
@@ -146,20 +124,13 @@ func (m msgServer) UpdatePublicPool(ctx context.Context, msg *types.MsgUpdatePub
 		return nil, err
 	}
 
-	if msg.NewStatus != perptypes.PublicPoolStatusActive &&
-		msg.NewStatus != perptypes.PublicPoolStatusFrozen {
-		return nil, types.ErrInvalidPoolUpdate.Wrapf("unknown status %d", msg.NewStatus)
-	}
-	// operator_fee can only DECREASE.
+	// new_status enum and new_min_operator_share_rate upper bound are
+	// already checked in MsgUpdatePublicPool.ValidateBasic.
+	// operator_fee monotonic-decrease still requires reading the pool.
 	if msg.NewOperatorFee > pool.PublicPoolInfo.OperatorFee {
 		return nil, types.ErrInvalidPoolUpdate.Wrapf(
 			"operator_fee can only decrease (old=%d new=%d)",
 			pool.PublicPoolInfo.OperatorFee, msg.NewOperatorFee,
-		)
-	}
-	if msg.NewMinOperatorShareRate > perptypes.ShareTick {
-		return nil, types.ErrInvalidParams.Wrapf(
-			"min_operator_share_rate must be <= ShareTick(%d)", perptypes.ShareTick,
 		)
 	}
 
@@ -624,10 +595,7 @@ func (m msgServer) StrategyTransfer(ctx context.Context, msg *types.MsgStrategyT
 	if err := EnsureNotFrozen(pool.PublicPoolInfo); err != nil {
 		return nil, err
 	}
-	if msg.FromStrategy >= uint32(perptypes.NbStrategies) ||
-		msg.ToStrategy >= uint32(perptypes.NbStrategies) {
-		return nil, types.ErrInvalidStrategyIdx
-	}
+	// from/to strategy bounds + (from != to) are enforced by ValidateBasic.
 	if _, err := m.UpdatePublicPoolInfo(ctx, pool.AccountIndex, func(info *types.PublicPoolInfo) error {
 		if len(info.Strategies) != perptypes.NbStrategies {
 			// Defensive: rebuild zeros if migration ever drifts the slot count.

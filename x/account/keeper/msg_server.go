@@ -53,12 +53,11 @@ func (m msgServer) Deposit(ctx context.Context, msg *types.MsgDeposit) (*types.M
 		return nil, types.ErrAssetDisabled
 	}
 
-	// Route specific guards.
+	// Route enum membership is enforced by MsgDeposit.ValidateBasic; here
+	// we only check the per-asset constraint that the perps route is
+	// reserved for margin-enabled assets.
 	if msg.RouteType == perptypes.RouteTypePerps && asset.MarginMode != perptypes.MarginModeEnabled {
 		return nil, types.ErrAssetNotMargin
-	}
-	if msg.RouteType != perptypes.RouteTypePerps && msg.RouteType != perptypes.RouteTypeSpot {
-		return nil, types.ErrInvalidRoute
 	}
 
 	params, err := m.Params.Get(ctx)
@@ -169,8 +168,8 @@ func (m msgServer) Withdraw(ctx context.Context, msg *types.MsgWithdraw) (*types
 		if err := m.AddAccountAssetBalance(ctx, msg.AccountIndex, msg.AssetIndex, delta.Neg()); err != nil {
 			return nil, err
 		}
-	default:
-		return nil, types.ErrInvalidRoute
+		// RouteType is already restricted to {Perps, Spot} by
+		// MsgWithdraw.ValidateBasic, so no default branch is needed.
 	}
 
 	dest, err := sdk.AccAddressFromBech32(msg.Sender)
@@ -224,9 +223,7 @@ func (m msgServer) CreateSubAccount(ctx context.Context, msg *types.MsgCreateSub
 }
 
 func (m msgServer) UpdateAccountConfig(ctx context.Context, msg *types.MsgUpdateAccountConfig) (*types.MsgUpdateAccountConfigResponse, error) {
-	if msg.NewTradingMode != perptypes.AccountTradingModeSimple && msg.NewTradingMode != perptypes.AccountTradingModeUnified {
-		return nil, types.ErrInvalidTradingMode
-	}
+	// new_trading_mode enum membership is enforced by ValidateBasic.
 	a, err := m.GetAccount(ctx, msg.AccountIndex)
 	if err != nil {
 		return nil, err
@@ -249,10 +246,7 @@ func (m msgServer) UpdateAccountConfig(ctx context.Context, msg *types.MsgUpdate
 }
 
 func (m msgServer) UpdateAccountAssetConfig(ctx context.Context, msg *types.MsgUpdateAccountAssetConfig) (*types.MsgUpdateAccountAssetConfigResponse, error) {
-	if msg.NewMarginMode != perptypes.MarginModeDisabled &&
-		msg.NewMarginMode != perptypes.MarginModeEnabled {
-		return nil, types.ErrInvalidMarginMode.Wrapf("new_margin_mode=%d", msg.NewMarginMode)
-	}
+	// new_margin_mode enum membership is enforced by ValidateBasic.
 	a, err := m.GetAccount(ctx, msg.AccountIndex)
 	if err != nil {
 		return nil, err
@@ -360,9 +354,7 @@ func (m msgServer) UpdateMargin(ctx context.Context, msg *types.MsgUpdateMargin)
 	if err := m.rejectPoolAccount(ctx, msg.AccountIndex); err != nil {
 		return nil, err
 	}
-	if msg.Action != perptypes.AddMargin && msg.Action != perptypes.RemoveMargin {
-		return nil, types.ErrInvalidMarginAction
-	}
+	// Action enum + amount.IsNil/positive are guarded by ValidateBasic.
 	// Settle pending funding on the touched isolated position so its
 	// allocated_margin/entry_quote/collateral reflect the latest rate
 	// before the risk check fires.
@@ -379,9 +371,6 @@ func (m msgServer) UpdateMargin(ctx context.Context, msg *types.MsgUpdateMargin)
 	}
 	if pos.MarginMode != perptypes.IsolatedMargin {
 		return nil, types.ErrPositionNotIsolated
-	}
-	if msg.Amount.IsNil() {
-		return nil, types.ErrInvalidParams.Wrap("amount must be set")
 	}
 	amount := msg.Amount
 
@@ -436,11 +425,9 @@ func (m msgServer) UpdateLeverage(ctx context.Context, msg *types.MsgUpdateLever
 	if err := m.rejectPoolAccount(ctx, msg.AccountIndex); err != nil {
 		return nil, err
 	}
-	if msg.NewMarginMode != perptypes.CrossMargin && msg.NewMarginMode != perptypes.IsolatedMargin {
-		return nil, types.ErrInvalidMarginMode.Wrapf("new_margin_mode=%d", msg.NewMarginMode)
-	}
-	// Market + IMF validation: the market must exist, and the new IMF
-	// must satisfy market_min <= new_imf <= margin_tick.
+	// new_margin_mode enum membership + the MarginTick upper bound on
+	// new_initial_margin_fraction are enforced by ValidateBasic. The
+	// per-market floor still needs MarketKeeper lookup and remains here.
 	md, err := m.marketKeeper.GetMarketDetails(ctx, msg.MarketIndex)
 	if err != nil {
 		return nil, err
@@ -449,12 +436,6 @@ func (m msgServer) UpdateLeverage(ctx context.Context, msg *types.MsgUpdateLever
 		return nil, types.ErrInvalidParams.Wrapf(
 			"new_initial_margin_fraction=%d below market min=%d",
 			msg.NewInitialMarginFraction, md.MinInitialMarginFraction,
-		)
-	}
-	if msg.NewInitialMarginFraction > uint32(perptypes.MarginTick) {
-		return nil, types.ErrInvalidParams.Wrapf(
-			"new_initial_margin_fraction=%d exceeds MarginTick=%d",
-			msg.NewInitialMarginFraction, perptypes.MarginTick,
 		)
 	}
 	pos, err := m.GetPosition(ctx, msg.AccountIndex, msg.MarketIndex)
