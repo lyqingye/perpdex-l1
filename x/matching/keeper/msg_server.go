@@ -65,6 +65,9 @@ func willConsumeOpenSlot(msg *types.MsgCreateOrder) bool {
 }
 
 func (m msgServer) CreateOrder(ctx context.Context, msg *types.MsgCreateOrder) (*types.MsgCreateOrderResponse, error) {
+	if err := msg.ValidateBasic(); err != nil {
+		return nil, err
+	}
 	if ok, err := m.accountKeeper.IsAuthorized(ctx, msg.Sender, msg.AccountIndex); err != nil {
 		return nil, err
 	} else if !ok {
@@ -331,6 +334,9 @@ func (m msgServer) reduceOnlyCompatible(ctx context.Context, accIdx uint64, mark
 }
 
 func (m msgServer) CancelOrder(ctx context.Context, msg *types.MsgCancelOrder) (*types.MsgCancelOrderResponse, error) {
+	if err := msg.ValidateBasic(); err != nil {
+		return nil, err
+	}
 	o, err := m.bookKeeper.GetOrder(ctx, msg.OrderIndex)
 	if err != nil {
 		return nil, err
@@ -355,6 +361,9 @@ func (m msgServer) cancelOrderInternal(ctx context.Context, o orderbooktypes.Ord
 }
 
 func (m msgServer) CancelAllOrders(ctx context.Context, msg *types.MsgCancelAllOrders) (*types.MsgCancelAllOrdersResponse, error) {
+	if err := msg.ValidateBasic(); err != nil {
+		return nil, err
+	}
 	if ok, err := m.accountKeeper.IsAuthorized(ctx, msg.Sender, msg.AccountIndex); err != nil {
 		return nil, err
 	} else if !ok {
@@ -405,6 +414,9 @@ func (m msgServer) CancelAllOrders(ctx context.Context, msg *types.MsgCancelAllO
 }
 
 func (m msgServer) ModifyOrder(ctx context.Context, msg *types.MsgModifyOrder) (*types.MsgModifyOrderResponse, error) {
+	if err := msg.ValidateBasic(); err != nil {
+		return nil, err
+	}
 	o, err := m.bookKeeper.GetOrder(ctx, msg.OrderIndex)
 	if err != nil {
 		return nil, err
@@ -456,11 +468,11 @@ func (m msgServer) ModifyOrder(ctx context.Context, msg *types.MsgModifyOrder) (
 }
 
 func (m msgServer) UpdateParams(ctx context.Context, msg *types.MsgUpdateParams) (*types.MsgUpdateParamsResponse, error) {
+	if err := msg.ValidateBasic(); err != nil {
+		return nil, err
+	}
 	if msg.Authority != m.authority {
 		return nil, types.ErrInvalidAuthority
-	}
-	if err := msg.Params.Validate(); err != nil {
-		return nil, err
 	}
 	if err := m.Params.Set(ctx, msg.Params); err != nil {
 		return nil, err

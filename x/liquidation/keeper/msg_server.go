@@ -13,6 +13,9 @@ func NewMsgServerImpl(k Keeper) types.MsgServer { return &msgServer{Keeper: k} }
 var _ types.MsgServer = msgServer{}
 
 func (m msgServer) Liquidate(ctx context.Context, msg *types.MsgLiquidate) (*types.MsgLiquidateResponse, error) {
+	if err := msg.ValidateBasic(); err != nil {
+		return nil, err
+	}
 	// The partial-liquidation tx (`InternalLiquidatePositionTx`) has
 	// no counterparty — the victim's close-out fills against the
 	// public order book. There is no `liquidator_account_index` to
@@ -26,6 +29,9 @@ func (m msgServer) Liquidate(ctx context.Context, msg *types.MsgLiquidate) (*typ
 }
 
 func (m msgServer) Deleverage(ctx context.Context, msg *types.MsgDeleverage) (*types.MsgDeleverageResponse, error) {
+	if err := msg.ValidateBasic(); err != nil {
+		return nil, err
+	}
 	base := msg.BaseAmount
 	if base == 0 {
 		base = 1

@@ -17,11 +17,11 @@ func NewMsgServerImpl(k Keeper) types.MsgServer { return &msgServer{Keeper: k} }
 var _ types.MsgServer = msgServer{}
 
 func (m msgServer) UpdateParams(ctx context.Context, msg *types.MsgUpdateParams) (*types.MsgUpdateParamsResponse, error) {
+	if err := msg.ValidateBasic(); err != nil {
+		return nil, err
+	}
 	if msg.Authority != m.authority {
 		return nil, types.ErrInvalidAuthority
-	}
-	if err := msg.Params.Validate(); err != nil {
-		return nil, err
 	}
 	if err := m.Params.Set(ctx, msg.Params); err != nil {
 		return nil, err
