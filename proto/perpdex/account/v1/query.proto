@@ -56,11 +56,23 @@ message QuerySubAccountsResponse {
   cosmos.base.query.v1beta1.PageResponse pagination = 2;
 }
 
-message QueryAccountAssetsRequest { uint64 account_index = 1; }
-message QueryAccountAssetsResponse { repeated AccountAsset assets = 1 [(gogoproto.nullable) = false]; }
+message QueryAccountAssetsRequest {
+  uint64 account_index = 1;
+  cosmos.base.query.v1beta1.PageRequest pagination = 2;
+}
+message QueryAccountAssetsResponse {
+  repeated AccountAsset assets = 1 [(gogoproto.nullable) = false];
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}
 
-message QueryAccountPositionsRequest { uint64 account_index = 1; }
-message QueryAccountPositionsResponse { repeated AccountPosition positions = 1 [(gogoproto.nullable) = false]; }
+message QueryAccountPositionsRequest {
+  uint64 account_index = 1;
+  cosmos.base.query.v1beta1.PageRequest pagination = 2;
+}
+message QueryAccountPositionsResponse {
+  repeated AccountPosition positions = 1 [(gogoproto.nullable) = false];
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}
 
 message QueryAccountPositionRequest { uint64 account_index = 1; uint32 market_index = 2; }
 message QueryAccountPositionResponse { AccountPosition position = 1 [(gogoproto.nullable) = false]; }

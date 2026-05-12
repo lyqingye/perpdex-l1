@@ -5,6 +5,8 @@ import (
 
 	"cosmossdk.io/collections"
 
+	"github.com/cosmos/cosmos-sdk/types/query"
+
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -43,58 +45,66 @@ func (q Querier) SubAccounts(ctx context.Context, req *types.QuerySubAccountsReq
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "empty request")
 	}
-	out := []types.Account{}
-	if err := q.k.IterateAccounts(ctx, func(a types.Account) bool {
-		if a.MasterAccountIndex == req.MasterAccountIndex {
-			out = append(out, a)
-		}
-		return false
-	}); err != nil {
+	// Walk only the master's prefix on the (masterIdx, subIdx) keyset
+	// rather than scanning every account, then fan each sub-index out
+	// to the canonical Account row. Pagination uses the keyset's own
+	// store so the response is bounded.
+	out, pageRes, err := query.CollectionPaginate(
+		ctx, q.k.MasterSubAccounts, req.Pagination,
+		func(key collections.Pair[uint64, uint64], _ collections.NoValue) (types.Account, error) {
+			return q.k.GetAccount(ctx, key.K2())
+		},
+		query.WithCollectionPaginationPairPrefix[uint64, uint64](req.MasterAccountIndex),
+	)
+	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-	return &types.QuerySubAccountsResponse{Accounts: out}, nil
+	if out == nil {
+		out = []types.Account{}
+	}
+	return &types.QuerySubAccountsResponse{Accounts: out, Pagination: pageRes}, nil
 }
 
 func (q Querier) AccountAssets(ctx context.Context, req *types.QueryAccountAssetsRequest) (*types.QueryAccountAssetsResponse, error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "empty request")
 	}
-	pref := collections.NewPrefixedPairRange[uint64, uint32](req.AccountIndex)
-	iter, err := q.k.AccountAssets.Iterate(ctx, pref)
+	out, pageRes, err := query.CollectionPaginate(
+		ctx, q.k.AccountAssets, req.Pagination,
+		func(_ collections.Pair[uint64, uint32], v types.AccountAsset) (types.AccountAsset, error) {
+			v.NormalizeIntFields()
+			return v, nil
+		},
+		query.WithCollectionPaginationPairPrefix[uint64, uint32](req.AccountIndex),
+	)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-	defer iter.Close()
-	out := []types.AccountAsset{}
-	for ; iter.Valid(); iter.Next() {
-		v, err := iter.Value()
-		if err != nil {
-			return nil, status.Error(codes.Internal, err.Error())
-		}
-		out = append(out, v)
+	if out == nil {
+		out = []types.AccountAsset{}
 	}
-	return &types.QueryAccountAssetsResponse{Assets: out}, nil
+	return &types.QueryAccountAssetsResponse{Assets: out, Pagination: pageRes}, nil
 }
 
 func (q Querier) AccountPositions(ctx context.Context, req *types.QueryAccountPositionsRequest) (*types.QueryAccountPositionsResponse, error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "empty request")
 	}
-	pref := collections.NewPrefixedPairRange[uint64, uint32](req.AccountIndex)
-	iter, err := q.k.AccountPositions.Iterate(ctx, pref)
+	out, pageRes, err := query.CollectionPaginate(
+		ctx, q.k.AccountPositions, req.Pagination,
+		func(_ collections.Pair[uint64, uint32], v types.AccountPosition) (types.AccountPosition, error) {
+			v.NormalizeIntFields()
+			return v, nil
+		},
+		query.WithCollectionPaginationPairPrefix[uint64, uint32](req.AccountIndex),
+	)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-	defer iter.Close()
-	out := []types.AccountPosition{}
-	for ; iter.Valid(); iter.Next() {
-		v, err := iter.Value()
-		if err != nil {
-			return nil, status.Error(codes.Internal, err.Error())
-		}
-		out = append(out, v)
+	if out == nil {
+		out = []types.AccountPosition{}
 	}
-	return &types.QueryAccountPositionsResponse{Positions: out}, nil
+	return &types.QueryAccountPositionsResponse{Positions: out, Pagination: pageRes}, nil
 }
 
 func (q Querier) AccountPosition(ctx context.Context, req *types.QueryAccountPositionRequest) (*types.QueryAccountPositionResponse, error) {

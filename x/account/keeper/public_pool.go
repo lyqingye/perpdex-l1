@@ -147,6 +147,16 @@ func CheckMinOperatorShareRate(info types.PublicPoolInfo) bool {
 func EnsureNotFrozen(info *types.PublicPoolInfo) error { return types.EnsureNotFrozen(info) }
 func EnsureActive(info *types.PublicPoolInfo) error    { return types.EnsureActive(info) }
 
+// BurnAllowed reports whether the pool's current status permits a
+// share burn. ACTIVE and FROZEN both allow burn — FROZEN is the
+// wind-down state and LPs MUST be able to exit. Any future status
+// (e.g. an in-flight migration) is rejected by default so that adding
+// a new state can never silently widen the burn surface.
+func BurnAllowed(info types.PublicPoolInfo) bool {
+	return info.Status == perptypes.PublicPoolStatusActive ||
+		info.Status == perptypes.PublicPoolStatusFrozen
+}
+
 // FindShareEntry locates a (user, pool) PublicPoolShare in user.PublicPoolShares.
 // Returns the index in the slice + true if present, -1 + false otherwise.
 func FindShareEntry(user types.Account, poolIdx uint64) (int, bool) {

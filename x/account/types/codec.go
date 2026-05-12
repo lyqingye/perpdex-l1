@@ -17,6 +17,12 @@ func RegisterLegacyAminoCodec(cdc *codec.LegacyAmino) {
 	cdc.RegisterConcrete(&MsgUpdateMargin{}, "perpdex/account/MsgUpdateMargin", nil)
 	cdc.RegisterConcrete(&MsgUpdateLeverage{}, "perpdex/account/MsgUpdateLeverage", nil)
 	cdc.RegisterConcrete(&MsgUpdateParams{}, "perpdex/account/MsgUpdateParams", nil)
+	cdc.RegisterConcrete(&MsgCreatePublicPool{}, "perpdex/account/MsgCreatePublicPool", nil)
+	cdc.RegisterConcrete(&MsgUpdatePublicPool{}, "perpdex/account/MsgUpdatePublicPool", nil)
+	cdc.RegisterConcrete(&MsgMintShares{}, "perpdex/account/MsgMintShares", nil)
+	cdc.RegisterConcrete(&MsgBurnShares{}, "perpdex/account/MsgBurnShares", nil)
+	cdc.RegisterConcrete(&MsgStrategyTransfer{}, "perpdex/account/MsgStrategyTransfer", nil)
+	cdc.RegisterConcrete(&MsgForceBurnShares{}, "perpdex/account/MsgForceBurnShares", nil)
 }
 
 func RegisterInterfaces(reg cdctypes.InterfaceRegistry) {
@@ -30,6 +36,12 @@ func RegisterInterfaces(reg cdctypes.InterfaceRegistry) {
 		&MsgUpdateMargin{},
 		&MsgUpdateLeverage{},
 		&MsgUpdateParams{},
+		&MsgCreatePublicPool{},
+		&MsgUpdatePublicPool{},
+		&MsgMintShares{},
+		&MsgBurnShares{},
+		&MsgStrategyTransfer{},
+		&MsgForceBurnShares{},
 	)
 	msgservice.RegisterMsgServiceDesc(reg, &_Msg_serviceDesc)
 }

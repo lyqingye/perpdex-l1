@@ -26,18 +26,26 @@ func (k Keeper) GetAccount(ctx context.Context, idx uint64) (types.Account, erro
 	return a, nil
 }
 
-// setAccount is the package-private write primitive for the Account
-// row. All cohesive mutator methods (UpdateAccountTradingMode,
-// UpdatePublicPoolInfo, CreatePublicPoolAccount, UpsertPublicPoolShare,
-// RemovePublicPoolShare, AddCollateral, EnsureMasterAccount,
-// CreateSubAccount) funnel through this single choke point so a future
-// AccountUpdated event / metric / audit hook can be wired here without
-// hunting every caller across the codebase. External modules MUST use
-// the cohesive methods; the primitive is intentionally unexported to
-// prevent drive-by upserts that bypass invariants and event emission.
+// createAccount is the package-private write primitive used for
+// brand-new Account rows. It writes the canonical Accounts entry AND
+// every dependent secondary index (OwnerToIndex for masters,
+// MasterSubAccounts for sub / pool rows) in one shot, and emits a
+// typed `EventAccountUpdated{created=true}` so off-chain indexers can
+// rebuild the Accounts table from the event stream alone.
 //
-// TODO(events): emit AccountUpdated here once the event schema lands.
-func (k Keeper) setAccount(ctx context.Context, a types.Account) error {
+// Callers MUST guarantee:
+//
+//  1. AccountIndex is freshly allocated and not present in `Accounts`
+//     (the create path is only fired by EnsureMasterAccount,
+//     CreateSubAccount, CreatePublicPoolAccount and InitGenesis).
+//  2. OwnerAddress / MasterAccountIndex are the final values for this
+//     row's lifetime — both fields are treated as immutable post-create
+//     so updateAccount never has to repair the indices.
+//
+// Splitting create from update lets the update path skip the
+// OwnerToIndex Get + compare it used to perform on every AddCollateral
+// or UpdateAccountTradingMode call.
+func (k Keeper) createAccount(ctx context.Context, a types.Account) error {
 	if err := k.Accounts.Set(ctx, a.AccountIndex, a); err != nil {
 		return err
 	}
@@ -46,7 +54,41 @@ func (k Keeper) setAccount(ctx context.Context, a types.Account) error {
 			return err
 		}
 	}
-	return nil
+	if a.AccountType != perptypes.MasterAccountType && a.MasterAccountIndex != perptypes.NilMasterAccountIndex {
+		if err := k.MasterSubAccounts.Set(ctx, collections.Join(a.MasterAccountIndex, a.AccountIndex)); err != nil {
+			return err
+		}
+	}
+	return sdk.UnwrapSDKContext(ctx).EventManager().EmitTypedEvent(&types.EventAccountUpdated{
+		Account: a,
+		Created: true,
+	})
+}
+
+// updateAccount is the package-private write primitive used for
+// in-place mutations of an existing Account row. It writes ONLY the
+// canonical Accounts entry and intentionally never touches the
+// OwnerToIndex / MasterSubAccounts secondary indices because the
+// fields they depend on (OwnerAddress, MasterAccountIndex,
+// AccountType) are immutable for the lifetime of an account.
+//
+// Every successful write emits a typed `EventAccountUpdated{created=false}`
+// carrying the full post-write row snapshot, so off-chain consumers can
+// keep the canonical Accounts table in sync without polling state.
+//
+// Cohesive mutators (AddCollateral, UpdateAccountTradingMode,
+// UpdatePublicPoolInfo, UpsertPublicPoolShare, ReducePublicPoolShare)
+// MUST funnel through this single choke point so the event / metric /
+// audit hook lives in exactly one place. External modules MUST use the
+// cohesive methods.
+func (k Keeper) updateAccount(ctx context.Context, a types.Account) error {
+	if err := k.Accounts.Set(ctx, a.AccountIndex, a); err != nil {
+		return err
+	}
+	return sdk.UnwrapSDKContext(ctx).EventManager().EmitTypedEvent(&types.EventAccountUpdated{
+		Account: a,
+		Created: false,
+	})
 }
 
 // GetMasterAccountByOwner returns the (master) account associated with the
@@ -84,11 +126,12 @@ func (k Keeper) EnsureMasterAccount(ctx context.Context, owner sdk.AccAddress) (
 		return types.Account{}, err
 	}
 	if idx < perptypes.FirstUserMasterAccountIndex {
-		for idx < perptypes.FirstUserMasterAccountIndex {
-			idx, err = k.NextMasterIndex.Next(ctx)
-			if err != nil {
-				return types.Account{}, err
-			}
+		// Sequence is below the reserved floor (only reachable if
+		// genesis was skipped). Skip the wasted Next() loop and jump
+		// the counter straight to the floor in a single write.
+		idx = perptypes.FirstUserMasterAccountIndex
+		if err := k.NextMasterIndex.Set(ctx, idx+1); err != nil {
+			return types.Account{}, err
 		}
 	}
 	if idx > perptypes.MaxMasterAccountIndex {
@@ -103,7 +146,7 @@ func (k Keeper) EnsureMasterAccount(ctx context.Context, owner sdk.AccAddress) (
 		Collateral:         math.ZeroInt(),
 		CreatedAt:          sdk.UnwrapSDKContext(ctx).BlockTime().UnixMilli(),
 	}
-	if err := k.setAccount(ctx, newAcc); err != nil {
+	if err := k.createAccount(ctx, newAcc); err != nil {
 		return types.Account{}, err
 	}
 	return newAcc, nil
@@ -119,11 +162,11 @@ func (k Keeper) CreateSubAccount(ctx context.Context, master types.Account) (typ
 		return types.Account{}, err
 	}
 	if idx < perptypes.MinSubAccountIndex {
-		for idx < perptypes.MinSubAccountIndex {
-			idx, err = k.NextSubIndex.Next(ctx)
-			if err != nil {
-				return types.Account{}, err
-			}
+		// Below the sub-account floor: jump directly with one Set
+		// instead of looping Next() and consuming reserved slots.
+		idx = perptypes.MinSubAccountIndex
+		if err := k.NextSubIndex.Set(ctx, idx+1); err != nil {
+			return types.Account{}, err
 		}
 	}
 	if idx > perptypes.MaxAccountIndex {
@@ -138,7 +181,7 @@ func (k Keeper) CreateSubAccount(ctx context.Context, master types.Account) (typ
 		Collateral:         math.ZeroInt(),
 		CreatedAt:          sdk.UnwrapSDKContext(ctx).BlockTime().UnixMilli(),
 	}
-	if err := k.setAccount(ctx, sub); err != nil {
+	if err := k.createAccount(ctx, sub); err != nil {
 		return types.Account{}, err
 	}
 	return sub, nil
@@ -153,7 +196,7 @@ func (k Keeper) AddCollateral(ctx context.Context, idx uint64, delta math.Int) e
 		return err
 	}
 	a.Collateral = a.Collateral.Add(delta)
-	return k.setAccount(ctx, a)
+	return k.updateAccount(ctx, a)
 }
 
 // setAccountAsset is the package-private write primitive for the
@@ -161,11 +204,17 @@ func (k Keeper) AddCollateral(ctx context.Context, idx uint64, delta math.Int) e
 // IncreaseLockedBalance, DecreaseLockedBalance,
 // SetAccountAssetMarginMode, TransferAccountAssetBalance) funnel
 // through here so spot balance / lock changes have a single choke
-// point for future event emission.
-//
-// TODO(events): emit SpotBalanceChanged here once the event schema lands.
+// point for event emission. Every successful write fires an
+// `EventAccountAssetUpdated` typed event carrying the full
+// post-write row snapshot, so off-chain consumers (indexers, risk
+// engines) can rebuild AccountAssets from the event stream alone.
 func (k Keeper) setAccountAsset(ctx context.Context, aa types.AccountAsset) error {
-	return k.AccountAssets.Set(ctx, collections.Join(aa.AccountIndex, aa.AssetIndex), aa)
+	if err := k.AccountAssets.Set(ctx, collections.Join(aa.AccountIndex, aa.AssetIndex), aa); err != nil {
+		return err
+	}
+	return sdk.UnwrapSDKContext(ctx).EventManager().EmitTypedEvent(&types.EventAccountAssetUpdated{
+		AccountAsset: aa,
+	})
 }
 
 // GetAccountAsset returns the (account, asset) row, zero-valued if absent.
@@ -188,10 +237,28 @@ func (k Keeper) GetAccountAsset(ctx context.Context, accIdx uint64, assetIdx uin
 }
 
 // AddAccountAssetBalance updates the spot balance of an asset.
+//
+// Positive deltas (credits) only validate the post-state balance is
+// non-negative. Negative deltas (debits) MUST respect the resting
+// `LockedBalance` reservation: only the available portion
+// (`Balance - LockedBalance`) may be withdrawn so user-facing
+// Withdraw / Transfer cannot raid spot orders' locked collateral.
+// The matching engine continues to use TransferAccountAssetBalance for
+// fill-driven movements, which knows when to drain the lock first.
 func (k Keeper) AddAccountAssetBalance(ctx context.Context, accIdx uint64, assetIdx uint32, delta math.Int) error {
 	aa, err := k.GetAccountAsset(ctx, accIdx, assetIdx)
 	if err != nil {
 		return err
+	}
+	if delta.IsNegative() {
+		debit := delta.Neg()
+		available := aa.Balance.Sub(aa.LockedBalance)
+		if available.LT(debit) {
+			return types.ErrInsufficientFunds.Wrapf(
+				"asset_index=%d available=%s need=%s",
+				assetIdx, available.String(), debit.String(),
+			)
+		}
 	}
 	aa.Balance = aa.Balance.Add(delta)
 	if aa.Balance.IsNegative() {
@@ -285,6 +352,11 @@ func (k Keeper) TransferAccountAssetBalance(
 // AvailableBalance returns Balance - LockedBalance for an account asset.
 // Lock-on-place spot orders consume Available at place time and release
 // it on cancel / evict / fill.
+//
+// A negative result indicates a state inconsistency (Balance dropped
+// below LockedBalance). The function still clamps to zero to keep
+// downstream math safe but emits a high-severity log line so the
+// invariant breach is observable in node logs.
 func (k Keeper) AvailableBalance(ctx context.Context, accIdx uint64, assetIdx uint32) (math.Int, error) {
 	aa, err := k.GetAccountAsset(ctx, accIdx, assetIdx)
 	if err != nil {
@@ -292,6 +364,15 @@ func (k Keeper) AvailableBalance(ctx context.Context, accIdx uint64, assetIdx ui
 	}
 	avail := aa.Balance.Sub(aa.LockedBalance)
 	if avail.IsNegative() {
+		sdk.UnwrapSDKContext(ctx).Logger().
+			With("module", "x/"+types.ModuleName).
+			Error(
+				"available balance underflow",
+				"account_index", accIdx,
+				"asset_index", assetIdx,
+				"balance", aa.Balance.String(),
+				"locked_balance", aa.LockedBalance.String(),
+			)
 		return math.ZeroInt(), nil
 	}
 	return avail, nil
@@ -349,12 +430,20 @@ func (k Keeper) DecreaseLockedBalance(ctx context.Context, accIdx uint64, assetI
 	return k.setAccountAsset(ctx, aa)
 }
 
-// IsAuthorized returns true if signer can act on account `idx` (matches owner
-// of master, or owner of master for sub-accounts).
+// IsAuthorized returns true if signer can act on account `idx`.
+// Sub-accounts inherit the master's OwnerAddress at creation time, so
+// the direct string equality covers both master and sub. Owner-less
+// accounts (treasury at idx=0, the canonical Insurance Fund pool at
+// idx=1) are explicitly rejected so an empty signer can never match
+// them — those accounts only mutate through the gov-authority Msg
+// paths or genesis.
 func (k Keeper) IsAuthorized(ctx context.Context, signer string, idx uint64) (bool, error) {
 	a, err := k.GetAccount(ctx, idx)
 	if err != nil {
 		return false, err
+	}
+	if a.OwnerAddress == "" {
+		return false, nil
 	}
 	if a.OwnerAddress == signer {
 		return true, nil
@@ -384,11 +473,20 @@ func (k Keeper) IterateAccounts(ctx context.Context, cb func(types.Account) bool
 // setPosition is the package-private write primitive for the
 // AccountPosition row. Cohesive mutators (UpdatePosition,
 // SetPositionLeverage) funnel through here so position state has a
-// single choke point for future event emission.
-//
-// TODO(events): emit PositionUpdated here once the event schema lands.
+// single choke point for event emission. Every successful write fires
+// an `EventPositionUpdated` typed event carrying the full post-write
+// row snapshot, so off-chain consumers can mirror AccountPositions
+// without polling state — this matters because positions are also
+// mutated by cross-module callers (x/trade fills, x/funding
+// settlement, x/liquidation / x/risk) outside of x/account's msg
+// server.
 func (k Keeper) setPosition(ctx context.Context, p types.AccountPosition) error {
-	return k.AccountPositions.Set(ctx, collections.Join(p.AccountIndex, p.MarketIndex), p)
+	if err := k.AccountPositions.Set(ctx, collections.Join(p.AccountIndex, p.MarketIndex), p); err != nil {
+		return err
+	}
+	return sdk.UnwrapSDKContext(ctx).EventManager().EmitTypedEvent(&types.EventPositionUpdated{
+		Position: p,
+	})
 }
 
 // UpdatePosition is the canonical read-modify-write wrapper for
@@ -456,7 +554,7 @@ func (k Keeper) UpdateAccountTradingMode(ctx context.Context, idx uint64, mode u
 		return err
 	}
 	a.AccountTradingMode = mode
-	return k.setAccount(ctx, a)
+	return k.updateAccount(ctx, a)
 }
 
 // UpdatePublicPoolInfo loads the pool account, runs `mut` against
@@ -483,7 +581,7 @@ func (k Keeper) UpdatePublicPoolInfo(
 	if err := mut(a.PublicPoolInfo); err != nil {
 		return types.Account{}, err
 	}
-	if err := k.setAccount(ctx, a); err != nil {
+	if err := k.updateAccount(ctx, a); err != nil {
 		return types.Account{}, err
 	}
 	return a, nil
@@ -523,7 +621,7 @@ func (k Keeper) CreatePublicPoolAccount(
 		CreatedAt:          now,
 		PublicPoolInfo:     p.Info,
 	}
-	if err := k.setAccount(ctx, pool); err != nil {
+	if err := k.createAccount(ctx, pool); err != nil {
 		return types.Account{}, err
 	}
 	return pool, nil
@@ -539,9 +637,9 @@ func (k Keeper) allocatePoolSubAccountIndex(ctx context.Context) (uint64, error)
 	if err != nil {
 		return 0, err
 	}
-	for idx < perptypes.MinSubAccountIndex {
-		idx, err = k.NextSubIndex.Next(ctx)
-		if err != nil {
+	if idx < perptypes.MinSubAccountIndex {
+		idx = perptypes.MinSubAccountIndex
+		if err := k.NextSubIndex.Set(ctx, idx+1); err != nil {
 			return 0, err
 		}
 	}
@@ -582,7 +680,7 @@ func (k Keeper) UpsertPublicPoolShare(
 			EntryTimestamp:  entryTimestamp,
 		})
 	}
-	return k.setAccount(ctx, master)
+	return k.updateAccount(ctx, master)
 }
 
 // ReducePublicPoolShare debits `shareAmount` (and the proportional
@@ -621,7 +719,7 @@ func (k Keeper) ReducePublicPoolShare(
 	} else {
 		master.PublicPoolShares[entryIdx] = entry
 	}
-	return k.setAccount(ctx, master)
+	return k.updateAccount(ctx, master)
 }
 
 // GetPosition returns the position; an empty zero-valued one if absent.
