@@ -346,7 +346,7 @@ func TestCancelAllOrders_HonorsMarketFilter(t *testing.T) {
 
 // TestCancelAllOrders_CoversOrdersWithoutClientID verifies that an order
 // whose ClientOrderIndex is 0 (the optional default) is still reachable
-// via cancel-all. The legacy IterateUserOrders path missed these.
+// via cancel-all.
 func TestCancelAllOrders_CoversOrdersWithoutClientID(t *testing.T) {
 	e := newMatchEnv(t)
 	srv := NewMsgServerImpl(e.k)
@@ -432,7 +432,6 @@ func TestMatchOrder_EvictReduceOnlyClearsOrderRecord(t *testing.T) {
 	require.Zero(t, filled, "reduce-only maker without position must not produce a fill")
 	require.Empty(t, e.tk.fills)
 
-	// Maker Order record is now Cancelled (was previously stuck Open).
 	got, err := e.bk.GetOrder(e.ctx, 1)
 	require.NoError(t, err)
 	require.Equal(t, perptypes.OrderStatusCancelled, got.Status)

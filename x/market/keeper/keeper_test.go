@@ -30,10 +30,6 @@ const (
 	otherAddr     = "px1qv9pzxqlyckngw6zf9g9whn9d3eh4qvgsxc8cx"
 )
 
-// ---------------------------------------------------------------------
-// Stubs
-// ---------------------------------------------------------------------
-
 // stubAssetKeeper minimally satisfies types.AssetKeeper. Tests preload
 // the asset table via Seed; the default fixture comes with a USDC and
 // one extra non-USDC base asset already enabled so most CreateMarket
@@ -90,10 +86,6 @@ func (s *stubLiquidationKeeper) ApplyExitPosition(_ context.Context, marketIdx u
 	s.calls = append(s.calls, marketIdx)
 	return s.failErr
 }
-
-// ---------------------------------------------------------------------
-// Test environment
-// ---------------------------------------------------------------------
 
 type testEnv struct {
 	ctx    sdk.Context
@@ -216,10 +208,6 @@ func validCreateSpotMsg(idx uint32, baseAsset uint32) *types.MsgCreateMarket {
 	return m
 }
 
-// ---------------------------------------------------------------------
-// CreateMarket
-// ---------------------------------------------------------------------
-
 func TestCreateMarket_Success(t *testing.T) {
 	env := newTestEnv(t)
 	_, err := env.srv.CreateMarket(env.ctx, validCreatePerpMsg(1))
@@ -277,7 +265,6 @@ func TestCreateMarket_RejectsDuplicate(t *testing.T) {
 
 func TestCreateMarket_RejectsDisabledQuoteAsset(t *testing.T) {
 	env := newTestEnv(t)
-	// Flip the USDC asset to disabled.
 	a := env.asset.assets[perptypes.USDCAssetIndex]
 	a.Enabled = false
 	env.asset.assets[perptypes.USDCAssetIndex] = a
@@ -364,10 +351,6 @@ func TestCreateMarket_RuntimeFieldsForcedZero(t *testing.T) {
 	require.Zero(t, d.OpenInterest)
 }
 
-// ---------------------------------------------------------------------
-// UpdateMarket
-// ---------------------------------------------------------------------
-
 func validUpdateMsg(idx uint32) *types.MsgUpdateMarket {
 	return &types.MsgUpdateMarket{
 		Authority:          testAuthority,
@@ -444,7 +427,6 @@ func TestUpdateMarket_ExpiryIndexUpdated(t *testing.T) {
 
 	oldKey := collections.Join(create.Market.ExpiryTimestamp, uint32(1))
 
-	// Change expiry timestamp via UpdateMarket.
 	newExpiry := env.ctx.BlockTime().Add(2 * time.Hour).UnixMilli()
 	msg := validUpdateMsg(1)
 	msg.NewExpiryTimestamp = newExpiry
@@ -456,10 +438,6 @@ func TestUpdateMarket_ExpiryIndexUpdated(t *testing.T) {
 	newHas, _ := env.keeper.ExpiryIndex.Has(env.ctx, collections.Join(newExpiry, uint32(1)))
 	require.True(t, newHas, "new expiry entry must be written")
 }
-
-// ---------------------------------------------------------------------
-// UpdateMarketDetails / UpdateParams
-// ---------------------------------------------------------------------
 
 func TestUpdateMarketDetails_OnlyOverlaysGovFields(t *testing.T) {
 	env := newTestEnv(t)
@@ -531,10 +509,6 @@ func TestUpdateParams_RejectsUnauthorized(t *testing.T) {
 	require.ErrorIs(t, err, types.ErrInvalidAuthority)
 }
 
-// ---------------------------------------------------------------------
-// UpdateOpenInterest (M13)
-// ---------------------------------------------------------------------
-
 func TestUpdateOpenInterest_LimitEnforced(t *testing.T) {
 	env := newTestEnv(t)
 	_, err := env.srv.CreateMarket(env.ctx, validCreatePerpMsg(1))
@@ -554,10 +528,6 @@ func TestUpdateOpenInterest_RejectsBelowZero(t *testing.T) {
 	err = env.keeper.UpdateOpenInterest(env.ctx, 1, -1)
 	require.Error(t, err, "decrementing OI below zero must be rejected, not silently clamped")
 }
-
-// ---------------------------------------------------------------------
-// EndBlocker
-// ---------------------------------------------------------------------
 
 func TestEndBlocker_AutoExpiresViaIndex(t *testing.T) {
 	env := newTestEnv(t)
@@ -589,7 +559,6 @@ func TestEndBlocker_AutoExpiresViaIndex(t *testing.T) {
 	require.Contains(t, env.liq.calls, uint32(1))
 	require.NotContains(t, env.liq.calls, uint32(2))
 
-	// Expiry index entry for market 1 must be gone.
 	has, _ := env.keeper.ExpiryIndex.Has(env.ctx, collections.Join(past, uint32(1)))
 	require.False(t, has)
 }
@@ -606,7 +575,6 @@ func TestEndBlocker_RespectsBudget(t *testing.T) {
 		require.NoError(t, env.keeper.Markets.Set(env.ctx, i, m))
 		require.NoError(t, env.keeper.ExpiryIndex.Set(env.ctx, collections.Join(past, i)))
 	}
-	// Drop the params budget to 2.
 	p, _ := env.keeper.Params.Get(env.ctx)
 	p.MaxMarketsExpiredPerBlock = 2
 	require.NoError(t, env.keeper.Params.Set(env.ctx, p))
@@ -701,10 +669,6 @@ func TestEndBlocker_IndexDriftCleanedUp(t *testing.T) {
 	require.False(t, has)
 }
 
-// ---------------------------------------------------------------------
-// Genesis (export / import / pairing invariants)
-// ---------------------------------------------------------------------
-
 func TestGenesis_ExportImportRoundTrip(t *testing.T) {
 	env := newTestEnv(t)
 	_, err := env.srv.CreateMarket(env.ctx, validCreatePerpMsg(1))
@@ -767,10 +731,6 @@ func TestGenesis_RebuildsExpiryIndex(t *testing.T) {
 	has, _ := env.keeper.ExpiryIndex.Has(env.ctx, collections.Join(int64(1_700_000_000_000), uint32(1)))
 	require.True(t, has)
 }
-
-// ---------------------------------------------------------------------
-// Markets gRPC query (H8)
-// ---------------------------------------------------------------------
 
 func TestQueryMarkets_NilRequest(t *testing.T) {
 	env := newTestEnv(t)

@@ -156,8 +156,6 @@ func (m *MsgUpdateParams) ValidateBasic() error {
 	return m.Params.Validate()
 }
 
-// ---------- public pool msgs ----------
-
 func (m *MsgCreatePublicPool) ValidateBasic() error {
 	if err := mustValidAddr(m.Sender); err != nil {
 		return err

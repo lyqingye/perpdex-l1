@@ -51,7 +51,7 @@ func TestGenesisValidate_DuplicateDenom(t *testing.T) {
 	require.ErrorIs(t, gs.Validate(), ErrAssetExists)
 }
 
-// New: case-insensitive duplicate display_name must be rejected so
+// Case-insensitive duplicate display_name must be rejected so
 // look-alike "USDC"/"usdc" entries can't coexist.
 func TestGenesisValidate_DuplicateDisplayNameCaseInsensitive(t *testing.T) {
 	gs := DefaultGenesis()
@@ -82,14 +82,14 @@ func TestGenesisValidate_NextIndexCollision(t *testing.T) {
 	require.ErrorIs(t, gs.Validate(), ErrInvalidModuleParams)
 }
 
-// New: NextAssetIndex must lie above every seeded asset_index.
+// NextAssetIndex must lie above every seeded asset_index.
 func TestGenesisValidate_NextIndexBelowMaxSeeded(t *testing.T) {
 	gs := DefaultGenesis()
 	gs.NextAssetIndex = gs.Assets[0].AssetIndex - 1
 	require.ErrorIs(t, gs.Validate(), ErrInvalidModuleParams)
 }
 
-// New: a 0 next_asset_index is accepted and treated as "uninitialised"
+// A 0 next_asset_index is accepted and treated as "uninitialised"
 // (the keeper normalises it during InitGenesis).
 func TestGenesisValidate_NextIndexZeroAllowed(t *testing.T) {
 	gs := DefaultGenesis()
@@ -97,35 +97,35 @@ func TestGenesisValidate_NextIndexZeroAllowed(t *testing.T) {
 	require.NoError(t, gs.Validate())
 }
 
-// New: decimals = 0 should be rejected even though the proto allows it.
+// Decimals = 0 is rejected even though the proto allows it.
 func TestGenesisValidate_DecimalsZero(t *testing.T) {
 	gs := DefaultGenesis()
 	gs.Assets[0].Decimals = 0
 	require.ErrorIs(t, gs.Validate(), ErrInvalidAssetParams)
 }
 
-// New: decimals > 18 is rejected.
+// Decimals > 18 is rejected.
 func TestGenesisValidate_DecimalsTooLarge(t *testing.T) {
 	gs := DefaultGenesis()
 	gs.Assets[0].Decimals = 19
 	require.ErrorIs(t, gs.Validate(), ErrInvalidAssetParams)
 }
 
-// New: extension_multiplier above the ceiling is rejected.
+// extension_multiplier above the ceiling is rejected.
 func TestGenesisValidate_ExtensionMultiplierTooLarge(t *testing.T) {
 	gs := DefaultGenesis()
 	gs.Assets[0].ExtensionMultiplier = perptypes.MaxExtensionMultiplier + 1
 	require.ErrorIs(t, gs.Validate(), ErrInvalidAssetParams)
 }
 
-// New: display_name longer than the cap is rejected.
+// display_name longer than the cap is rejected.
 func TestGenesisValidate_DisplayNameTooLong(t *testing.T) {
 	gs := DefaultGenesis()
 	gs.Assets[0].DisplayName = strings.Repeat("A", perptypes.MaxAssetDisplayNameLen+1)
 	require.ErrorIs(t, gs.Validate(), ErrInvalidAssetParams)
 }
 
-// New: a non-USDC asset with margin enabled trips the USDC binding.
+// A non-USDC asset with margin enabled trips the USDC binding.
 func TestGenesisValidate_NonUSDCMarginEnabled(t *testing.T) {
 	gs := DefaultGenesis()
 	rogue := validBTC()
@@ -134,8 +134,8 @@ func TestGenesisValidate_NonUSDCMarginEnabled(t *testing.T) {
 	require.ErrorIs(t, gs.Validate(), ErrUSDCMarginConstraint)
 }
 
-// New: an asset that *looks* like USDC (denom or display_name) but
-// isn't at the canonical index trips the USDC binding. We construct a
+// An asset that *looks* like USDC (denom or display_name) but isn't
+// at the canonical index trips the USDC binding. We construct a
 // custom genesis without the default USDC seed so the dedicated USDC
 // binding check (not the dup-name check) is the one that fires.
 func TestGenesisValidate_LookAlikeUSDC(t *testing.T) {
@@ -157,7 +157,7 @@ func TestGenesisValidate_LookAlikeUSDC(t *testing.T) {
 	require.ErrorIs(t, gs.Validate(), ErrUSDCMarginConstraint)
 }
 
-// New: same idea, but using the denom side of the binding.
+// Same idea, but using the denom side of the binding.
 func TestGenesisValidate_LookAlikeUSDCDenom(t *testing.T) {
 	gs := &GenesisState{
 		Params: DefaultParams(),
@@ -177,14 +177,14 @@ func TestGenesisValidate_LookAlikeUSDCDenom(t *testing.T) {
 	require.ErrorIs(t, gs.Validate(), ErrUSDCMarginConstraint)
 }
 
-// New: the canonical USDC row must be margin-enabled.
+// The canonical USDC row must be margin-enabled.
 func TestGenesisValidate_USDCMarginDisabledRejected(t *testing.T) {
 	gs := DefaultGenesis()
 	gs.Assets[0].MarginMode = perptypes.MarginModeDisabled
 	require.ErrorIs(t, gs.Validate(), ErrUSDCMarginConstraint)
 }
 
-// New: asset_index outside [Min, Params.Max] is rejected.
+// asset_index outside [Min, Params.Max] is rejected.
 func TestGenesisValidate_AssetIndexOutOfRange(t *testing.T) {
 	gs := DefaultGenesis()
 	bad := validBTC()

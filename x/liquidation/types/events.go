@@ -1,6 +1,5 @@
 package types
 
-// Event types for the liquidation module.
 const (
 	EventTypeLiquidate          = "liquidate"
 	EventTypeMarketExitPosition = "market_exit_position"
@@ -8,7 +7,6 @@ const (
 	EventTypeAutoADL            = "auto_adl"
 )
 
-// Attribute keys for liquidation events.
 const (
 	AttributeKeyVictim          = "victim"
 	AttributeKeyMarketIndex     = "market_index"

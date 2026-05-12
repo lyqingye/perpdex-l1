@@ -70,8 +70,6 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 	}
 
 	for _, t := range due {
-		// ActivateTrigger removes the trigger registration and flips
-		// status to Open in one shot, returning the live Order.
 		o, err := k.bookKeeper.ActivateTrigger(ctx, t.orderIndex)
 		if err != nil {
 			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
@@ -101,9 +99,8 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 		if err != nil {
 			// Match failed mid-trigger: we already removed the
 			// trigger registration via ActivateTrigger, so cancel
-			// the order to keep state consistent (status=Cancelled
-			// + indexes cleared). CancelOrder is idempotent for
-			// orders without a resting entry.
+			// the order to keep state consistent. CancelOrder is
+			// idempotent for orders without a resting entry.
 			if _, cerr := k.bookKeeper.CancelOrder(ctx, o.OrderIndex); cerr != nil {
 				// Already-terminal orders or missing entries
 				// surface as ErrOrderNotCancelable; ignore so
@@ -118,9 +115,6 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 			continue
 		}
 		o.Status = status
-		// IOC residue is cancelled. Otherwise OpenOrder branches on
-		// status: terminal orders just persist, residual base rests
-		// on the book with indexes attached.
 		if o.TimeInForce == perptypes.IOC && o.RemainingBaseAmount > 0 {
 			o.Status = perptypes.OrderStatusCancelled
 		}

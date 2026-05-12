@@ -45,11 +45,9 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 	return k.NextAssetIndex.Set(ctx, next)
 }
 
-// ExportGenesis serialises the module state.
-//
-// The exported `next_asset_index` is uint32 on the wire; we explicitly
-// reject any in-memory sequence value that does not fit so a corrupted
-// state can never silently truncate to a still-valid-looking index.
+// ExportGenesis rejects any in-memory sequence value that does not fit
+// uint32, so a corrupted state can never silently truncate to a
+// still-valid-looking index.
 func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) {
 	p, err := k.Params.Get(ctx)
 	if err != nil {

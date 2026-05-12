@@ -121,10 +121,7 @@ func (h *VoteExtensionHandler) aggregateFromExtInfo(
 		if err != nil {
 			continue
 		}
-		// SubmittedAtHeight is informational only; cometbft already
-		// commits to the height implicitly via the ExtendedCommitInfo
-		// it provides on the next block, so we don't block aggregation
-		// on a mismatch here.
+		// SubmittedAtHeight is informational only.
 		_ = ov.SubmittedAtHeight
 		w := uint64(v.Validator.Power)
 		if w == 0 {

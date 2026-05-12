@@ -18,17 +18,6 @@ import (
 // state-mutating waterfall WILL feed stale TAV/MMR into the next step
 // — refresh per call.
 //
-// Note that "cohesive" describes the LOGICAL view, not the IO budget:
-// the cross aggregation that backs `Risk` / `CrossRisk` walks the
-// account's other positions and queries each of THEIR mark prices
-// independently. The snapshot does not yet share a per-block oracle
-// cache, so the same (mark, market_details) row can be re-read
-// multiple times within one EndBlocker pass. The canonical follow-up
-// to deduplicate those reads is a per-block oracle / market-details
-// read cache wired through the risk keeper; the snapshot type would
-// then become the natural consumer. Correctness is unaffected — only
-// IO budget shrinks.
-//
 // Field semantics:
 //
 //   - Risk: the position's RELEVANT risk envelope. Cross aggregate

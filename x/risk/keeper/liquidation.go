@@ -11,23 +11,6 @@ import (
 	"github.com/perpdex/perpdex-l1/x/risk/types"
 )
 
-// liquidation.go owns the math the liquidation keeper drives:
-//
-//   - GetPositionZeroPrice: gRPC entry point that returns the partial-
-//     liquidation reference price ("zero price") for one (account,
-//     market) pair, implementing the `zero_price` formula.
-//   - SimulateRiskAfterTakeover: previews the cross RiskParameters the
-//     LLP / Insurance Fund would inherit if it absorbed `delta` of
-//     `marketIdx`, so the LLP waterfall can short-circuit before
-//     submitting a Msg.
-//   - GetLiquidationRiskSnapshot: cohesive (account, market) bundle
-//     consumed by ADL ranking and autoADL. Returns the position, mark
-//     price, market details, the position's relevant RiskParameters,
-//     the account's cross aggregate, and the pre-computed zero price.
-//   - GetZeroPriceSnapshot: lightweight companion for callers that
-//     only need (position, zero price). Used by the Liquidate /
-//     Deleverage Msg handlers and the gRPC zero-price query.
-
 // GetLiquidationRiskSnapshot returns the cohesive (pos, mark, md, Risk,
 // CrossRisk, ZeroPrice) bundle for one (accountIdx, marketIdx) pair.
 // `Risk` is the position's targeted envelope (cross aggregate or

@@ -25,8 +25,6 @@ import (
 	tradetypes "github.com/perpdex/perpdex-l1/x/trade/types"
 )
 
-// --- in-memory stub keepers ---------------------------------------------
-
 type stubAccount struct {
 	accounts map[uint64]*accounttypes.Account
 	pos      map[[2]uint64]*accounttypes.AccountPosition
@@ -361,10 +359,8 @@ func TestApplyPerpsMatching_RejectsMakerRisk(t *testing.T) {
 //	fee             = notional * 10_000 / FeeTick
 //	                = 110_000 * 10_000 / 1_000_000        = 1_100
 //
-// The previous "1% notional cap" (the legacy `min(rawFee, notional/100)`
-// branch) is gone — the cap now naturally drops out of the
-// `min(LiquidationFeeBps, price_diff_rate)` rate, scaled across
-// notional rather than across improvement. This is exactly the
+// The cap drops out of the `min(LiquidationFeeBps, price_diff_rate)`
+// rate, scaled across notional rather than across improvement — the
 // per-trade taker fee bound enforced in `matching_engine.rs`
 // `_compute_liquidation_taker_fee`.
 func TestApplyPerpsMatching_LiquidationFeeRoutesToLLP(t *testing.T) {

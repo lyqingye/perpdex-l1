@@ -1,13 +1,11 @@
 package types
 
-// Event types for the asset module.
 const (
 	EventTypeAssetRegistered = "asset_registered"
 	EventTypeAssetUpdated    = "asset_updated"
 	EventTypeParamsUpdated   = "asset_params_updated"
 )
 
-// Attribute keys for asset events.
 const (
 	AttributeKeyAssetIndex          = "asset_index"
 	AttributeKeyDenom               = "denom"

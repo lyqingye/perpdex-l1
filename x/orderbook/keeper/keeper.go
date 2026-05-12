@@ -13,7 +13,6 @@ import (
 	"github.com/perpdex/perpdex-l1/x/orderbook/types"
 )
 
-// Keeper holds the orderbook state.
 type Keeper struct {
 	cdc          codec.BinaryCodec
 	storeService store.KVStoreService

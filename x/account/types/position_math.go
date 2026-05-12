@@ -7,8 +7,6 @@ import (
 	markettypes "github.com/perpdex/perpdex-l1/x/market/types"
 )
 
-// NormalizeIntFields rewrites every nil math.Int on the position to
-// math.ZeroInt().
 func (p *AccountPosition) NormalizeIntFields() {
 	if p.BaseSize.IsNil() {
 		p.BaseSize = math.ZeroInt()
@@ -97,14 +95,10 @@ func (p AccountPosition) InitialMargin(markPrice uint32, md markettypes.MarketDe
 	return md.InitialMargin(p.BaseSize.Abs(), markPrice)
 }
 
-// MaintenanceMargin returns the position's MM at `markPrice` using the market's
-// `maintenance_margin_fraction`.
 func (p AccountPosition) MaintenanceMargin(markPrice uint32, md markettypes.MarketDetails) math.Int {
 	return p.MarginRequirement(markPrice, md.MaintenanceMarginFraction)
 }
 
-// CloseOutMargin returns the position's CM at `markPrice` using the market's
-// `close_out_margin_fraction`.
 func (p AccountPosition) CloseOutMargin(markPrice uint32, md markettypes.MarketDetails) math.Int {
 	return p.MarginRequirement(markPrice, md.CloseOutMarginFraction)
 }
@@ -119,7 +113,6 @@ func (p AccountPosition) UnrealizedPnL(markPrice uint32) math.Int {
 	return p.BaseSize.Mul(math.NewIntFromUint64(uint64(markPrice))).Sub(p.EntryQuote)
 }
 
-// MarketValue returns AllocatedMargin + UnrealizedPnL(markPrice).
 func (p AccountPosition) MarketValue(markPrice uint32) math.Int {
 	allocated := p.AllocatedMargin
 	if allocated.IsNil() {

@@ -77,10 +77,6 @@ func (k Keeper) nextMaker(
 			return orderbooktypes.OrderBookEntry{}, false, nil
 		}
 		if best.Expiry > 0 && now >= best.Expiry {
-			// EvictMakerOrder removes the entry, marks the maker
-			// Order as Cancelled, and clears its client / account-
-			// open indexes so the now-gone resting order does not
-			// linger as a stale "open" record.
 			if _, err := k.bookKeeper.EvictMakerOrder(ctx, best.OrderIndex, perptypes.OrderStatusCancelled); err != nil {
 				return orderbooktypes.OrderBookEntry{}, false, err
 			}
@@ -102,9 +98,7 @@ func (k Keeper) nextMaker(
 		}
 		// Maker reduce-only direction check: a reduce-only maker
 		// that no longer holds an opposite position is invalid and
-		// must be evicted; previously the entry was dropped but
-		// the Order record + indexes leaked, leaving a phantom
-		// "open" order.
+		// must be evicted.
 		if isPerp && best.ReduceOnly {
 			pos, err := k.accountKeeper.GetPosition(ctx, best.OwnerAccountIndex, taker.MarketIndex)
 			if err != nil {
@@ -294,14 +288,10 @@ func (k Keeper) classifyApplyError(
 		))
 		return false, errTakerRejected
 	default:
-		// Hard error: discard cache and propagate so the whole
-		// Msg reverts atomically.
 		return false, applyErr
 	}
 }
 
-// emitOrderFill emits the per-iteration `order_fill` telemetry event
-// shared by both the user and liquidation matching loops.
 func (k Keeper) emitOrderFill(ctx context.Context, marketIdx uint32, price uint32, base uint64) {
 	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
 		types.EventTypeOrderFill,

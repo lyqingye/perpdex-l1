@@ -36,7 +36,6 @@ type Cache struct {
 	store map[uint32]CachedPrice
 }
 
-// NewCache returns an empty cache.
 func NewCache() *Cache {
 	return &Cache{store: make(map[uint32]CachedPrice)}
 }

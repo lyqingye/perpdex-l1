@@ -13,7 +13,6 @@ import (
 	"github.com/perpdex/perpdex-l1/x/account/types"
 )
 
-// GetAccount returns the account with the given index.
 func (k Keeper) GetAccount(ctx context.Context, idx uint64) (types.Account, error) {
 	a, err := k.Accounts.Get(ctx, idx)
 	if err != nil {
@@ -152,7 +151,6 @@ func (k Keeper) EnsureMasterAccount(ctx context.Context, owner sdk.AccAddress) (
 	return newAcc, nil
 }
 
-// CreateSubAccount mints a new sub account under `master`.
 func (k Keeper) CreateSubAccount(ctx context.Context, master types.Account) (types.Account, error) {
 	if master.AccountType != perptypes.MasterAccountType {
 		return types.Account{}, types.ErrInvalidAccountType.Wrap("master is not a master account")
@@ -187,9 +185,6 @@ func (k Keeper) CreateSubAccount(ctx context.Context, master types.Account) (typ
 	return sub, nil
 }
 
-// AddCollateral adds amount (math.Int) to the account's collateral.
-//
-// TODO(events): emit CollateralChanged here once the event schema lands.
 func (k Keeper) AddCollateral(ctx context.Context, idx uint64, delta math.Int) error {
 	a, err := k.GetAccount(ctx, idx)
 	if err != nil {
@@ -451,7 +446,6 @@ func (k Keeper) IsAuthorized(ctx context.Context, signer string, idx uint64) (bo
 	return false, nil
 }
 
-// IterateAccounts walks all accounts in index order.
 func (k Keeper) IterateAccounts(ctx context.Context, cb func(types.Account) bool) error {
 	iter, err := k.Accounts.Iterate(ctx, nil)
 	if err != nil {

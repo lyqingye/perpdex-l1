@@ -11,7 +11,6 @@ import (
 	"github.com/perpdex/perpdex-l1/x/asset/types"
 )
 
-// Keeper is the x/asset module keeper.
 type Keeper struct {
 	cdc          codec.BinaryCodec
 	storeService store.KVStoreService
@@ -24,7 +23,6 @@ type Keeper struct {
 	NextAssetIndex collections.Sequence
 }
 
-// NewKeeper builds a new x/asset Keeper.
 func NewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, authority string) Keeper {
 	sb := collections.NewSchemaBuilder(storeService)
 

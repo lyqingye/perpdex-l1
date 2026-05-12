@@ -227,7 +227,6 @@ func (k Keeper) settleMarket(ctx context.Context, marketIdx uint32, params types
 	smallClampMag := int64(d.FundingClampSmall)
 	bigClampMag := int64(d.FundingClampBig)
 
-	// Small clamp: the correction term is `clamp(ir - premium, ±SmallClamp)`.
 	correction := clampInt64(ir-avg, -smallClampMag, smallClampMag)
 	smallClamped := avg + correction
 	bigClamped := clampInt64(smallClamped, -bigClampMag, bigClampMag)

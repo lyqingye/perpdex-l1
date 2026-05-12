@@ -128,8 +128,6 @@ func (k Keeper) tryLLPAbsorb(
 	return true, nil
 }
 
-// rankedPosition is one row in the ranked-victim-positions list used
-// by tryLLPAbsorb to enforce ascending-uPnL ordering.
 type rankedPosition struct {
 	MarketIndex   uint32
 	UnrealizedPnL math.Int

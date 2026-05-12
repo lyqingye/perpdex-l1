@@ -13,22 +13,11 @@ import (
 )
 
 // matchOrder runs the user-driven matching loop for a CreateOrder /
-// ModifyOrder taker. It owns the user-path state machine — residue
-// accounting, fills counter, OrderFill telemetry, and the final
-// open / partially_filled / filled / cancelled status decision —
-// and reuses the matching primitives in match_core.go for the
-// per-iteration mechanics:
-//
-//	nextMaker        : peek + outer-ctx eviction of unusable makers
-//	matchSize        : trade base sizing with reduce-only caps
-//	applyUserFill    : cache-scoped trade engine apply + maker book
-//	                   update + recoverable-error classification
-//
-// The 12-step matching sequence from 17-matching.md §3 is now
-// distributed: trigger / POST_ONLY-cross / empty-book outcomes are
-// handled by the caller (msg_server) before this function is
-// invoked; steps 5–9 live in nextMaker / matchSize; steps
-// 10–12 live in applyUserFill.
+// ModifyOrder taker, implementing 17-matching.md §3. Triggers,
+// POST_ONLY cross detection and empty-book outcomes are handled by the
+// caller (msg_server) before this function is invoked; the
+// per-iteration mechanics live in match_core.go (nextMaker / matchSize
+// / applyUserFill).
 func (k Keeper) matchOrder(ctx context.Context, taker *orderbooktypes.Order, maxFills uint32) (uint64, uint32, error) {
 	now := sdk.UnwrapSDKContext(ctx).BlockTime().UnixMilli()
 	market, err := k.marketKeeper.GetMarket(ctx, taker.MarketIndex)
@@ -89,10 +78,10 @@ func (k Keeper) matchOrder(ctx context.Context, taker *orderbooktypes.Order, max
 }
 
 // applyUserFill builds the appropriate Perp/Spot fill record for a
-// user-driven taker and dispatches to the matching-core apply
-// helper. The taker pays the market's standard maker/taker fees;
-// liquidation routing fields are intentionally absent — the user
-// path never carries them.
+// user-driven taker and dispatches to the matching-core apply helper.
+// The taker pays the market's standard maker/taker fees; liquidation
+// routing fields are intentionally absent — the user path never
+// carries them.
 func (k Keeper) applyUserFill(
 	ctx context.Context,
 	market markettypes.Market,

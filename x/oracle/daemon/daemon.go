@@ -36,13 +36,8 @@ type Config struct {
 	Enabled bool
 }
 
-// DefaultConfig returns a config suitable for a dev validator on the same
-// host as the bundled sidecar.
-//
-// `Enabled` defaults to FALSE so that non-validator full nodes (and the
-// e2e test rig) do not silently spawn a goroutine that races against
-// teardown. Validator operators MUST explicitly enable the daemon by
-// setting `oracle.enabled = true` in app.toml.
+// DefaultConfig returns a config suitable for a dev validator on the
+// same host as the bundled sidecar.
 func DefaultConfig() Config {
 	return Config{
 		SidecarAddress:  "localhost:8080",

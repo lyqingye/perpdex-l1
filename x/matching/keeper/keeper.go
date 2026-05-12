@@ -95,9 +95,6 @@ func (k Keeper) CancelAllOpenOrdersForAccount(ctx context.Context, accountIdx ui
 	}
 	cancelled := uint32(0)
 	for _, o := range targets {
-		// orderbook.CancelOrder owns the state-machine, entry/trigger
-		// removal, and index cleanup for cancellations across user,
-		// liquidation, and EndBlocker call sites.
 		if _, err := k.bookKeeper.CancelOrder(ctx, o.OrderIndex); err != nil {
 			return cancelled, err
 		}

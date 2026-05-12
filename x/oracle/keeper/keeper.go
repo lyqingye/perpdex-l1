@@ -39,9 +39,9 @@ type Keeper struct {
 }
 
 // NewKeeper builds a fresh keeper. The staking keeper / price fetcher
-// must be injected post-construction via SetStakingKeeper / SetPriceFetcher
-// because the staking keeper is itself constructed later in app wiring
-// and the price fetcher is supplied by app options.
+// must be injected post-construction via SetStakingKeeper /
+// SetPriceFetcher because the staking keeper is itself constructed
+// later in app wiring and the price fetcher is supplied by app options.
 func NewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, authority string) Keeper {
 	sb := collections.NewSchemaBuilder(storeService)
 	var noop PriceFetcher = noopPriceFetcher{}
@@ -64,9 +64,6 @@ func NewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, authori
 	return k
 }
 
-// Authority returns the gov module address that gates `MsgUpdateParams`
-// and is used as the signer of the proposer-injected
-// `MsgAggregateOracleVotes` transaction.
 func (k Keeper) Authority() string { return k.authority }
 
 // SetStakingKeeper wires the staking keeper after app construction.
@@ -85,8 +82,6 @@ func (k Keeper) SetPriceFetcher(f PriceFetcher) {
 	*k.priceFetcherHolder = f
 }
 
-// StakingKeeper returns the wired staking keeper. Used by the VE handler
-// and tests; nil-safe consumers must check.
 func (k Keeper) StakingKeeper() types.StakingKeeper { return *k.stakingKeeperHolder }
 
 // PriceFetcher returns the wired price fetcher (never nil after NewKeeper).

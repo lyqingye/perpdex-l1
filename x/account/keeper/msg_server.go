@@ -80,7 +80,6 @@ func (m msgServer) Deposit(ctx context.Context, msg *types.MsgDeposit) (*types.M
 		return nil, types.ErrAmountTooSmall.Wrapf("amount=%d min=%d", msg.Amount, minDeposit)
 	}
 
-	// Pull the coin into the module account.
 	coin := sdk.NewCoin(asset.Denom, math.NewIntFromUint64(msg.Amount))
 	if err := m.bankKeeper.SendCoinsFromAccountToModule(ctx, sender, types.ModuleName, sdk.NewCoins(coin)); err != nil {
 		return nil, err

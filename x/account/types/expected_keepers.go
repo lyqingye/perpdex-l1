@@ -9,13 +9,11 @@ import (
 	markettypes "github.com/perpdex/perpdex-l1/x/market/types"
 )
 
-// AssetKeeper is the subset of the asset keeper interface required by x/account.
 type AssetKeeper interface {
 	GetAsset(ctx context.Context, index uint32) (assettypes.Asset, error)
 	GetAssetByDenom(ctx context.Context, denom string) (assettypes.Asset, error)
 }
 
-// BankKeeper is the bank keeper subset required by x/account.
 type BankKeeper interface {
 	SendCoinsFromAccountToModule(ctx context.Context, sender sdk.AccAddress, recipientModule string, amt sdk.Coins) error
 	SendCoinsFromModuleToAccount(ctx context.Context, senderModule string, recipient sdk.AccAddress, amt sdk.Coins) error

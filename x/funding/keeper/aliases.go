@@ -8,5 +8,3 @@ import (
 // as a local alias so the abci.go file compiles cleanly even though
 // types.Params is generated.
 type _ = types.Params
-
-// We expose `types.ParamsAlias` (in types package) to break a circular API.

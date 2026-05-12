@@ -14,9 +14,8 @@ import (
 // ...) so every protocol-level invariant is discoverable from one
 // place. See `perptypes.MaxAssetDecimals`, `perptypes.USDCDenom`, etc.
 
-// DefaultGenesis returns the default GenesisState for x/asset. The default
-// genesis seeds USDC at the canonical asset_index (3) so that perp markets
-// have a usable collateral asset out of the box.
+// DefaultGenesis seeds USDC at the canonical asset_index (3) so that
+// perp markets have a usable collateral asset out of the box.
 func DefaultGenesis() *GenesisState {
 	usdc := Asset{
 		AssetIndex:          perptypes.USDCAssetIndex,

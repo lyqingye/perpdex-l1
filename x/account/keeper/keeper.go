@@ -12,7 +12,6 @@ import (
 	"github.com/perpdex/perpdex-l1/x/account/types"
 )
 
-// Keeper is the x/account keeper.
 type Keeper struct {
 	cdc          codec.BinaryCodec
 	storeService store.KVStoreService
@@ -25,7 +24,6 @@ type Keeper struct {
 	riskKeeper    RiskKeeper
 	marketKeeper  types.MarketKeeper
 
-	// State.
 	Schema           collections.Schema
 	Params           collections.Item[types.Params]
 	Accounts         collections.Map[uint64, types.Account]
@@ -45,7 +43,6 @@ type Keeper struct {
 	MasterSubAccounts collections.KeySet[collections.Pair[uint64, uint64]]
 }
 
-// NewKeeper builds the x/account Keeper.
 func NewKeeper(
 	cdc codec.BinaryCodec,
 	storeService store.KVStoreService,
@@ -96,7 +93,6 @@ func (k *Keeper) SetRiskKeeper(r RiskKeeper) { k.riskKeeper = r }
 // market keeper is built after account keeper during wiring).
 func (k *Keeper) SetMarketKeeper(m types.MarketKeeper) { k.marketKeeper = m }
 
-// AssetKeeper returns the wired asset keeper for cross-module use.
 func (k Keeper) AssetKeeper() types.AssetKeeper { return k.assetKeeper }
 
 func (k Keeper) Authority() string { return k.authority }

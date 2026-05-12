@@ -102,9 +102,8 @@ func TestInitGenesis_SeedsUSDC(t *testing.T) {
 	require.EqualValues(t, perptypes.USDCAssetIndex+1, next)
 }
 
-// TestInitGenesis_NormalisesNextIndex covers the bootstrap path that
-// replaces the old in-handler "loop until >= MinAssetIndex" hack: a
-// genesis with NextAssetIndex == 0 still ends up safely seeded.
+// TestInitGenesis_NormalisesNextIndex asserts that a genesis with
+// NextAssetIndex == 0 still ends up safely seeded above MinAssetIndex.
 func TestInitGenesis_NormalisesNextIndex(t *testing.T) {
 	env := newEmptyTestEnv(t)
 
@@ -130,7 +129,6 @@ func TestRegisterAsset_Success(t *testing.T) {
 	require.Equal(t, "BTC", got.DisplayName)
 	require.True(t, got.Enabled)
 
-	// Event check: at least one asset_registered event with the new index.
 	var found bool
 	for _, ev := range env.ctx.EventManager().Events() {
 		if ev.Type != types.EventTypeAssetRegistered {
@@ -455,7 +453,6 @@ func TestQuery_Assets_Pagination(t *testing.T) {
 
 	resp, err := env.q.Assets(env.ctx, &types.QueryAssetsRequest{})
 	require.NoError(t, err)
-	// Default genesis seeds USDC plus the three above.
 	require.Len(t, resp.Assets, 4)
 }
 
@@ -537,7 +534,6 @@ func TestKeeperUpdateAsset_DenomIsImmutable(t *testing.T) {
 	err := env.keeper.UpdateAsset(env.ctx, rogue)
 	require.ErrorIs(t, err, types.ErrInvalidAssetParams)
 
-	// Original mapping must be untouched.
 	got, err := env.keeper.GetAssetByDenom(env.ctx, "ubtc")
 	require.NoError(t, err)
 	require.EqualValues(t, 4, got.AssetIndex)

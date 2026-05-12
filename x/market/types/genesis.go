@@ -10,18 +10,9 @@ func DefaultGenesis() *GenesisState {
 	}
 }
 
-// Validate enforces the genesis-level invariants:
-//   - Params themselves must validate.
-//   - Each Market.MarketIndex is unique, falls in the Params range for
-//     its declared market_type, has a status of ACTIVE or EXPIRED, and
-//     passes the same static checks as MsgCreateMarket (fees, min
-//     amounts, extension multipliers, expiry timestamp, asset ids).
-//   - Each MarketDetails.MarketIndex is unique, references a Market
-//     in `gs.Markets`, and passes the same static checks as
-//     MsgUpdateMarketDetails (margin chain, IMF range, funding clamps,
-//     interest rate).
-//   - Every Market has a matching MarketDetails (pairing invariant)
-//     so the runtime never panics reaching for a missing record.
+// Validate enforces genesis-level invariants. The pairing invariant
+// (every Market has a matching MarketDetails) is critical so the
+// runtime never panics reaching for a missing record.
 func (gs GenesisState) Validate() error {
 	if err := gs.Params.Validate(); err != nil {
 		return err

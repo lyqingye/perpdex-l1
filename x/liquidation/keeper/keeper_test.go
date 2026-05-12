@@ -35,8 +35,6 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// ----------- stubs -----------
-
 type stubAccount struct {
 	accounts map[uint64]accounttypes.Account
 	pos      map[[2]uint64]accounttypes.AccountPosition
@@ -128,8 +126,7 @@ func (s *stubAccount) IterateAccounts(_ context.Context, cb func(accounttypes.Ac
 
 // IterateAccountPositions yields every persisted (acc, mkt) → position
 // row in the in-memory map, mirroring the real keeper's prefix-iter
-// semantics. processAccount / rankVictimPositionsByUPnL use this in
-// place of the legacy MaxPerpsMarketIndex full-scan loops.
+// semantics.
 //
 // The production iterator walks rows in ascending (account, market)
 // order; we sort the stub's map output the same way so order-sensitive
@@ -185,9 +182,9 @@ func (stubMarket) GetMarketDetails(_ context.Context, idx uint32) (markettypes.M
 //
 // `ak` is wired by `newKeeper` after construction so the stub can
 // derive `snap.Position` from the same in-memory table the production
-// account keeper would walk. `riskInfoCalls` lets a test assert that
+// account keeper would walk. `snapshotCalls` lets a test assert that
 // the EndBlocker waterfall does not silently reuse stale aggregates
-// across mutating calls (see TestEndBlocker_StaleCrossAggregateRefresh).
+// across mutating calls.
 type stubRisk struct {
 	ak *stubAccount
 
@@ -624,8 +621,6 @@ func TestDeleverage_RejectsUnauthorizedUserSender(t *testing.T) {
 	_ = authority
 }
 
-// ----------- spec-parity tests -----------
-
 // TestLiquidate_CancelsVictimOpenOrders verifies the spec rule "first
 // cancel all open orders of the user" before submitting the
 // liquidation IOC to the matching keeper, matching
@@ -1003,8 +998,6 @@ func TestEndBlocker_PreLiquidationClearsFlags(t *testing.T) {
 	// PRE → no fill, no flag.
 	require.Empty(t, tk.calls)
 }
-
-// ----------- no silent IF top-up of negative collateral -----------
 
 // TestLiquidate_DoesNotTopUpFromIF is the positive assertion that the
 // partial-liquidation path NEVER pulls collateral from the Insurance
