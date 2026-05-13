@@ -1,4 +1,9 @@
-package types_test
+// types_helpers_test.go covers the pure value-object helpers attached
+// to MarketDetails — currently the canonical InitialMargin formula and
+// its three short-circuit paths (zero size / zero mark / zero
+// fraction). These tests pin the formula independently of any
+// keeper state so the math contract stays stable across refactors.
+package tests
 
 import (
 	"testing"
