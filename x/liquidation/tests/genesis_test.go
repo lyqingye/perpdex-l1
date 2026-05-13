@@ -1,4 +1,8 @@
-package keeper_test
+// Genesis round-trip behaviour for the liquidation module: persisting
+// LiquidationFlag entries via InitGenesis and re-exporting them with
+// ExportGenesis must yield a byte-for-byte equivalent state, with
+// default params preserved.
+package tests
 
 import (
 	"testing"
