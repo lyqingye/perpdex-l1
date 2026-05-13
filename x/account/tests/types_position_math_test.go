@@ -1,10 +1,16 @@
-package types_test
+// Pure types-level position math. AccountPosition.MarketValue and
+// ApplyFill are exercised here without any keeper or store: the
+// scenarios cover the four ApplyFill branches (open / increase /
+// decrease / flip), MarketValue's nil-allocated coercion, and the
+// long/short direction helpers used by orderbook side-selection.
+package tests
 
 import (
 	"testing"
 
-	"cosmossdk.io/math"
 	"github.com/stretchr/testify/require"
+
+	"cosmossdk.io/math"
 
 	"github.com/perpdex/perpdex-l1/x/account/types"
 )

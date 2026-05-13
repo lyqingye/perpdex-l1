@@ -1,36 +1,29 @@
-package types_test
+// Pure types-level Msg ValidateBasic coverage. These tests pin the
+// stateless invariants that fire before any handler logic: route /
+// trading-mode / margin-mode / margin-action enums, IMF ceiling,
+// public pool bounds, and the strategy-bucket index range. Keeping
+// them isolated from the keeper means a regression in the stateless
+// guard is caught even if the matching msg_server defense-in-depth
+// check is accidentally weakened.
+package tests
 
 import (
-	"os"
 	"testing"
 
-	"cosmossdk.io/math"
-	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/stretchr/testify/require"
+
+	"cosmossdk.io/math"
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
 	"github.com/perpdex/perpdex-l1/x/account/types"
 )
-
-const testBech = "px1qv9pzxqlyckngw6zf9g9whn9d3eh4qvgsxc8cx"
-
-// TestMain configures the chain-wide `px` bech32 prefix once per
-// process so mustValidAddr accepts the canonical test address.
-// Mirrors x/matching/types/msgs_test.go.
-func TestMain(m *testing.M) {
-	cfg := sdk.GetConfig()
-	cfg.SetBech32PrefixForAccount("px", "pxpub")
-	cfg.SetBech32PrefixForValidator("pxvaloper", "pxvaloperpub")
-	cfg.SetBech32PrefixForConsensusNode("pxvalcons", "pxvalconspub")
-	os.Exit(m.Run())
-}
 
 // TestMsgDeposit_ValidateBasic_RouteEnum locks in that the
 // route_type ∈ {Perps, Spot} guard is enforced at the ValidateBasic
 // layer (not at the msg_server handler layer).
 func TestMsgDeposit_ValidateBasic_RouteEnum(t *testing.T) {
 	base := types.MsgDeposit{
-		Sender:     testBech,
+		Sender:     validOwner,
 		AssetIndex: perptypes.USDCAssetIndex,
 		Amount:     1_000_000,
 	}
@@ -60,7 +53,7 @@ func TestMsgDeposit_ValidateBasic_RouteEnum(t *testing.T) {
 
 func TestMsgWithdraw_ValidateBasic_RouteEnum(t *testing.T) {
 	base := types.MsgWithdraw{
-		Sender:       testBech,
+		Sender:       validOwner,
 		AccountIndex: 100,
 		AssetIndex:   perptypes.USDCAssetIndex,
 		Amount:       1_000_000,
@@ -72,7 +65,7 @@ func TestMsgWithdraw_ValidateBasic_RouteEnum(t *testing.T) {
 
 func TestMsgUpdateAccountConfig_ValidateBasic_TradingModeEnum(t *testing.T) {
 	m := types.MsgUpdateAccountConfig{
-		Sender:         testBech,
+		Sender:         validOwner,
 		AccountIndex:   100,
 		NewTradingMode: 99,
 	}
@@ -81,7 +74,7 @@ func TestMsgUpdateAccountConfig_ValidateBasic_TradingModeEnum(t *testing.T) {
 
 func TestMsgUpdateAccountAssetConfig_ValidateBasic_MarginModeEnum(t *testing.T) {
 	m := types.MsgUpdateAccountAssetConfig{
-		Sender:        testBech,
+		Sender:        validOwner,
 		AccountIndex:  100,
 		AssetIndex:    perptypes.USDCAssetIndex,
 		NewMarginMode: 99,
@@ -91,7 +84,7 @@ func TestMsgUpdateAccountAssetConfig_ValidateBasic_MarginModeEnum(t *testing.T) 
 
 func TestMsgUpdateMargin_ValidateBasic_ActionEnum(t *testing.T) {
 	m := types.MsgUpdateMargin{
-		Sender:       testBech,
+		Sender:       validOwner,
 		AccountIndex: 100,
 		MarketIndex:  0,
 		Action:       99,
@@ -102,7 +95,7 @@ func TestMsgUpdateMargin_ValidateBasic_ActionEnum(t *testing.T) {
 
 func TestMsgUpdateLeverage_ValidateBasic_MarginModeAndIMFCeiling(t *testing.T) {
 	base := types.MsgUpdateLeverage{
-		Sender:                   testBech,
+		Sender:                   validOwner,
 		AccountIndex:             100,
 		MarketIndex:              0,
 		NewInitialMarginFraction: 1000,
@@ -128,7 +121,7 @@ func TestMsgUpdateLeverage_ValidateBasic_MarginModeAndIMFCeiling(t *testing.T) {
 
 func TestMsgCreatePublicPool_ValidateBasic_Bounds(t *testing.T) {
 	good := types.MsgCreatePublicPool{
-		Sender:               testBech,
+		Sender:               validOwner,
 		MasterAccountIndex:   100,
 		AccountType:          perptypes.PublicPoolAccountType,
 		InitialTotalShares:   10,
@@ -156,7 +149,7 @@ func TestMsgCreatePublicPool_ValidateBasic_Bounds(t *testing.T) {
 
 func TestMsgUpdatePublicPool_ValidateBasic_StatusEnum(t *testing.T) {
 	good := types.MsgUpdatePublicPool{
-		Sender:                  testBech,
+		Sender:                  validOwner,
 		PoolAccountIndex:        100,
 		NewStatus:               perptypes.PublicPoolStatusActive,
 		NewMinOperatorShareRate: perptypes.ShareTick,
@@ -177,7 +170,7 @@ func TestMsgUpdatePublicPool_ValidateBasic_StatusEnum(t *testing.T) {
 
 func TestMsgStrategyTransfer_ValidateBasic_BucketBounds(t *testing.T) {
 	good := types.MsgStrategyTransfer{
-		Sender:           testBech,
+		Sender:           validOwner,
 		PoolAccountIndex: 100,
 		FromStrategy:     0,
 		ToStrategy:       1,
