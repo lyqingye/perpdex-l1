@@ -27,14 +27,13 @@ const premiumSampleIntervalMs = perptypes.MinuteInMs
 //     mark into a 3-input median and write the result back to
 //     `MarketDetails.MarkPrice`. This is the chain's authoritative mark
 //     price: x/risk, x/trade and x/matching read from here, not from oracle.
-//     See `refreshMarkPrice` for the Lighter-style derivation.
+//     See `refreshMarkPrice` for the derivation.
 //
 //  2. Premium sample (1-minute throttle): refresh `ImpactBidPrice` /
 //     `ImpactAskPrice` / `ImpactPrice` from the live orderbook and push a
 //     premium sample into `AggregatePremiumSum`, following the official
 //     formula
-//     premium_t = (max(0, IB-idx) - max(0, idx-IA)) * FundingRateTick / idx
-//     (see docs.lighter.xyz/trading/funding).
+//     premium_t = (max(0, IB-idx) - max(0, idx-IA)) * FundingRateTick / idx.
 //
 //  3. Funding settlement (every `FundingPeriodMs`, default 1 hour): close
 //     the round, average the samples, apply the double clamp, divide by
@@ -137,9 +136,9 @@ func (k Keeper) processMarketSample(ctx context.Context, marketIdx uint32, now i
 	d.ImpactBidPrice = bidImp
 	d.ImpactAskPrice = askImp
 	if bidOk && askOk {
-		// Floor of the mean, matching Lighter's mid (impact_bid is
-		// floor-divided, impact_ask is ceil-divided upstream, so the
-		// floor of the sum/2 keeps the mid conservative).
+		// Floor of the mean: impact_bid is floor-divided while
+		// impact_ask is ceil-divided in ComputeImpactPrice, so the
+		// floor of the sum/2 keeps the mid conservative.
 		d.ImpactPrice = uint32((uint64(bidImp) + uint64(askImp)) / 2)
 	} else {
 		// One side drained: mid is undefined. Clear the cache so
@@ -199,13 +198,12 @@ func (k Keeper) processMarketSample(ctx context.Context, marketIdx uint32, now i
 }
 
 // refreshMarkPrice recomputes `MarketDetails.MarkPrice` once per block
-// as the median of three sources, mirroring the Lighter prover design
-// (see docs/06-pricing-pnl-and-funding.md in the lighter-prover repo).
+// as the median of three sources:
 //
 //	price_1 = index_price + premium_ema * index_price / FundingRateTick
 //	          (where premium_ema = AggregatePremiumSum / TotalPremiumSamples
-//	           is the running 1-hour average; the official docs phrase this
-//	           as "time-weighted average of the 60 premiums")
+//	           is the running 1-hour average; equivalent to the
+//	           time-weighted average of the per-minute premium samples)
 //	price_2 = oracle weighted-median mark (the chain's external reference)
 //	mark    = median3(impact_price, price_1, price_2)
 //
@@ -287,7 +285,7 @@ func (k Keeper) refreshMarkPrice(ctx context.Context, marketIdx uint32, now int6
 //
 // Returns 0 when `index == 0`. When `sampleCount == 0` (no samples in the
 // current window) the premium component is taken as 0, yielding price_1
-// = index, matching the Lighter spec's "no samples → no premium" behaviour.
+// = index ("no samples → no premium").
 // Results are clamped into uint32; a wildly large premium that would
 // otherwise overflow the price domain returns the relevant extreme so the
 // caller's median still operates on a well-defined value.

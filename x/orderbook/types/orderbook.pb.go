@@ -410,8 +410,8 @@ func (m *PriceLevelAggregate) GetBidCount() uint32 {
 //     the live limits live on x/matching.Params.
 //   - impact_usdc_amount: replaced by a per-market derivation in
 //     ComputeImpactPrice based on MarketDetails.MinInitialMarginFraction
-//     and the global perptypes.ImpactUSDCAmount constant, mirroring the
-//     Lighter prover (`impact_notional = IMPACT_USDC * MARGIN_TICK /
+//     and the global perptypes.ImpactUSDCAmount constant
+//     (`impact_notional = IMPACT_USDC * MARGIN_TICK /
 //     min_initial_margin_fraction`). Governance no longer needs to tune
 //     this knob; risk parameters drive the depth.
 type Params struct {

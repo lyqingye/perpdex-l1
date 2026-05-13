@@ -285,7 +285,7 @@ func checkedQuote(base, price uint64) (uint64, error) {
 // (0, false) if depth is insufficient on the requested side or the market
 // has not been initialised yet.
 //
-// Algorithm (mirrors the Lighter prover, see docs.lighter.xyz/trading/funding):
+// Algorithm:
 //
 //   - impactNotional = floor(perptypes.ImpactUSDCAmount * MARGIN_TICK /
 //     MarketDetails.MinInitialMarginFraction).
@@ -296,10 +296,9 @@ func checkedQuote(base, price uint64) (uint64, error) {
 //   - Bid side walks levels from highest price; ask side from lowest. The
 //     last partially-consumed level uses `ceil_div(needQuote, price)` for
 //     the base needed so we never short the notional.
-//   - The final VWAP is `quote_total / base_total`. To match Lighter's
-//     conservative semantics, ASK side rounds UP (ceil), BID side rounds
-//     DOWN (floor). This keeps `max(0, idx - ask)` from rounding too far
-//     in the trader's favour.
+//   - The final VWAP is `quote_total / base_total`. ASK side rounds UP
+//     (ceil), BID side rounds DOWN (floor) so that `max(0, idx - ask)`
+//     cannot round in the trader's favour.
 func (k Keeper) ComputeImpactPrice(ctx context.Context, market uint32, isAsk bool) (uint32, bool, error) {
 	notional, err := k.MarketImpactNotional(ctx, market)
 	if err != nil {
@@ -387,14 +386,13 @@ func (k Keeper) ComputeImpactPrice(ctx context.Context, market uint32, isAsk boo
 }
 
 // MarketImpactNotional returns the per-market impact notional used by
-// ComputeImpactPrice. The formula mirrors the Lighter prover:
+// ComputeImpactPrice:
 //
 //	impactNotional = floor(perptypes.ImpactUSDCAmount *
 //	                       perptypes.MarginTick /
 //	                       MarketDetails.MinInitialMarginFraction)
 //
-// Note: Lighter additionally divides by `quote_multiplier` (see
-// `circuit/src/matching_engine.rs::get_impact_prices`). perpdex-l1
+// Note: a quote-multiplier divisor is intentionally omitted. perpdex-l1
 // currently treats `MarketDetails.QuoteMultiplier` as effectively 1
 // (it is created at 1 and never recomputed; see
 // `x/market/keeper/msg_server.go`), and `PriceLevelAggregate.{Ask,Bid}

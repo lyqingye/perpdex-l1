@@ -85,8 +85,8 @@ func openImpactOrder(ctx context.Context, k orderbookkeeper.Keeper, market uint3
 	return k.OpenOrder(ctx, o, false)
 }
 
-// TestMarketImpactNotional_PerMarketDerivation pins down the Lighter-style
-// per-market scaling:
+// TestMarketImpactNotional_PerMarketDerivation pins down the per-market
+// scaling:
 //
 //	impact_notional = floor(IMPACT_USDC_AMOUNT * MARGIN_TICK / MinIMF)
 //
@@ -116,9 +116,9 @@ func TestMarketImpactNotional_PerMarketDerivation(t *testing.T) {
 }
 
 // TestComputeImpactPrice_AskUsesCeilingDivision verifies that the ASK
-// side rounds UP (Lighter's conservative semantics) while the BID
-// side rounds DOWN. We construct a TWO-level book per side so the
-// VWAP is non-trivial and ceil != floor.
+// side rounds UP (conservative) while the BID side rounds DOWN. We
+// construct a TWO-level book per side so the VWAP is non-trivial and
+// ceil != floor.
 //
 // MinIMF = 10_000 (100% IMF) ⇒ impact_notional = 500_000_000.
 //
