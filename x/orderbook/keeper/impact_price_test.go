@@ -22,11 +22,15 @@ import (
 	"github.com/perpdex/perpdex-l1/x/orderbook/types"
 )
 
-// impactStubMarket lets a test pin MinInitialMarginFraction so we can
-// exercise the per-market impact-notional derivation
-// (impact_notional = IMPACT_USDC_AMOUNT * MARGIN_TICK / MinIMF).
+// impactStubMarket lets a test pin MinInitialMarginFraction (and
+// optionally QuoteMultiplier) so we can exercise the per-market
+// impact-notional derivation:
+//
+//	impact_notional = IMPACT_USDC * MARGIN_TICK
+//	                  / (MinIMF * max(QuoteMultiplier, 1))
 type impactStubMarket struct {
-	minIMF uint32
+	minIMF          uint32
+	quoteMultiplier uint32
 }
 
 func (impactStubMarket) GetMarket(_ context.Context, idx uint32) (markettypes.Market, error) {
@@ -36,6 +40,7 @@ func (s impactStubMarket) GetMarketDetails(_ context.Context, idx uint32) (marke
 	return markettypes.MarketDetails{
 		MarketIndex:              idx,
 		MinInitialMarginFraction: s.minIMF,
+		QuoteMultiplier:          s.quoteMultiplier,
 	}, nil
 }
 func (impactStubMarket) AllocateNonce(_ context.Context, _ uint32, _ bool) (int64, error) {
@@ -47,6 +52,11 @@ func (impactStubMarket) SetMarketDetails(_ context.Context, _ markettypes.Market
 
 func newImpactKeeper(t *testing.T, minIMF uint32) (orderbookkeeper.Keeper, sdk.Context) {
 	t.Helper()
+	return newImpactKeeperWith(t, minIMF, 0)
+}
+
+func newImpactKeeperWith(t *testing.T, minIMF, quoteMultiplier uint32) (orderbookkeeper.Keeper, sdk.Context) {
+	t.Helper()
 	keys := storetypes.NewKVStoreKeys(types.StoreKey)
 	cdc := moduletestutil.MakeTestEncodingConfig().Codec
 	cms := integration.CreateMultiStore(keys, log.NewTestLogger(t))
@@ -55,7 +65,7 @@ func newImpactKeeper(t *testing.T, minIMF uint32) (orderbookkeeper.Keeper, sdk.C
 		cdc,
 		runtime.NewKVStoreService(keys[types.StoreKey]),
 		"px1xqcnyve5x5mrwwpev93xxer9venks6t29ke4l8",
-		impactStubMarket{minIMF: minIMF},
+		impactStubMarket{minIMF: minIMF, quoteMultiplier: quoteMultiplier},
 		stubLocker{},
 	)
 	return k, ctx
@@ -108,6 +118,35 @@ func TestMarketImpactNotional_PerMarketDerivation(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			k, ctx := newImpactKeeper(t, tc.minIMF)
+			got, err := k.MarketImpactNotional(ctx, 1)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// TestMarketImpactNotional_QuoteMultiplierDivides exercises the
+// `/ QuoteMultiplier` factor in MarketImpactNotional. Today the field is
+// effectively unused (resetRuntimeDetails forces 0 and no module writes
+// it back), but the formula must still divide by it so activating the
+// field is a localised change. QuoteMultiplier == 0 must fall back to 1
+// to preserve today's behaviour bit-for-bit.
+func TestMarketImpactNotional_QuoteMultiplierDivides(t *testing.T) {
+	cases := []struct {
+		name            string
+		minIMF          uint32
+		quoteMultiplier uint32
+		want            uint64
+	}{
+		{"qm_zero_falls_back_to_1", 500, 0, 10_000_000_000},
+		{"qm_one_no_op", 500, 1, 10_000_000_000},
+		{"qm_two_halves", 500, 2, 5_000_000_000},
+		{"qm_one_thousand", 500, 1_000, 10_000_000},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			k, ctx := newImpactKeeperWith(t, tc.minIMF, tc.quoteMultiplier)
 			got, err := k.MarketImpactNotional(ctx, 1)
 			require.NoError(t, err)
 			require.Equal(t, tc.want, got)

@@ -337,9 +337,11 @@ func (k Keeper) ComputeImpactPrice(ctx context.Context, market uint32, isAsk boo
 
 	var accBase, accQuote uint64
 	for _, lv := range levels {
-		// {Ask,Bid}QuoteSum stores raw `base * price` (no
-		// quote_multiplier scaling, see adjustPriceLevel), so it is
-		// directly comparable to `notional`.
+		// `accQuote` and `notional` must share the same quote-scale
+		// convention. Today `{Ask,Bid}QuoteSum` is raw `base*price`
+		// and `notional` is computed with QuoteMultiplier=1 in
+		// MarketImpactNotional, so the comparison is direct.
+		// See the INVARIANT note on MarketImpactNotional.
 		if accQuote+lv.quote >= notional {
 			needQuote := notional - accQuote
 			// Ceiling: floor would leave us short of `notional` on a
@@ -369,18 +371,26 @@ func (k Keeper) ComputeImpactPrice(ctx context.Context, market uint32, isAsk boo
 // MarketImpactNotional returns the per-market impact notional used by
 // ComputeImpactPrice:
 //
-//	impactNotional = floor(perptypes.ImpactUSDCAmount * MarginTick
-//	                       / MinInitialMarginFraction)
+//	impactNotional = floor(ImpactUSDCAmount * MarginTick
+//	                       / (MinInitialMarginFraction * QuoteMultiplier))
 //
-// `QuoteMultiplier` is intentionally NOT in the divisor: perpdex-l1
-// treats it as 1 and `{Ask,Bid}QuoteSum` already stores raw `base*price`,
-// so the two conventions cancel. Any future non-unit `QuoteMultiplier`
-// must be introduced here AND in adjustPriceLevel together.
+// `QuoteMultiplier` is a per-market quote-scale tick on MarketDetails.
+// perpdex-l1 currently leaves it unset (resetRuntimeDetails zeros it on
+// CreateMarket and no module writes it back), and `adjustPriceLevel`
+// stores `{Ask,Bid}QuoteSum` as raw `base*price` without scaling by it.
+// The divisor is kept in the formula to preserve the canonical shape so
+// activating QuoteMultiplier later is a localised change; a zero value
+// falls back to 1 so today's behaviour is bit-for-bit identical to the
+// pre-formula version.
 //
-// `ImpactUSDCAmount * MarginTick` is computed in big.Int to stay safe
-// against future ImpactUSDCAmount bumps. Returns 0 when
-// `MinInitialMarginFraction == 0` (uninitialised market), which
-// ComputeImpactPrice treats as insufficient depth.
+// INVARIANT: if `QuoteMultiplier` is ever made non-trivial here,
+// `adjustPriceLevel` must start multiplying the price-level quote
+// aggregate by the same factor — otherwise the two sides of the
+// `accQuote >= notional` comparison in ComputeImpactPrice end up in
+// different units.
+//
+// Returns 0 when `MinInitialMarginFraction == 0` (uninitialised market),
+// which ComputeImpactPrice treats as insufficient depth.
 func (k Keeper) MarketImpactNotional(ctx context.Context, market uint32) (uint64, error) {
 	d, err := k.marketKeeper.GetMarketDetails(ctx, market)
 	if err != nil {
@@ -389,16 +399,24 @@ func (k Keeper) MarketImpactNotional(ctx context.Context, market uint32) (uint64
 	if d.MinInitialMarginFraction == 0 {
 		return 0, nil
 	}
+	qm := uint64(d.QuoteMultiplier)
+	if qm == 0 {
+		qm = 1
+	}
 	num := new(big.Int).Mul(
 		new(big.Int).SetUint64(perptypes.ImpactUSDCAmount),
 		new(big.Int).SetUint64(uint64(perptypes.MarginTick)),
 	)
-	out := new(big.Int).Quo(num, new(big.Int).SetUint64(uint64(d.MinInitialMarginFraction)))
+	den := new(big.Int).Mul(
+		new(big.Int).SetUint64(uint64(d.MinInitialMarginFraction)),
+		new(big.Int).SetUint64(qm),
+	)
+	out := new(big.Int).Quo(num, den)
 	if !out.IsUint64() {
 		// Refuse rather than silently truncate into the orderbook walker.
 		return 0, types.ErrInvariantViolated.Wrapf(
-			"impact_notional overflow: market=%d min_imf=%d",
-			market, d.MinInitialMarginFraction,
+			"impact_notional overflow: market=%d min_imf=%d quote_multiplier=%d",
+			market, d.MinInitialMarginFraction, d.QuoteMultiplier,
 		)
 	}
 	return out.Uint64(), nil
