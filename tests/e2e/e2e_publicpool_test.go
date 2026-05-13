@@ -6,7 +6,7 @@ import (
 	"cosmossdk.io/math"
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
-	accountkeepertest "github.com/perpdex/perpdex-l1/x/account/keeper/keepertest"
+	accountkeepertest "github.com/perpdex/perpdex-l1/x/account/keepertest"
 	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
 	matchingtypes "github.com/perpdex/perpdex-l1/x/matching/types"
 
