@@ -1,4 +1,17 @@
-package keeper_test
+// refresh_mark_price_test.go pins the per-block `refreshMarkPrice`
+// pipeline in `x/funding/keeper/abci.go` which recomputes
+// `MarketDetails.MarkPrice` as:
+//
+//	premium_raw = clamp(impact_price - index, ±index/MarkPremiumClampDivisor)
+//	premium_ema = ema_step(prev_ema, premium_raw, dt, MarkPremiumEmaTauMs)
+//	price_1     = clampUint32(index + premium_ema)
+//	price_2     = oracle weighted-median mark
+//	mark        = median3(impact_price, price_1, price_2)
+//
+// The orderbook stub returns ok=false so `processMarketSample` never
+// overwrites d.ImpactPrice within the tested block (we want to isolate
+// refreshMarkPrice).
+package tests
 
 import (
 	"testing"
@@ -12,20 +25,6 @@ import (
 	markettypes "github.com/perpdex/perpdex-l1/x/market/types"
 	oracletypes "github.com/perpdex/perpdex-l1/x/oracle/types"
 )
-
-// These tests pin the per-block `refreshMarkPrice` pipeline in
-// `x/funding/keeper/abci.go` which recomputes
-// `MarketDetails.MarkPrice` as:
-//
-//	premium_raw = clamp(impact_price - index, ±index/MarkPremiumClampDivisor)
-//	premium_ema = ema_step(prev_ema, premium_raw, dt, MarkPremiumEmaTauMs)
-//	price_1     = clampUint32(index + premium_ema)
-//	price_2     = oracle weighted-median mark
-//	mark        = median3(impact_price, price_1, price_2)
-//
-// The orderbook stub returns ok=false so `processMarketSample` never
-// overwrites d.ImpactPrice within the tested block (we want to isolate
-// refreshMarkPrice).
 
 // TestRefreshMarkPrice_MedianOfThreeSelectsMiddle verifies the
 // happy-path median: with impact, price_1, price_2 spread out, the
