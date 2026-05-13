@@ -187,7 +187,7 @@ func validateMarketDetailsInit(d MarketDetails) error {
 	if d.OpenInterest != 0 {
 		return ErrInvalidParams.Wrap("open_interest must be 0 at creation")
 	}
-	if d.AggregatePremiumSum != 0 {
+	if !d.AggregatePremiumSum.IsNil() && !d.AggregatePremiumSum.IsZero() {
 		return ErrInvalidParams.Wrap("aggregate_premium_sum must be 0 at creation")
 	}
 	if d.TotalOrderCount != 0 {

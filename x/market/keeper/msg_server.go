@@ -38,7 +38,7 @@ func resetRuntimeDetails(d *types.MarketDetails) {
 	d.ImpactAskPrice = 0
 	d.ImpactPrice = 0
 	d.OpenInterest = 0
-	d.AggregatePremiumSum = 0
+	d.AggregatePremiumSum = math.ZeroInt()
 	d.TotalOrderCount = 0
 	d.TotalPremiumSamples = 0
 	d.LastUpdatedTimestamp = 0

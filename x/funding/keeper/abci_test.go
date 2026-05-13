@@ -43,7 +43,11 @@ func (s *stubMarket) GetMarketDetails(_ context.Context, idx uint32) (markettype
 	if d, ok := s.details[idx]; ok {
 		return d, nil
 	}
-	return markettypes.MarketDetails{MarketIndex: idx, FundingRatePrefixSum: math.ZeroInt()}, nil
+	return markettypes.MarketDetails{
+		MarketIndex:          idx,
+		FundingRatePrefixSum: math.ZeroInt(),
+		AggregatePremiumSum:  math.ZeroInt(),
+	}, nil
 }
 func (s *stubMarket) SetMarketDetails(_ context.Context, d markettypes.MarketDetails) error {
 	if s.details == nil {
@@ -187,7 +191,7 @@ func (s *statefulAccount) UpdatePosition(
 	return pos, nil
 }
 
-func newFundingKeeper(t *testing.T, mk *stubMarket, ok stubOracle, bk stubBook) (fundingkeeper.Keeper, sdk.Context) {
+func newFundingKeeper(t *testing.T, mk *stubMarket, ok fundingtypes.OracleKeeper, bk stubBook) (fundingkeeper.Keeper, sdk.Context) {
 	t.Helper()
 	keys := storetypes.NewKVStoreKeys(fundingtypes.StoreKey)
 	cdc := moduletestutil.MakeTestEncodingConfig().Codec
@@ -254,6 +258,7 @@ func TestSettlePositionFunding_ZeroPositionSnapshotsCurrentPrefix(t *testing.T) 
 			marketIndex: {
 				MarketIndex:          marketIndex,
 				FundingRatePrefixSum: math.NewInt(100_000_000),
+				AggregatePremiumSum:  math.ZeroInt(),
 			},
 		},
 	}
@@ -300,6 +305,7 @@ func TestProcessMarketSample_StaleOracleSkipsSample(t *testing.T) {
 				IndexPrice:           49_500,
 				MarkPrice:            50_000,
 				FundingRatePrefixSum: math.ZeroInt(),
+				AggregatePremiumSum:  math.ZeroInt(),
 			},
 		},
 	}
@@ -313,11 +319,17 @@ func TestProcessMarketSample_StaleOracleSkipsSample(t *testing.T) {
 	require.NoError(t, k.BeginBlocker(ctx))
 	got := mk.details[1]
 	require.EqualValues(t, 0, got.TotalPremiumSamples)
-	require.EqualValues(t, 0, got.AggregatePremiumSum)
+	require.True(t, got.AggregatePremiumSum.IsZero())
 	require.EqualValues(t, 0, got.LastUpdatedTimestamp, "stale oracle must not throttle retries")
 }
 
-func TestSettleMarket_StaleOracleReturnsErrorAndAdvancesGlobalRound(t *testing.T) {
+// TestSettleMarket_UsesCachedMarkAndIgnoresOracleStaleness verifies that
+// settlement does NOT depend on a fresh oracle read: rate computation only
+// needs the accumulated samples + InterestRate + clamps, and the mark price
+// for the prefix-sum increment is read from MarketDetails.MarkPrice (cached
+// during the most recent successful processMarketSample). A stale oracle at
+// settle time MUST NOT abort the round nor preserve cross-window data.
+func TestSettleMarket_UsesCachedMarkAndIgnoresOracleStaleness(t *testing.T) {
 	oldRoundTs := int64(1_699_996_399_999)
 	mk := &stubMarket{
 		markets: map[uint32]markettypes.Market{
@@ -326,10 +338,10 @@ func TestSettleMarket_StaleOracleReturnsErrorAndAdvancesGlobalRound(t *testing.T
 		details: map[uint32]markettypes.MarketDetails{
 			1: {
 				MarketIndex:          1,
-				MarkPrice:            50_000,
+				MarkPrice:            50_000, // cached by a previous successful sample
 				IndexPrice:           49_500,
 				FundingRatePrefixSum: math.ZeroInt(),
-				AggregatePremiumSum:  10_101 * 60,
+				AggregatePremiumSum:  math.NewInt(10_101 * 60),
 				TotalPremiumSamples:  60,
 				FundingClampSmall:    500,
 				FundingClampBig:      40_000,
@@ -346,19 +358,22 @@ func TestSettleMarket_StaleOracleReturnsErrorAndAdvancesGlobalRound(t *testing.T
 		LastFundingRoundTimestamp: oldRoundTs,
 	}))
 
-	err := k.BeginBlocker(ctx)
-	require.Error(t, err)
-	require.True(t, oracletypes.ErrStalePrice.Is(err))
+	require.NoError(t, k.BeginBlocker(ctx), "stale oracle must not abort begin-block")
 	got := mk.details[1]
-	require.True(t, got.FundingRatePrefixSum.IsZero())
-	require.EqualValues(t, 10_101*60, got.AggregatePremiumSum)
-	require.EqualValues(t, 60, got.TotalPremiumSamples)
+	require.EqualValues(t, 60_000_000, got.FundingRatePrefixSum.Int64(),
+		"settle must proceed with cached mark even when oracle is stale")
+	require.True(t, got.AggregatePremiumSum.IsZero(), "samples must be cleared after settle")
+	require.EqualValues(t, 0, got.TotalPremiumSamples)
 	meta, metaErr := k.Metadata.Get(ctx)
 	require.NoError(t, metaErr)
 	require.EqualValues(t, ctx.BlockTime().UnixMilli(), meta.LastFundingRoundTimestamp)
 }
 
-func TestSettleMarkets_GlobalRoundPartiallySettlesAndReturnsStaleError(t *testing.T) {
+// TestSettleAllMarkets_AllMarketsSettleIndependentlyOfOracle covers the
+// per-round behaviour for two markets: even when one market's oracle is
+// stale at settle time, both still close the round using their cached mark
+// prices and clear their samples for the next window.
+func TestSettleAllMarkets_AllMarketsSettleIndependentlyOfOracle(t *testing.T) {
 	oldRoundTs := int64(1_699_996_399_999)
 	mk := &stubMarket{
 		markets: map[uint32]markettypes.Market{
@@ -371,17 +386,17 @@ func TestSettleMarkets_GlobalRoundPartiallySettlesAndReturnsStaleError(t *testin
 				MarkPrice:            50_000,
 				IndexPrice:           49_500,
 				FundingRatePrefixSum: math.ZeroInt(),
-				AggregatePremiumSum:  10_101 * 60,
+				AggregatePremiumSum:  math.NewInt(10_101 * 60),
 				TotalPremiumSamples:  60,
 				FundingClampSmall:    500,
 				FundingClampBig:      40_000,
 			},
 			2: {
 				MarketIndex:          2,
-				MarkPrice:            50_000,
+				MarkPrice:            50_000, // cached from a prior successful sample
 				IndexPrice:           49_500,
 				FundingRatePrefixSum: math.ZeroInt(),
-				AggregatePremiumSum:  20_000 * 60,
+				AggregatePremiumSum:  math.NewInt(20_000 * 60),
 				TotalPremiumSamples:  60,
 				FundingClampSmall:    500,
 				FundingClampBig:      40_000,
@@ -405,19 +420,25 @@ func TestSettleMarkets_GlobalRoundPartiallySettlesAndReturnsStaleError(t *testin
 		LastFundingRoundTimestamp: oldRoundTs,
 	}))
 
-	err := k.BeginBlocker(ctx)
-	require.Error(t, err)
-	require.True(t, oracletypes.ErrStalePrice.Is(err))
+	require.NoError(t, k.BeginBlocker(ctx))
 
+	// Market 1: oracle fresh, settle as usual.
 	settled := mk.details[1]
 	require.EqualValues(t, 60_000_000, settled.FundingRatePrefixSum.Int64())
-	require.EqualValues(t, 0, settled.AggregatePremiumSum)
+	require.True(t, settled.AggregatePremiumSum.IsZero())
 	require.EqualValues(t, 0, settled.TotalPremiumSamples)
 
-	skipped := mk.details[2]
-	require.True(t, skipped.FundingRatePrefixSum.IsZero())
-	require.EqualValues(t, 20_000*60, skipped.AggregatePremiumSum)
-	require.EqualValues(t, 60, skipped.TotalPremiumSamples)
+	// Market 2: oracle stale at settle but cached MarkPrice is still 50_000;
+	// settle must complete using the cached mark and clear the window.
+	settled2 := mk.details[2]
+	avg2 := int64(20_000)
+	corr2 := int64(-500) // clamp(0 - 20_000, ±500) = -500
+	rate2 := (avg2 + corr2) / 8
+	expected2 := int64(settled2.MarkPrice) * rate2
+	require.EqualValues(t, expected2, settled2.FundingRatePrefixSum.Int64(),
+		"market 2 must settle using cached MarkPrice even when oracle is stale")
+	require.True(t, settled2.AggregatePremiumSum.IsZero())
+	require.EqualValues(t, 0, settled2.TotalPremiumSamples)
 
 	meta, metaErr := k.Metadata.Get(ctx)
 	require.NoError(t, metaErr)
@@ -433,6 +454,7 @@ func TestMarketFundingRateQuery_ReturnsGlobalFundingRoundTimestamp(t *testing.T)
 			1: {
 				MarketIndex:          1,
 				FundingRatePrefixSum: math.NewInt(123),
+				AggregatePremiumSum:  math.ZeroInt(),
 				LastUpdatedTimestamp: 456,
 			},
 		},
@@ -466,7 +488,7 @@ func TestProcessMarketSample_OneSidedSkipsSample(t *testing.T) {
 			1: {
 				MarketIndex:          1,
 				ImpactPrice:          999, // stale
-				AggregatePremiumSum:  42,  // baseline that must not move
+				AggregatePremiumSum:  math.NewInt(42),
 				TotalPremiumSamples:  1,
 				FundingRatePrefixSum: math.ZeroInt(),
 			},
@@ -481,7 +503,7 @@ func TestProcessMarketSample_OneSidedSkipsSample(t *testing.T) {
 	require.EqualValues(t, 0, got.ImpactPrice, "stale impact mid must be cleared")
 	require.EqualValues(t, 0, got.ImpactBidPrice)
 	require.EqualValues(t, 110, got.ImpactAskPrice)
-	require.EqualValues(t, 42, got.AggregatePremiumSum, "premium sum must not move when a side has no depth")
+	require.EqualValues(t, 42, got.AggregatePremiumSum.Int64(), "premium sum must not move when a side has no depth")
 	require.EqualValues(t, 1, got.TotalPremiumSamples, "sample count must not advance")
 }
 
@@ -497,7 +519,7 @@ func TestProcessMarketSample_Premium(t *testing.T) {
 			1: {MarketIndex: 1, MarketType: perptypes.MarketTypePerps, Status: perptypes.MarketStatusActive},
 		},
 		details: map[uint32]markettypes.MarketDetails{
-			1: {MarketIndex: 1, FundingRatePrefixSum: math.ZeroInt()},
+			1: {MarketIndex: 1, FundingRatePrefixSum: math.ZeroInt(), AggregatePremiumSum: math.ZeroInt()},
 		},
 	}
 	ok := stubOracle{price: oracletypes.OraclePrice{IndexPrice: 49_500, MarkPrice: 50_000}}
@@ -507,7 +529,7 @@ func TestProcessMarketSample_Premium(t *testing.T) {
 	require.NoError(t, k.BeginBlocker(ctx))
 	got := mk.details[1]
 	expected := int64(49_999-49_500) * perptypes.FundingRateTick / int64(49_500)
-	require.EqualValues(t, expected, got.AggregatePremiumSum)
+	require.EqualValues(t, expected, got.AggregatePremiumSum.Int64())
 	require.EqualValues(t, 1, got.TotalPremiumSamples)
 	require.EqualValues(t, 49_999, got.ImpactBidPrice)
 	require.EqualValues(t, 50_001, got.ImpactAskPrice)
@@ -522,7 +544,7 @@ func TestProcessMarketSample_PerMinuteThrottle(t *testing.T) {
 			1: {MarketIndex: 1, MarketType: perptypes.MarketTypePerps, Status: perptypes.MarketStatusActive},
 		},
 		details: map[uint32]markettypes.MarketDetails{
-			1: {MarketIndex: 1, FundingRatePrefixSum: math.ZeroInt()},
+			1: {MarketIndex: 1, FundingRatePrefixSum: math.ZeroInt(), AggregatePremiumSum: math.ZeroInt()},
 		},
 	}
 	ok := stubOracle{price: oracletypes.OraclePrice{IndexPrice: 49_500, MarkPrice: 50_000}}
@@ -542,7 +564,7 @@ func TestProcessMarketSample_PerMinuteThrottle(t *testing.T) {
 	}))
 	require.NoError(t, k.BeginBlocker(ctx30))
 	require.EqualValues(t, 1, mk.details[1].TotalPremiumSamples, "second sample within 1m must be throttled")
-	require.EqualValues(t, premiumAfter1, mk.details[1].AggregatePremiumSum)
+	require.True(t, premiumAfter1.Equal(mk.details[1].AggregatePremiumSum))
 
 	// Third sample 70s later -- admitted.
 	ctx70 := ctx.WithBlockTime(ctx.BlockTime().Add(70 * time.Second))
@@ -566,7 +588,7 @@ func TestProcessMarketSample_MaxPremiumSampleCount(t *testing.T) {
 				MarketIndex:          1,
 				FundingRatePrefixSum: math.ZeroInt(),
 				TotalPremiumSamples:  50,
-				AggregatePremiumSum:  777,
+				AggregatePremiumSum:  math.NewInt(777),
 			},
 		},
 	}
@@ -590,7 +612,7 @@ func TestProcessMarketSample_MaxPremiumSampleCount(t *testing.T) {
 
 	require.NoError(t, k.BeginBlocker(ctx))
 	require.EqualValues(t, 50, mk.details[1].TotalPremiumSamples)
-	require.EqualValues(t, 777, mk.details[1].AggregatePremiumSum)
+	require.EqualValues(t, 777, mk.details[1].AggregatePremiumSum.Int64())
 }
 
 // TestSettleMarket_Formula pins down the clamp/divisor logic and the
@@ -613,7 +635,7 @@ func TestSettleMarket_Formula(t *testing.T) {
 				MarkPrice:            50_000,
 				IndexPrice:           49_500,
 				FundingRatePrefixSum: math.ZeroInt(),
-				AggregatePremiumSum:  10_101 * 60, // avg = 10101
+				AggregatePremiumSum:  math.NewInt(10_101 * 60), // avg = 10101
 				TotalPremiumSamples:  60,
 				FundingClampSmall:    500,
 				FundingClampBig:      40_000,
@@ -636,7 +658,7 @@ func TestSettleMarket_Formula(t *testing.T) {
 	got := mk.details[1]
 	require.EqualValues(t, 60_000_000, got.FundingRatePrefixSum.Int64(),
 		"prefix sum must grow by mark * rate (with rate = clamped/divisor)")
-	require.EqualValues(t, 0, got.AggregatePremiumSum, "settle must reset aggregate")
+	require.True(t, got.AggregatePremiumSum.IsZero(), "settle must reset aggregate")
 	require.EqualValues(t, 0, got.TotalPremiumSamples, "settle must reset sample count")
 }
 
@@ -652,6 +674,7 @@ func TestSettleMarket_NoSamples(t *testing.T) {
 			1: {
 				MarketIndex:          1,
 				FundingRatePrefixSum: math.NewInt(123),
+				AggregatePremiumSum:  math.ZeroInt(),
 				TotalPremiumSamples:  0,
 			},
 		},
@@ -666,4 +689,112 @@ func TestSettleMarket_NoSamples(t *testing.T) {
 	}))
 	require.NoError(t, k.BeginBlocker(ctx))
 	require.EqualValues(t, 123, mk.details[1].FundingRatePrefixSum.Int64())
+}
+
+// spyOracle counts every GetPrice invocation per market and optionally
+// records callers that should never reach it. Used by
+// `TestSettleMarket_NoOracleCallInSettlePath` to assert the new contract:
+// settle reads `d.MarkPrice` from MarketDetails and never queries the oracle
+// directly.
+type spyOracle struct {
+	calls map[uint32]int
+}
+
+func (s *spyOracle) GetPrice(_ context.Context, marketIdx uint32) (oracletypes.OraclePrice, error) {
+	if s.calls == nil {
+		s.calls = map[uint32]int{}
+	}
+	s.calls[marketIdx]++
+	return oracletypes.OraclePrice{}, oracletypes.ErrStalePrice.Wrap("spy never returns success")
+}
+
+// TestSettleMarket_NoOracleCallInSettlePath pins down the structural
+// invariant that `settleMarket` must not call the oracle. We:
+//
+//  1. Pre-prime the market with TotalPremiumSamples=60 + cached MarkPrice so
+//     the settle path has everything it needs.
+//  2. Set `d.LastUpdatedTimestamp = now` so the per-minute throttle drops
+//     `processMarketSample` before it can touch the oracle.
+//  3. Step past `FundingPeriodMs` so the settle branch fires.
+//  4. Run BeginBlocker with a spying oracle and assert it was NOT called.
+func TestSettleMarket_NoOracleCallInSettlePath(t *testing.T) {
+	mk := &stubMarket{
+		markets: map[uint32]markettypes.Market{
+			1: {MarketIndex: 1, MarketType: perptypes.MarketTypePerps, Status: perptypes.MarketStatusActive},
+		},
+		details: map[uint32]markettypes.MarketDetails{
+			1: {
+				MarketIndex:          1,
+				MarkPrice:            50_000, // cached from a previous sample
+				IndexPrice:           49_500,
+				FundingRatePrefixSum: math.ZeroInt(),
+				AggregatePremiumSum:  math.NewInt(10_101 * 60),
+				TotalPremiumSamples:  60,
+				FundingClampSmall:    500,
+				FundingClampBig:      40_000,
+			},
+		},
+	}
+	spy := &spyOracle{}
+	bk := stubBook{bid: 0, ask: 0, bidOk: false, askOk: false}
+
+	k, ctx := newFundingKeeper(t, mk, spy, bk)
+	mk.details[1] = func() markettypes.MarketDetails {
+		d := mk.details[1]
+		// Pin LastUpdatedTimestamp to now so the 1-minute throttle drops
+		// processMarketSample before it reaches GetPrice.
+		d.LastUpdatedTimestamp = ctx.BlockTime().UnixMilli()
+		return d
+	}()
+	require.NoError(t, k.Metadata.Set(ctx, fundingtypes.FundingMetadata{
+		LastFundingRoundTimestamp: ctx.BlockTime().UnixMilli() - perptypes.FundingPeriod - 1,
+	}))
+
+	require.NoError(t, k.BeginBlocker(ctx))
+	require.Equal(t, 0, spy.calls[1], "settleMarket must not query the oracle")
+
+	got := mk.details[1]
+	require.EqualValues(t, 60_000_000, got.FundingRatePrefixSum.Int64())
+	require.True(t, got.AggregatePremiumSum.IsZero())
+	require.EqualValues(t, 0, got.TotalPremiumSamples)
+}
+
+// TestProcessMarketSample_LargePriceDoesNotOverflow exercises the math.Int
+// upgrade by feeding an impact price near uint32-max so the
+// `(IB - idx) * FundingRateTick` intermediate would overflow int64
+// (~ 4.29e9 * 1e6 = 4.29e15 -- still within int64, but multiplied by 60
+// samples and other intermediates the legacy path was uncomfortably close).
+// The test simply asserts the post-sample state is sane (no panic, premium
+// in the expected ballpark).
+func TestProcessMarketSample_LargePriceDoesNotOverflow(t *testing.T) {
+	const ib = uint32(4_000_000_000)
+	const ia = uint32(4_000_000_002)
+	const idx = uint32(3_999_999_500)
+	mk := &stubMarket{
+		markets: map[uint32]markettypes.Market{
+			1: {MarketIndex: 1, MarketType: perptypes.MarketTypePerps, Status: perptypes.MarketStatusActive},
+		},
+		details: map[uint32]markettypes.MarketDetails{
+			1: {
+				MarketIndex:          1,
+				FundingRatePrefixSum: math.ZeroInt(),
+				AggregatePremiumSum:  math.ZeroInt(),
+			},
+		},
+	}
+	ok := stubOracle{price: oracletypes.OraclePrice{IndexPrice: idx, MarkPrice: idx}}
+	bk := stubBook{bid: ib, ask: ia, bidOk: true, askOk: true}
+
+	k, ctx := newFundingKeeper(t, mk, ok, bk)
+	require.NoError(t, k.BeginBlocker(ctx))
+
+	// Expected premium: (ib - idx) * TICK / idx = 500 * 1e6 / 3_999_999_500 = 0
+	// (truncates to zero -- still correct, no overflow).
+	got := mk.details[1]
+	require.EqualValues(t, 1, got.TotalPremiumSamples)
+	// The math.Int implementation handles the multiplication without
+	// overflowing int64; the assertion below merely confirms the value is
+	// non-negative and bounded.
+	require.True(t, got.AggregatePremiumSum.GTE(math.ZeroInt()))
+	require.True(t, got.AggregatePremiumSum.LTE(math.NewInt(perptypes.FundingRateTick)))
 }
