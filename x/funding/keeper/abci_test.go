@@ -76,14 +76,11 @@ type stubBook struct {
 func (s stubBook) BestBidAsk(_ context.Context, _ uint32) (uint32, uint32, error) {
 	return s.bid, s.ask, nil
 }
-func (s stubBook) ComputeImpactPrice(_ context.Context, _ uint32, isAsk bool, _ uint64) (uint32, bool, error) {
+func (s stubBook) ComputeImpactPrice(_ context.Context, _ uint32, isAsk bool) (uint32, bool, error) {
 	if isAsk {
 		return s.ask, s.askOk, nil
 	}
 	return s.bid, s.bidOk, nil
-}
-func (stubBook) ImpactUsdcAmount(_ context.Context) (uint64, error) {
-	return perptypes.ImpactUSDCAmount, nil
 }
 
 type stubOracle struct {
@@ -422,9 +419,12 @@ func TestSettleAllMarkets_AllMarketsSettleIndependentlyOfOracle(t *testing.T) {
 
 	require.NoError(t, k.BeginBlocker(ctx))
 
-	// Market 1: oracle fresh, settle as usual.
+	// Market 1: oracle fresh. refreshMarkPrice runs before settle and
+	// re-derives MarkPrice = median(impact=0 fallback to mean(price_1,
+	// price_2)) = mean(49500 + floor(49500*606060/60_000_000), 50000) =
+	// mean(49999, 50000) = 49999. inc = 49999 * 1200 = 59_998_800.
 	settled := mk.details[1]
-	require.EqualValues(t, 60_000_000, settled.FundingRatePrefixSum.Int64())
+	require.EqualValues(t, 59_998_800, settled.FundingRatePrefixSum.Int64())
 	require.True(t, settled.AggregatePremiumSum.IsZero())
 	require.EqualValues(t, 0, settled.TotalPremiumSamples)
 
@@ -618,12 +618,24 @@ func TestProcessMarketSample_MaxPremiumSampleCount(t *testing.T) {
 // TestSettleMarket_Formula pins down the clamp/divisor logic and the
 // mark*rate prefix-sum convention.
 //
-//	premium=10101, ir=0, SmallClamp=500, BigClamp=40000, divisor=8, mark=50000
+// BeginBlocker now runs `refreshMarkPrice` BEFORE settling, recomputing
+// `MarkPrice` as median(impact_mid, index + premium_ema, oracle_mark).
+// In this fixture the orderbook stub reports both sides as ok=false so
+// `ImpactPrice = 0`, and the medianer falls back to mean(price_1,
+// price_2):
+//
+//	price_1 = 49500 + floor(49500 * 606060 / 60_000_000) = 49500 + 499 = 49999
+//	price_2 = oracle_mark = 50000
+//	mark    = mean(49999, 50000) = 49999  (impact=0 ⇒ mean fallback)
+//
+// Settle then runs with:
+//
+//	premium=10101, ir=0, SmallClamp=500, BigClamp=40000, divisor=8, mark=49999
 //	correction = clamp(0 - 10101, -500, +500) = -500
 //	smallClamped = 10101 + (-500) = 9601
 //	bigClamped = clamp(9601, -40000, +40000) = 9601
 //	rate = 9601 / 8 = 1200 (truncated)
-//	prefix increment = mark * rate = 50_000 * 1200 = 60_000_000
+//	prefix increment = mark * rate = 49_999 * 1200 = 59_998_800
 func TestSettleMarket_Formula(t *testing.T) {
 	mk := &stubMarket{
 		markets: map[uint32]markettypes.Market{
@@ -656,7 +668,14 @@ func TestSettleMarket_Formula(t *testing.T) {
 	require.NoError(t, k.BeginBlocker(ctx))
 
 	got := mk.details[1]
-	require.EqualValues(t, 60_000_000, got.FundingRatePrefixSum.Int64(),
+	// Pin the refreshMarkPrice path: refreshMarkPrice must have
+	// rewritten MarkPrice 50_000 → 49_999 BEFORE settleMarket
+	// consumed it. If a future refactor accidentally moves the
+	// refresh after settle (or skips it entirely), this assertion
+	// catches the regression before the prefix-sum check fires below.
+	require.EqualValues(t, 49_999, got.MarkPrice,
+		"refreshMarkPrice must have re-derived MarkPrice from the median pipeline before settle")
+	require.EqualValues(t, 59_998_800, got.FundingRatePrefixSum.Int64(),
 		"prefix sum must grow by mark * rate (with rate = clamped/divisor)")
 	require.True(t, got.AggregatePremiumSum.IsZero(), "settle must reset aggregate")
 	require.EqualValues(t, 0, got.TotalPremiumSamples, "settle must reset sample count")
@@ -716,7 +735,14 @@ func (s *spyOracle) GetPrice(_ context.Context, marketIdx uint32) (oracletypes.O
 //  2. Set `d.LastUpdatedTimestamp = now` so the per-minute throttle drops
 //     `processMarketSample` before it can touch the oracle.
 //  3. Step past `FundingPeriodMs` so the settle branch fires.
-//  4. Run BeginBlocker with a spying oracle and assert it was NOT called.
+//  4. Run BeginBlocker with a spying oracle that always errors out.
+//
+// Note: `refreshMarkPrice` (which runs every block before settle) DOES
+// call the oracle. So the spy will see exactly one call — from
+// refreshMarkPrice — and zero calls from settleMarket. Because the spy
+// returns an error, refreshMarkPrice bails out early without mutating
+// d.MarkPrice, so the cached `50_000` survives into settleMarket and
+// the prefix increment matches the legacy expected value.
 func TestSettleMarket_NoOracleCallInSettlePath(t *testing.T) {
 	mk := &stubMarket{
 		markets: map[uint32]markettypes.Market{
@@ -751,7 +777,11 @@ func TestSettleMarket_NoOracleCallInSettlePath(t *testing.T) {
 	}))
 
 	require.NoError(t, k.BeginBlocker(ctx))
-	require.Equal(t, 0, spy.calls[1], "settleMarket must not query the oracle")
+	// Exactly one oracle call: refreshMarkPrice. processMarketSample
+	// was throttled out and settleMarket reads only the cached
+	// MarkPrice -- no oracle call from the settle path itself.
+	require.Equal(t, 1, spy.calls[1],
+		"only refreshMarkPrice may query oracle (1 call); settleMarket itself must read only cached state")
 
 	got := mk.details[1]
 	require.EqualValues(t, 60_000_000, got.FundingRatePrefixSum.Int64())

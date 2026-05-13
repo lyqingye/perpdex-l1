@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
+	markettypes "github.com/perpdex/perpdex-l1/x/market/types"
 	"github.com/perpdex/perpdex-l1/x/matching/types"
 )
 
@@ -23,6 +24,13 @@ func (s stubPreLiqRisk) GetIsolatedHealthStatus(_ context.Context, _ uint64, _ u
 	return s.iso, nil
 }
 
+// GetMarkAndMarketDetails is unused by checkPreLiquidationGate; the
+// stub returns a benign fresh mark so the matching RiskKeeper
+// interface is satisfied.
+func (stubPreLiqRisk) GetMarkAndMarketDetails(_ context.Context, mkt uint32) (uint32, markettypes.MarketDetails, error) {
+	return 1, markettypes.MarketDetails{MarketIndex: mkt, MarkPrice: 1, LastMarkPriceTimestamp: 1}, nil
+}
+
 // TestCheckPreLiquidationGate exercises the matching-side pre-liquidation
 // order-placement rule against the full spec table:
 //
@@ -36,11 +44,11 @@ func (s stubPreLiqRisk) GetIsolatedHealthStatus(_ context.Context, _ uint64, _ u
 //	HEALTHY / BANKRUPTCY   either         reject
 func TestCheckPreLiquidationGate(t *testing.T) {
 	cases := []struct {
-		name      string
-		cross     uint32
-		iso       uint32
+		name       string
+		cross      uint32
+		iso        uint32
 		reduceOnly bool
-		wantErr   bool
+		wantErr    bool
 	}{
 		{"healthy_anything_ok", perptypes.HealthHealthy, perptypes.HealthHealthy, false, false},
 		{"pre_cross_blocks_increase", perptypes.HealthPreLiquidation, perptypes.HealthHealthy, false, true},

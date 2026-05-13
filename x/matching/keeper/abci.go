@@ -25,7 +25,20 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 	}
 	var due []triggered
 	if err := k.bookKeeper.IterateTriggers(ctx, func(market uint32, triggerPrice uint32, orderIndex uint64) bool {
-		px, err := k.oracleKeeper.GetPrice(ctx, market)
+		// Read the authoritative mark via RiskKeeper.GetMarkAndMarketDetails
+		// so trigger activation goes through the SAME fail-closed
+		// staleness gate as risk classification. The gate covers three
+		// cases:
+		//   1) market details fetch fails (ErrMissingPrice)
+		//   2) MarkPrice == 0 (ErrZeroMarkPrice)
+		//   3) now - LastMarkPriceTimestamp > MaxMarkStalenessMs
+		//      (funding BeginBlocker has not refreshed within the
+		//      governance-configured window)
+		// Any of these emit a TriggerOracleError event and skip the
+		// trigger -- stop-loss / take-profit cannot fire against a
+		// stale or missing mark, matching the conservative semantics
+		// applied elsewhere in the risk pipeline.
+		mark, _, err := k.riskKeeper.GetMarkAndMarketDetails(ctx, market)
 		if err != nil {
 			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
 				types.EventTypeTriggerOracleError,
@@ -34,7 +47,10 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 			))
 			return false
 		}
-		if px.MarkPrice == 0 {
+		if mark == 0 {
+			// Defensive: GetMarkAndMarketDetails should already have
+			// returned ErrZeroMarkPrice, but guard the activation
+			// comparison in case the interface contract ever loosens.
 			return false
 		}
 		o, err := k.bookKeeper.GetOrder(ctx, orderIndex)
@@ -50,15 +66,15 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 		switch o.OrderType {
 		case perptypes.StopLossOrder, perptypes.StopLossLimitOrder:
 			if o.IsAsk {
-				active = px.MarkPrice <= triggerPrice
+				active = mark <= triggerPrice
 			} else {
-				active = px.MarkPrice >= triggerPrice
+				active = mark >= triggerPrice
 			}
 		case perptypes.TakeProfitOrder, perptypes.TakeProfitLimitOrder:
 			if o.IsAsk {
-				active = px.MarkPrice >= triggerPrice
+				active = mark >= triggerPrice
 			} else {
-				active = px.MarkPrice <= triggerPrice
+				active = mark <= triggerPrice
 			}
 		}
 		if active {

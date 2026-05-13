@@ -60,7 +60,19 @@ message MarketDetails {
   int64 bid_nonce = 20;
   int64 total_order_count = 21;
   uint32 total_premium_samples = 22;
+  // last_updated_timestamp is the millisecond timestamp of the most
+  // recent premium-sample heartbeat for this market (see
+  // x/funding processMarketSample). It throttles per-minute premium
+  // sampling and is NOT a mark-price freshness signal; downstream
+  // mark consumers must read `last_mark_price_timestamp` instead.
   int64 last_updated_timestamp = 23;
+  // last_mark_price_timestamp is the millisecond timestamp of the
+  // most recent successful `refreshMarkPrice` invocation in the
+  // funding BeginBlocker (i.e. the last block whose median(impact,
+  // idx + ema, oracle_mark) produced a valid mark). x/risk and
+  // other consumers gate `MarkPrice` reads on this field via
+  // `Funding.Params.MaxMarkStalenessMs`.
+  int64 last_mark_price_timestamp = 24;
 }
 
 message Params {

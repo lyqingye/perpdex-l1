@@ -55,6 +55,19 @@ func NewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, authori
 
 func (k Keeper) Authority() string { return k.authority }
 
+// MaxMarkStalenessMs returns the configured staleness gate for
+// `MarketDetails.MarkPrice`. Implements the `risk.types.FundingKeeper`
+// interface so x/risk can refuse mark reads older than this when the
+// funding BeginBlocker stops updating (oracle outage, halted module).
+// A zero return value disables the gate.
+func (k Keeper) MaxMarkStalenessMs(ctx context.Context) (int64, error) {
+	p, err := k.Params.Get(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return p.MaxMarkStalenessMs, nil
+}
+
 // SettlePositionFunding applies the per-round funding payment to a
 // position by leveraging the cumulative prefix sum maintained by
 // `settleMarket`.

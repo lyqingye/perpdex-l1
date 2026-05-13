@@ -67,10 +67,17 @@ message QueryBestBidAskResponse {
 }
 
 message QueryImpactPriceRequest { uint32 market_index = 1; }
+// QueryImpactPriceResponse reports the per-side VWAP and the mid. The
+// `bid_ok` / `ask_ok` flags indicate whether the corresponding side had
+// enough resting depth to absorb the impact notional. When either flag
+// is false the corresponding price is 0 and `impact_price` is also 0
+// (the mid is undefined unless both sides resolve).
 message QueryImpactPriceResponse {
   uint32 impact_bid = 1;
   uint32 impact_ask = 2;
   uint32 impact_price = 3;
+  bool bid_ok = 4;
+  bool ask_ok = 5;
 }
 
 message QueryParamsRequest {}

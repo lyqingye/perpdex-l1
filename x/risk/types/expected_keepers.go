@@ -26,8 +26,20 @@ type MarketKeeper interface {
 	GetMarketDetails(ctx context.Context, idx uint32) (markettypes.MarketDetails, error)
 }
 
+// OracleKeeper is retained only for legacy callers / tests; the live mark
+// price is no longer read through it. The chain's authoritative mark
+// price is `MarketDetails.MarkPrice`, written every block by the funding
+// BeginBlocker. Risk reads it via `MarketKeeper.GetMarketDetails`.
 type OracleKeeper interface {
 	GetPrice(ctx context.Context, marketIdx uint32) (oracletypes.OraclePrice, error)
+}
+
+// FundingKeeper exposes the staleness gate that protects risk reads of
+// `MarketDetails.MarkPrice` from drifting if the funding BeginBlocker
+// stops updating (oracle outage, halted module, etc.). Wired via the
+// app keeper graph; mocked in unit tests.
+type FundingKeeper interface {
+	MaxMarkStalenessMs(ctx context.Context) (int64, error)
 }
 
 // Helpers used by tests.

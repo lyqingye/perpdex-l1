@@ -73,13 +73,27 @@ func (s *stubAccountKeeper) IterateAccountPositions(
 	return nil
 }
 
-type stubMarketKeeper struct{ md markettypes.MarketDetails }
+// stubMarketKeeper mirrors the oracle's MarkPrice into
+// MarketDetails.MarkPrice on read. Risk now reads the authoritative mark
+// from MarketDetails (written every block by the funding BeginBlocker's
+// median pipeline); this shim lets the legacy test scaffolding that
+// configures `stubOracleKeeper{price: OraclePrice{MarkPrice: X}}`
+// continue to drive the mark used by ComputeCrossRisk / ComputeIsolatedRisk
+// without rewriting every test.
+type stubMarketKeeper struct {
+	md     markettypes.MarketDetails
+	mirror *uint32 // optional: if non-nil overrides md.MarkPrice on read
+}
 
 func (s stubMarketKeeper) GetMarket(_ context.Context, idx uint32) (markettypes.Market, error) {
 	return markettypes.Market{MarketIndex: idx, MarketType: perptypes.MarketTypePerps}, nil
 }
 func (s stubMarketKeeper) GetMarketDetails(_ context.Context, _ uint32) (markettypes.MarketDetails, error) {
-	return s.md, nil
+	md := s.md
+	if s.mirror != nil {
+		md.MarkPrice = *s.mirror
+	}
+	return md, nil
 }
 
 type stubOracleKeeper struct {
@@ -91,12 +105,33 @@ func (s stubOracleKeeper) GetPrice(_ context.Context, _ uint32) (oracletypes.Ora
 	return s.price, s.err
 }
 
+// stubFundingKeeper feeds resolveMarkPrice's staleness gate. Tests that
+// don't care about staleness can leave it un-wired (SetFundingKeeper
+// never called) which bypasses the gate.
+type stubFundingKeeper struct {
+	maxStaleness int64
+	err          error
+}
+
+func (s stubFundingKeeper) MaxMarkStalenessMs(_ context.Context) (int64, error) {
+	return s.maxStaleness, s.err
+}
+
 func makeKeeper(t *testing.T, ak *stubAccountKeeper, mk stubMarketKeeper, ok stubOracleKeeper) (riskkeeper.Keeper, sdk.Context) {
 	t.Helper()
 	keys := storetypes.NewKVStoreKeys(risktypes.StoreKey)
 	cdc := moduletestutil.MakeTestEncodingConfig().Codec
 	cms := integration.CreateMultiStore(keys, log.NewTestLogger(t))
 	ctx := sdk.NewContext(cms, cmtprototypes.Header{}, true, log.NewTestLogger(t))
+	// Mirror the oracle stub's MarkPrice into MarketDetails.MarkPrice
+	// so legacy tests that drove the mark through the oracle keeper
+	// continue to exercise the same scenarios. Tests that need an
+	// explicit MarketDetails.MarkPrice can set `mk.md.MarkPrice`
+	// directly and pass `mk.mirror = nil`.
+	if mk.mirror == nil && mk.md.MarkPrice == 0 {
+		mp := ok.price.MarkPrice
+		mk.mirror = &mp
+	}
 	return riskkeeper.NewKeeper(
 		cdc,
 		runtime.NewKVStoreService(keys[risktypes.StoreKey]),
@@ -105,9 +140,13 @@ func makeKeeper(t *testing.T, ak *stubAccountKeeper, mk stubMarketKeeper, ok stu
 	), ctx
 }
 
-// TestComputeCrossRisk_StalePriceFailsClosed ensures that non-zero positions
-// with a missing or stale oracle price surface an explicit error rather than
-// being silently skipped (audit Blocker risk-3).
+// TestComputeCrossRisk_StalePriceFailsClosed ensures that non-zero
+// positions with a stale MarketDetails.MarkPrice surface an explicit
+// error rather than being silently skipped (audit Blocker risk-3). The
+// authoritative mark is written every block by the funding
+// BeginBlocker; if that pipeline has not refreshed within the
+// governance-configured window we must fail-closed instead of pricing
+// PnL/IM/MM with a stale value.
 func TestComputeCrossRisk_StalePriceFailsClosed(t *testing.T) {
 	ak := stubAccountKeeper{
 		acc: accounttypes.Account{AccountIndex: 1, Collateral: math.NewInt(1000)},
@@ -117,9 +156,15 @@ func TestComputeCrossRisk_StalePriceFailsClosed(t *testing.T) {
 			LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 		},
 	}
-	mk := stubMarketKeeper{md: markettypes.MarketDetails{}}
-	ok := stubOracleKeeper{err: oracletypes.ErrStalePrice}
+	// Non-zero mark with a LastMarkPriceTimestamp that is "now - 1h" so
+	// the staleness gate trips against the 1-minute stub.
+	mk := stubMarketKeeper{md: markettypes.MarketDetails{
+		MarkPrice:              100,
+		LastMarkPriceTimestamp: 0, // never refreshed by funding pipeline
+	}}
+	ok := stubOracleKeeper{}
 	k, ctx := makeKeeper(t, &ak, mk, ok)
+	k.SetFundingKeeper(stubFundingKeeper{maxStaleness: 60_000}) // 1m
 
 	_, err := k.ComputeCrossRisk(ctx, 1)
 	require.ErrorIs(t, err, risktypes.ErrMissingPrice)
