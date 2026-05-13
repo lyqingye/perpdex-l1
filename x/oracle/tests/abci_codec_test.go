@@ -1,4 +1,13 @@
-package codec_test
+// Suite: ABCI++ vote-extension wire codec.
+//
+// Covers the encoder/decoder pair used on both sides of the VE pipeline:
+//   - OracleVote payloads emitted on ExtendVote
+//   - ExtendedCommitInfo bundles injected on PrepareProposal
+//
+// Each test exercises the wire format end-to-end (encode → decode →
+// equality) so any silent protobuf or zstd-frame regression is caught
+// before it can break consensus.
+package tests
 
 import (
 	"testing"

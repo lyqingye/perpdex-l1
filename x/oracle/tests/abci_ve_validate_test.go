@@ -1,4 +1,11 @@
-package ve_test
+// Suite: ABCI++ ExtendedCommitInfo structural validation.
+//
+// These cases protect the supermajority + signature invariants that
+// `ve.ValidateExtendedCommit` and `ve.ValidateExtendedCommitAgainstLastCommit`
+// enforce on the receiver side of the VE pipeline. A regression here
+// could let a partition (or a malicious proposer) inject vote
+// extensions that no longer reflect the committed validator set.
+package tests
 
 import (
 	"testing"

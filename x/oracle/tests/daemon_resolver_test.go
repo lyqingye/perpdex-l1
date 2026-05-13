@@ -1,4 +1,14 @@
-package daemon_test
+// Suite: daemon pair → market_index resolver.
+//
+// `MarketResolver` is the bridge between the sidecar's pair-string view
+// of the world ("BTC/USD") and the chain's numeric market_index. The
+// suite asserts:
+//   - The USDT → USD normalisation rule (so "BTC/USDT" matches the
+//     sidecar's "BTC/USD" feed).
+//   - The decimals fallback to 8 when a market is registered without
+//     an explicit precision.
+//   - The lower-cased lookup convenience (pairs are uppercased on Set).
+package tests
 
 import (
 	"context"

@@ -1,4 +1,10 @@
-package daemon_test
+// Suite: daemon gRPC sidecar client.
+//
+// Drives `daemon.SidecarClient` against a locally bound `fakeSidecar`
+// gRPC server so we cover the timeout, version probe and price parsing
+// paths without any external dependency. The fake server is package-
+// private so it can be shared if future client suites need it.
+package tests
 
 import (
 	"context"

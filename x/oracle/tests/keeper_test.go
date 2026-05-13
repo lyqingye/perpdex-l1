@@ -1,39 +1,21 @@
-package keeper_test
+// Suite: keeper price state machine.
+//
+// Covers the read/write API exposed to the rest of the chain:
+//   - `SetPrice` rejects zero-valued index/mark prices (audit
+//     oracle-12).
+//   - `GetPrice` filters by `Params.MaxAgeMs` and refuses prices that
+//     were never updated (timestamp == 0).
+//   - `GetStoredPrice` always returns the last stored row, regardless
+//     of freshness — used by queries and EMA smoothing.
+package tests
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
-	cmtprototypes "github.com/cometbft/cometbft/proto/tendermint/types"
-
-	"cosmossdk.io/log"
-	storetypes "cosmossdk.io/store/types"
-
-	"github.com/cosmos/cosmos-sdk/runtime"
-	"github.com/cosmos/cosmos-sdk/testutil/integration"
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	moduletestutil "github.com/cosmos/cosmos-sdk/types/module/testutil"
-
-	oraclekeeper "github.com/perpdex/perpdex-l1/x/oracle/keeper"
 	oracletypes "github.com/perpdex/perpdex-l1/x/oracle/types"
 )
-
-func newOracleKeeper(t *testing.T) (oraclekeeper.Keeper, sdk.Context) {
-	t.Helper()
-	keys := storetypes.NewKVStoreKeys(oracletypes.StoreKey)
-	cdc := moduletestutil.MakeTestEncodingConfig().Codec
-	cms := integration.CreateMultiStore(keys, log.NewTestLogger(t))
-	ctx := sdk.NewContext(cms, cmtprototypes.Header{Time: time.Unix(1_700_000_000, 0)}, true, log.NewTestLogger(t))
-	k := oraclekeeper.NewKeeper(
-		cdc,
-		runtime.NewKVStoreService(keys[oracletypes.StoreKey]),
-		"auth",
-	)
-	require.NoError(t, k.Params.Set(ctx, oracletypes.DefaultParams()))
-	return k, ctx
-}
 
 // TestSetPrice_RejectsZero ensures runtime price writes cannot slip zero
 // mark / index prices into state (audit Medium oracle-12).

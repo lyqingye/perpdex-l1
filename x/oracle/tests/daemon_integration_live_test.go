@@ -1,7 +1,13 @@
 //go:build liveoracle
 // +build liveoracle
 
-package daemon_test
+// Suite: end-to-end daemon ↔ real sidecar binary.
+//
+// Gated behind the `liveoracle` build tag so CI doesn't hit Binance /
+// OKX / CoinGecko on every push. Run locally with:
+//
+//	make build-sidecar && go test -tags liveoracle -count=1 ./x/oracle/tests/...
+package tests
 
 import (
 	"context"
@@ -25,11 +31,6 @@ import (
 //     end up in the cache with non-zero prices.
 //  3. The daemon's `AsPriceFetcher` adapter returns the same set when
 //     queried like the keeper does on `ExtendVote`.
-//
-// The test is gated on the `liveoracle` build tag so CI does not hit
-// Binance / OKX / CoinGecko on every push. Run locally with:
-//
-//	make build-sidecar && go test -tags liveoracle -count=1 ./x/oracle/daemon/...
 func TestDaemonLivePollAgainstSidecar(t *testing.T) {
 	h := livehelpers.StartSidecar(t, livehelpers.DefaultLiveConfig(), 15*time.Second)
 
