@@ -1,7 +1,21 @@
-package keeper_test
+// sentinel_test.go pins the sentinel-error contract surface exposed
+// by `x/trade/types` and consumed by the matching engine. Each test
+// drives `ApplyPerpsMatching` / `ApplySpotMatching` into a specific
+// rejection branch and asserts:
+//
+//  1. The returned error is the canonical `ErrTaker*` / `ErrMaker*`
+//     sentinel (so `errors.Is` lookups in matching_engine.rs match).
+//  2. `IsRecoverableTakerError` / `IsRecoverableMakerError` route the
+//     error to the correct side of the eviction-vs-stop fork.
+//  3. Hard / unrelated errors do NOT classify as recoverable on
+//     either side, so the matching loop falls through to a revert.
+//
+// Happy-path apply behaviour lives in perp_apply_test.go and
+// spot_apply_test.go; isolated-margin allocation lives in
+// isolated_margin_test.go.
+package tests
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -15,6 +29,26 @@ import (
 	tradekeeper "github.com/perpdex/perpdex-l1/x/trade/keeper"
 	tradetypes "github.com/perpdex/perpdex-l1/x/trade/types"
 )
+
+// TestApplyPerpsMatching_RejectsMakerRisk pins the invariant that the
+// maker side is risk-checked alongside the taker; failing the maker
+// risk check rejects the whole match.
+func TestApplyPerpsMatching_RejectsMakerRisk(t *testing.T) {
+	ctx, ak, _, rk, k := newSdkCtx(t)
+	rk.rejectOnCall = 2 // first call = taker, second = maker
+
+	require.NoError(t, ak.SetAccount(ctx, accounttypes.Account{AccountIndex: 10, Collateral: math.NewInt(1)}))
+	require.NoError(t, ak.SetAccount(ctx, accounttypes.Account{AccountIndex: 20, Collateral: math.NewInt(1)}))
+
+	err := k.ApplyPerpsMatching(ctx, tradekeeper.PerpFill{
+		MakerAccountIndex: 10, TakerAccountIndex: 20,
+		MarketIndex: 1, Price: 10, BaseAmount: 1,
+		IsTakerAsk: false, NoFee: true,
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "risk regression")
+	require.Equal(t, 2, rk.snapshots) // maker + taker both snapshotted
+}
 
 // TestSentinel_ApplyPerpsMatching_TakerRiskRegression confirms the taker
 // branch of the risk loop returns ErrTakerRiskRegression so the matching
@@ -121,42 +155,6 @@ func TestSentinel_ApplySpotMatching_MakerInsufficient(t *testing.T) {
 	require.True(t, errors.Is(err, tradetypes.ErrMakerInsufficientBalance),
 		"expected ErrMakerInsufficientBalance, got %v", err)
 	require.True(t, tradetypes.IsRecoverableMakerError(err))
-}
-
-// TestSentinel_ApplySpotMatching_DrainsLockedBalanceFirst confirms a
-// successful spot fill consumes the maker's locked portion before
-// touching the available balance — the lock-on-place guarantee.
-func TestSentinel_ApplySpotMatching_DrainsLockedBalanceFirst(t *testing.T) {
-	ctx, ak, _, _, k := newSdkCtx(t)
-	const (
-		makerIdx     = uint64(10)
-		takerIdx     = uint64(20)
-		baseAssetID  = uint32(1)
-		quoteAssetID = uint32(2)
-	)
-	// Maker rests an ask: 50 base locked, total balance 100.
-	require.NoError(t, ak.SetAccountAsset(ctx, accounttypes.AccountAsset{
-		AccountIndex: makerIdx, AssetIndex: baseAssetID,
-		Balance: math.NewInt(100), LockedBalance: math.NewInt(50),
-	}))
-	// Taker has plenty of quote.
-	require.NoError(t, ak.SetAccountAsset(ctx, accounttypes.AccountAsset{
-		AccountIndex: takerIdx, AssetIndex: quoteAssetID,
-		Balance: math.NewInt(10_000),
-	}))
-
-	require.NoError(t, k.ApplySpotMatching(ctx, tradekeeper.SpotFill{
-		MakerAccountIndex: makerIdx, TakerAccountIndex: takerIdx,
-		MarketIndex: 1, Price: 1, BaseAmount: 30,
-		IsTakerAsk: false, NoFee: true,
-	}, baseAssetID, quoteAssetID))
-
-	mAsset, err := ak.GetAccountAsset(ctx, makerIdx, baseAssetID)
-	require.NoError(t, err)
-	require.Equal(t, "70", mAsset.Balance.String())
-	// Lock drained by 30 (the fill size).
-	require.Equal(t, "20", mAsset.LockedBalance.String(),
-		"locked balance must drain by fill amount before touching available")
 }
 
 // TestSentinel_HardErrorClassification confirms that non-sentinel errors
@@ -339,186 +337,3 @@ func TestSentinel_ApplyPerpsMatching_TakerInsufficientCollateral(t *testing.T) {
 	require.True(t, tradetypes.IsRecoverableTakerError(err))
 	require.False(t, tradetypes.IsRecoverableMakerError(err))
 }
-
-// TestSentinel_IsolatedMarginDelta_OpenIncreasesAllocation confirms the
-// case-3 (OI grew, side same) branch: when an isolated position grows
-// and there is no incremental PnL, allocated_margin must rise by the
-// IM of the OI delta and an equal amount must be debited from cross
-// collateral.
-func TestSentinel_IsolatedMarginDelta_OpenIncreasesAllocation(t *testing.T) {
-	ctx, ak, mk, _, k := newSdkCtx(t)
-	mk.markPrice = 100
-	mk.imfBps = 1_000 // 10%
-
-	const (
-		makerIdx = uint64(10)
-		takerIdx = uint64(20)
-	)
-	// Start with healthy cross collateral on the taker (the side we
-	// observe). Maker is left in cross mode so we don't conflate
-	// effects.
-	require.NoError(t, ak.SetAccount(ctx, accounttypes.Account{AccountIndex: makerIdx, Collateral: math.NewInt(1_000_000)}))
-	require.NoError(t, ak.SetAccount(ctx, accounttypes.Account{AccountIndex: takerIdx, Collateral: math.NewInt(1_000_000)}))
-	require.NoError(t, ak.SetPosition(ctx, accounttypes.AccountPosition{
-		AccountIndex: takerIdx, MarketIndex: 1,
-		BaseSize:                 math.ZeroInt(),
-		EntryQuote:               math.ZeroInt(),
-		LastFundingRatePrefixSum: math.ZeroInt(),
-		AllocatedMargin:          math.ZeroInt(),
-		MarginMode:               perptypes.IsolatedMargin,
-	}))
-
-	require.NoError(t, k.ApplyPerpsMatching(ctx, tradekeeper.PerpFill{
-		MakerAccountIndex: makerIdx, TakerAccountIndex: takerIdx,
-		MarketIndex: 1, Price: 100, BaseAmount: 10,
-		IsTakerAsk: false, NoFee: true,
-	}))
-
-	pos, err := ak.GetPosition(ctx, takerIdx, 1)
-	require.NoError(t, err)
-	// IM = |new| * mark * imfBps / MarginTick = 10 * 100 * 1000 / 10000 = 100.
-	require.Equal(t, "100", pos.AllocatedMargin.String(),
-		"isolated open should pull IM into allocated_margin")
-	acc, err := ak.GetAccount(ctx, takerIdx)
-	require.NoError(t, err)
-	// Cross collateral starts at 1_000_000 and is debited by 100.
-	require.Equal(t, "999900", acc.Collateral.String(),
-		"cross collateral must drop by margin_delta")
-}
-
-// TestSentinel_IsolatedMarginDelta_CloseReleasesAllocation confirms the
-// case-1 (closed) branch: closing an isolated position releases the
-// remaining allocated_margin back to cross collateral.
-func TestSentinel_IsolatedMarginDelta_CloseReleasesAllocation(t *testing.T) {
-	ctx, ak, mk, _, k := newSdkCtx(t)
-	mk.markPrice = 100
-	mk.imfBps = 1_000
-
-	const (
-		makerIdx = uint64(10)
-		takerIdx = uint64(20)
-	)
-	require.NoError(t, ak.SetAccount(ctx, accounttypes.Account{AccountIndex: makerIdx, Collateral: math.NewInt(1_000_000)}))
-	require.NoError(t, ak.SetAccount(ctx, accounttypes.Account{AccountIndex: takerIdx, Collateral: math.NewInt(0)}))
-	// Pre-load taker as a long isolated position with allocated 100.
-	require.NoError(t, ak.SetPosition(ctx, accounttypes.AccountPosition{
-		AccountIndex: takerIdx, MarketIndex: 1,
-		BaseSize:                 math.NewInt(10),
-		EntryQuote:               math.NewInt(10 * 100), // entry = 100
-		LastFundingRatePrefixSum: math.ZeroInt(),
-		AllocatedMargin:          math.NewInt(100),
-		MarginMode:               perptypes.IsolatedMargin,
-	}))
-
-	// Taker sells 10 at the SAME price → no PnL.
-	require.NoError(t, k.ApplyPerpsMatching(ctx, tradekeeper.PerpFill{
-		MakerAccountIndex: makerIdx, TakerAccountIndex: takerIdx,
-		MarketIndex: 1, Price: 100, BaseAmount: 10,
-		IsTakerAsk: true, NoFee: true,
-	}))
-
-	pos, err := ak.GetPosition(ctx, takerIdx, 1)
-	require.NoError(t, err)
-	require.True(t, pos.BaseSize.IsZero(), "position must close")
-	require.True(t, pos.AllocatedMargin.IsZero(),
-		"all allocated_margin must release on close")
-	acc, err := ak.GetAccount(ctx, takerIdx)
-	require.NoError(t, err)
-	require.Equal(t, "100", acc.Collateral.String(),
-		"released allocated_margin must land on cross collateral")
-}
-
-// TestSentinel_IsolatedMarginDelta_DecreaseProportional exercises the
-// case-4 (OI shrank, side same) branch: a partial close should release
-// the proportional excess back to cross. Setup: long 10 at entry 100
-// with allocated 200 (over-margined). Sell 5 at mark 100 → no PnL,
-// new size 5, IM = 5*100*0.1 = 50. Old market value = 200, ceil_div
-// (200*5,10) = 100; max(100, 50) = 100 = target. New market value =
-// 200 + 0 = 200 (allocated unchanged so far). excess = 200 - 100 =
-// 100. Move 100 back to cross.
-func TestSentinel_IsolatedMarginDelta_DecreaseProportional(t *testing.T) {
-	ctx, ak, mk, _, k := newSdkCtx(t)
-	mk.markPrice = 100
-	mk.imfBps = 1_000
-
-	const (
-		makerIdx = uint64(10)
-		takerIdx = uint64(20)
-	)
-	require.NoError(t, ak.SetAccount(ctx, accounttypes.Account{AccountIndex: makerIdx, Collateral: math.NewInt(1_000_000)}))
-	require.NoError(t, ak.SetAccount(ctx, accounttypes.Account{AccountIndex: takerIdx, Collateral: math.NewInt(0)}))
-	require.NoError(t, ak.SetPosition(ctx, accounttypes.AccountPosition{
-		AccountIndex: takerIdx, MarketIndex: 1,
-		BaseSize:                 math.NewInt(10),
-		EntryQuote:               math.NewInt(1000),
-		LastFundingRatePrefixSum: math.ZeroInt(),
-		AllocatedMargin:          math.NewInt(200),
-		MarginMode:               perptypes.IsolatedMargin,
-	}))
-
-	require.NoError(t, k.ApplyPerpsMatching(ctx, tradekeeper.PerpFill{
-		MakerAccountIndex: makerIdx, TakerAccountIndex: takerIdx,
-		MarketIndex: 1, Price: 100, BaseAmount: 5,
-		IsTakerAsk: true, NoFee: true,
-	}))
-
-	pos, err := ak.GetPosition(ctx, takerIdx, 1)
-	require.NoError(t, err)
-	require.Equal(t, "5", pos.BaseSize.String())
-	require.Equal(t, "100", pos.AllocatedMargin.String(),
-		"50%% size reduction with no PnL should halve allocated_margin")
-	acc, err := ak.GetAccount(ctx, takerIdx)
-	require.NoError(t, err)
-	require.Equal(t, "100", acc.Collateral.String(),
-		"released excess must flow back to cross")
-}
-
-// TestSentinel_IsolatedMarginDelta_FlipReMarginsToPositionRequirement
-// exercises the case-2 (side flipped) branch. Long 5 at entry 100,
-// allocated 50, mark 100 → uPnL = 0. Sell 10 at mark 100 → realized
-// PnL = (close 5) -100*5 + 500 = 0; new position = -5; new entry
-// price set by `applyPositionChange.flip` branch = newSize *
-// price = -5 * 100 = -500 (so uPnL_new = -5*100 - (-500) = 0).
-// position_requirement = 5*100*0.1 = 50. delta = 50 -
-// (allocated_after_pnl + uPnL_new) = 50 - 50 = 0. allocated stays
-// at 50.
-func TestSentinel_IsolatedMarginDelta_FlipReMarginsToPositionRequirement(t *testing.T) {
-	ctx, ak, mk, _, k := newSdkCtx(t)
-	mk.markPrice = 100
-	mk.imfBps = 1_000
-
-	const (
-		makerIdx = uint64(10)
-		takerIdx = uint64(20)
-	)
-	require.NoError(t, ak.SetAccount(ctx, accounttypes.Account{AccountIndex: makerIdx, Collateral: math.NewInt(1_000_000)}))
-	require.NoError(t, ak.SetAccount(ctx, accounttypes.Account{AccountIndex: takerIdx, Collateral: math.NewInt(0)}))
-	require.NoError(t, ak.SetPosition(ctx, accounttypes.AccountPosition{
-		AccountIndex: takerIdx, MarketIndex: 1,
-		BaseSize:                 math.NewInt(5),
-		EntryQuote:               math.NewInt(500),
-		LastFundingRatePrefixSum: math.ZeroInt(),
-		AllocatedMargin:          math.NewInt(50),
-		MarginMode:               perptypes.IsolatedMargin,
-	}))
-
-	require.NoError(t, k.ApplyPerpsMatching(ctx, tradekeeper.PerpFill{
-		MakerAccountIndex: makerIdx, TakerAccountIndex: takerIdx,
-		MarketIndex: 1, Price: 100, BaseAmount: 10,
-		IsTakerAsk: true, NoFee: true,
-	}))
-
-	pos, err := ak.GetPosition(ctx, takerIdx, 1)
-	require.NoError(t, err)
-	require.Equal(t, "-5", pos.BaseSize.String())
-	require.Equal(t, "50", pos.AllocatedMargin.String(),
-		"flip with zero PnL should leave allocated == position_requirement")
-	acc, err := ak.GetAccount(ctx, takerIdx)
-	require.NoError(t, err)
-	require.True(t, acc.Collateral.IsZero(),
-		"flip with neutral margin_delta must not move cross collateral")
-}
-
-// helpKeepImports prevents unused-import lints when this file evolves.
-var _ context.Context = nil
-var _ = perptypes.MaxPositionSize
