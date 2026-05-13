@@ -1,4 +1,10 @@
-package keeper_test
+// impact_price_test.go covers the per-market impact-notional derivation
+// (`IMPACT_USDC * MARGIN_TICK / (MinIMF * max(QuoteMultiplier, 1))`),
+// the ComputeImpactPrice VWAP walker (ceil on the ask side, floor on
+// the bid side, multi-level aggregation, single-side / unconfigured
+// guards), and the gRPC `ImpactPrice` handler that combines the two
+// sides into a mid price.
+package tests
 
 import (
 	"context"

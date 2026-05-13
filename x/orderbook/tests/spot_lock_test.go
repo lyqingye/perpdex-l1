@@ -1,4 +1,10 @@
-package keeper_test
+// spot_lock_test.go covers the spot-market lock-on-place /
+// release-on-close arithmetic that orderbook drives via the SpotLocker
+// interface. The fixtures wire a stub spot MarketKeeper and a
+// recording locker so we can assert per-(account, asset) balances
+// without pulling in the real x/account keeper. The cap-counter
+// lifecycle test lives here too because it uses the same fixture.
+package tests
 
 import (
 	"context"

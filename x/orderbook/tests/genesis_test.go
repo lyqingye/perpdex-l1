@@ -1,4 +1,9 @@
-package keeper_test
+// genesis_test.go covers `InitGenesis` rehydration: that a chain
+// restarting from a snapshot rebuilds every per-order index (client
+// order map, account-open-order iterator, side-sorted orderbook, and
+// the trigger index) and that terminal-status orders are NOT
+// re-indexed as open.
+package tests
 
 import (
 	"testing"

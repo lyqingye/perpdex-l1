@@ -54,7 +54,7 @@ func (k Keeper) AllocateOrderIndex(ctx context.Context) (uint64, error) {
 //
 // Internal helper. External callers go through OpenOrder.
 func (k Keeper) insertOrderbookEntry(ctx context.Context, market uint32, isAsk bool, o types.OrderBookEntry) error {
-	quote, err := checkedQuote(o.RemainingBaseAmount, uint64(o.Price))
+	quote, err := CheckedQuote(o.RemainingBaseAmount, uint64(o.Price))
 	if err != nil {
 		return err
 	}
@@ -96,7 +96,7 @@ func (k Keeper) removeOrderbookEntry(ctx context.Context, market uint32, isAsk b
 	// Remove the notional contribution computed the same way the insert
 	// added it. Entries that survive have already passed the quote cap
 	// on insert so the multiply never overflows here.
-	quote, err := checkedQuote(entry.RemainingBaseAmount, uint64(entry.Price))
+	quote, err := CheckedQuote(entry.RemainingBaseAmount, uint64(entry.Price))
 	if err != nil {
 		return err
 	}
@@ -127,7 +127,7 @@ func (k Keeper) partialFill(ctx context.Context, market uint32, isAsk bool, orde
 	entry.RemainingBaseAmount -= filledBase
 	// Compute the quote delta using checked multiplication so a corrupt
 	// entry or a future cap change cannot silently overflow.
-	filledQuote, err := checkedQuote(filledBase, uint64(entry.Price))
+	filledQuote, err := CheckedQuote(filledBase, uint64(entry.Price))
 	if err != nil {
 		return err
 	}
@@ -207,7 +207,7 @@ func (k Keeper) adjustPriceLevel(ctx context.Context, market uint32, isAsk bool,
 	}
 	if isAsk {
 		pl.AskBaseSum = applyDelta(pl.AskBaseSum, baseDelta)
-		q, err := applyQuoteDelta(pl.AskQuoteSum, quoteDelta)
+		q, err := ApplyQuoteDelta(pl.AskQuoteSum, quoteDelta)
 		if err != nil {
 			return err
 		}
@@ -215,7 +215,7 @@ func (k Keeper) adjustPriceLevel(ctx context.Context, market uint32, isAsk bool,
 		pl.AskCount = uint32(int32(pl.AskCount) + countDelta)
 	} else {
 		pl.BidBaseSum = applyDelta(pl.BidBaseSum, baseDelta)
-		q, err := applyQuoteDelta(pl.BidQuoteSum, quoteDelta)
+		q, err := ApplyQuoteDelta(pl.BidQuoteSum, quoteDelta)
 		if err != nil {
 			return err
 		}
@@ -239,10 +239,10 @@ func applyDelta(cur uint64, delta int64) uint64 {
 	return cur + uint64(delta)
 }
 
-// applyQuoteDelta updates the quote aggregate with signed overflow detection.
+// ApplyQuoteDelta updates the quote aggregate with signed overflow detection.
 // Positive deltas that would push the sum past `math.MaxUint64` return
 // `ErrPriceLevelOverflow` so the caller can reject the underlying order.
-func applyQuoteDelta(cur uint64, delta int64) (uint64, error) {
+func ApplyQuoteDelta(cur uint64, delta int64) (uint64, error) {
 	if delta < 0 {
 		dec := uint64(-delta)
 		if dec > cur {
@@ -251,19 +251,19 @@ func applyQuoteDelta(cur uint64, delta int64) (uint64, error) {
 		return cur - dec, nil
 	}
 	add := uint64(delta)
-	if cur > maxUint64-add {
+	if cur > MaxUint64-add {
 		return 0, types.ErrPriceLevelOverflow
 	}
 	return cur + add, nil
 }
 
-const maxUint64 = uint64(1<<64 - 1)
+const MaxUint64 = uint64(1<<64 - 1)
 
-// checkedQuote returns base*price using big.Int and enforces the canonical
+// CheckedQuote returns base*price using big.Int and enforces the canonical
 // `MaxOrderQuoteAmount` cap (≈2.8e14). Both factors are small enough to avoid
 // intermediate overflow when the result is within the cap, but we still go
 // through big.Int so the overflow path is guarded even if the cap changes.
-func checkedQuote(base, price uint64) (uint64, error) {
+func CheckedQuote(base, price uint64) (uint64, error) {
 	if base == 0 || price == 0 {
 		return 0, nil
 	}
