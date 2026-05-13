@@ -25,26 +25,26 @@ func spotResidueLock(o orderbooktypes.Order, m markettypes.Market) (uint32, math
 	return m.QuoteAssetId, notional
 }
 
-type msgServer struct{ Keeper }
+type MsgServer struct{ Keeper }
 
-func NewMsgServerImpl(k Keeper) types.MsgServer { return &msgServer{Keeper: k} }
+func NewMsgServerImpl(k Keeper) types.MsgServer { return &MsgServer{Keeper: k} }
 
-var _ types.MsgServer = msgServer{}
+var _ types.MsgServer = MsgServer{}
 
-// isTriggerOrder is a local predicate replicating the one in msgs.go so
+// IsTriggerOrder is a local predicate replicating the one in msgs.go so
 // keeper code can avoid importing types.isTriggerOrderType.
-func isTriggerOrder(t uint32) bool {
+func IsTriggerOrder(t uint32) bool {
 	return t == perptypes.StopLossOrder ||
 		t == perptypes.StopLossLimitOrder ||
 		t == perptypes.TakeProfitOrder ||
 		t == perptypes.TakeProfitLimitOrder
 }
 
-// quoteExceedsLimit returns true when base * price exceeds the market's
+// QuoteExceedsLimit returns true when base * price exceeds the market's
 // configured `OrderQuoteLimit`. The multiplication is done over `math.Int`
 // (arbitrary-precision) so overflow can never wrap a malicious order back
 // under the cap — even with `base ~ 2^48` and `price ~ 2^32` legal inputs.
-func quoteExceedsLimit(base uint64, price uint32, limit int64) bool {
+func QuoteExceedsLimit(base uint64, price uint32, limit int64) bool {
 	if limit <= 0 || base == 0 || price == 0 {
 		return false
 	}
@@ -58,13 +58,13 @@ func quoteExceedsLimit(base uint64, price uint32, limit int64) bool {
 // match), but every other variant either rests on the book or registers
 // a trigger, so they must respect the per-account cap.
 func willConsumeOpenSlot(msg *types.MsgCreateOrder) bool {
-	if isTriggerOrder(msg.OrderType) {
+	if IsTriggerOrder(msg.OrderType) {
 		return true
 	}
 	return msg.TimeInForce != perptypes.IOC
 }
 
-func (m msgServer) CreateOrder(ctx context.Context, msg *types.MsgCreateOrder) (*types.MsgCreateOrderResponse, error) {
+func (m MsgServer) CreateOrder(ctx context.Context, msg *types.MsgCreateOrder) (*types.MsgCreateOrderResponse, error) {
 	if err := msg.ValidateBasic(); err != nil {
 		return nil, err
 	}
@@ -99,7 +99,7 @@ func (m msgServer) CreateOrder(ctx context.Context, msg *types.MsgCreateOrder) (
 	//   - PARTIAL / FULL / BANKRUPTCY: reject every user-initiated
 	//     order. The liquidation engine is the only writer in these
 	//     tiers; any user trade would race liquidation fills.
-	if err := m.checkPreLiquidationGate(ctx, msg.AccountIndex, msg.MarketIndex, msg.ReduceOnly); err != nil {
+	if err := m.CheckPreLiquidationGate(ctx, msg.AccountIndex, msg.MarketIndex, msg.ReduceOnly); err != nil {
 		return nil, err
 	}
 	if market.MinBaseAmount > 0 && msg.BaseAmount < market.MinBaseAmount {
@@ -110,7 +110,7 @@ func (m msgServer) CreateOrder(ctx context.Context, msg *types.MsgCreateOrder) (
 			return nil, types.ErrInvalidOrder.Wrapf("quote notional below market min %d", market.MinQuoteAmount)
 		}
 	}
-	if quoteExceedsLimit(msg.BaseAmount, msg.Price, market.OrderQuoteLimit) {
+	if QuoteExceedsLimit(msg.BaseAmount, msg.Price, market.OrderQuoteLimit) {
 		return nil, types.ErrQuoteLimitExceeded
 	}
 
@@ -203,7 +203,7 @@ func (m msgServer) CreateOrder(ctx context.Context, msg *types.MsgCreateOrder) (
 	// price crossover activates them in EndBlocker. OpenTriggerOrder
 	// owns the trigger registration plus client and account-open
 	// indexes so cancel-all can still reach a pending trigger.
-	if isTriggerOrder(msg.OrderType) {
+	if IsTriggerOrder(msg.OrderType) {
 		order.Status = perptypes.OrderStatusTriggeredPending
 		order.TriggerStatus = perptypes.TriggerStatusMarkPrice
 		if err := m.bookKeeper.OpenTriggerOrder(ctx, order); err != nil {
@@ -216,7 +216,7 @@ func (m msgServer) CreateOrder(ctx context.Context, msg *types.MsgCreateOrder) (
 	if err != nil {
 		return nil, err
 	}
-	filled, status, err := m.matchOrder(ctx, &order, params.MaxFillsPerMsg)
+	filled, status, err := m.MatchOrder(ctx, &order, params.MaxFillsPerMsg)
 	if err != nil {
 		return nil, err
 	}
@@ -264,7 +264,7 @@ func (m msgServer) CreateOrder(ctx context.Context, msg *types.MsgCreateOrder) (
 	}, nil
 }
 
-// checkPreLiquidationGate enforces the pre-liquidation order placement
+// CheckPreLiquidationGate enforces the pre-liquidation order placement
 // rule from the spec. The check happens BEFORE we touch the orderbook
 // so a frozen / unhealthy account cannot use CreateOrder /
 // ModifyOrder to interleave with the liquidation engine.
@@ -272,7 +272,7 @@ func (m msgServer) CreateOrder(ctx context.Context, msg *types.MsgCreateOrder) (
 // The gate consults the cross account health AND, when the touched
 // market hosts an isolated position for this account, the per-market
 // isolated health. Either being unhealthy is enough to reject.
-func (m msgServer) checkPreLiquidationGate(ctx context.Context, accIdx uint64, marketIdx uint32, reduceOnly bool) error {
+func (m MsgServer) CheckPreLiquidationGate(ctx context.Context, accIdx uint64, marketIdx uint32, reduceOnly bool) error {
 	if m.riskKeeper == nil {
 		// Risk keeper not wired (tests / staged genesis): skip the
 		// gate rather than panic.
@@ -310,7 +310,7 @@ func (m msgServer) checkPreLiquidationGate(ctx context.Context, accIdx uint64, m
 // reduceOnlyCompatible reports whether a reduce-only order on `isAsk` side
 // with `baseAmount` size can legitimately only reduce the account's current
 // position: the account must be net-positive/negative on the opposite side.
-func (m msgServer) reduceOnlyCompatible(ctx context.Context, accIdx uint64, marketIdx uint32, isAsk bool, _ uint64) (bool, error) {
+func (m MsgServer) reduceOnlyCompatible(ctx context.Context, accIdx uint64, marketIdx uint32, isAsk bool, _ uint64) (bool, error) {
 	pos, err := m.accountKeeper.GetPosition(ctx, accIdx, marketIdx)
 	if err != nil {
 		return false, err
@@ -325,7 +325,7 @@ func (m msgServer) reduceOnlyCompatible(ctx context.Context, accIdx uint64, mark
 	return pos.OpeningIsAsk(), nil
 }
 
-func (m msgServer) CancelOrder(ctx context.Context, msg *types.MsgCancelOrder) (*types.MsgCancelOrderResponse, error) {
+func (m MsgServer) CancelOrder(ctx context.Context, msg *types.MsgCancelOrder) (*types.MsgCancelOrderResponse, error) {
 	if err := msg.ValidateBasic(); err != nil {
 		return nil, err
 	}
@@ -347,12 +347,12 @@ func (m msgServer) CancelOrder(ctx context.Context, msg *types.MsgCancelOrder) (
 // cancelOrderInternal is the shared cancel path used by CancelOrder,
 // CancelAllOrders and ModifyOrder. The state-machine, entry/trigger
 // removal, and index cleanup are all owned by orderbook.CancelOrder.
-func (m msgServer) cancelOrderInternal(ctx context.Context, o orderbooktypes.Order) error {
+func (m MsgServer) cancelOrderInternal(ctx context.Context, o orderbooktypes.Order) error {
 	_, err := m.bookKeeper.CancelOrder(ctx, o.OrderIndex)
 	return err
 }
 
-func (m msgServer) CancelAllOrders(ctx context.Context, msg *types.MsgCancelAllOrders) (*types.MsgCancelAllOrdersResponse, error) {
+func (m MsgServer) CancelAllOrders(ctx context.Context, msg *types.MsgCancelAllOrders) (*types.MsgCancelAllOrdersResponse, error) {
 	if err := msg.ValidateBasic(); err != nil {
 		return nil, err
 	}
@@ -405,7 +405,7 @@ func (m msgServer) CancelAllOrders(ctx context.Context, msg *types.MsgCancelAllO
 	return &types.MsgCancelAllOrdersResponse{}, nil
 }
 
-func (m msgServer) ModifyOrder(ctx context.Context, msg *types.MsgModifyOrder) (*types.MsgModifyOrderResponse, error) {
+func (m MsgServer) ModifyOrder(ctx context.Context, msg *types.MsgModifyOrder) (*types.MsgModifyOrderResponse, error) {
 	if err := msg.ValidateBasic(); err != nil {
 		return nil, err
 	}
@@ -430,7 +430,7 @@ func (m msgServer) ModifyOrder(ctx context.Context, msg *types.MsgModifyOrder) (
 	// touch the book. ModifyOrder is cancel-then-create; without this
 	// check a PARTIAL account could blow away its open orders during
 	// liquidation by repeatedly issuing a no-op modify.
-	if err := m.checkPreLiquidationGate(ctx, o.OwnerAccountIndex, o.MarketIndex, o.ReduceOnly); err != nil {
+	if err := m.CheckPreLiquidationGate(ctx, o.OwnerAccountIndex, o.MarketIndex, o.ReduceOnly); err != nil {
 		return nil, err
 	}
 	if err := m.cancelOrderInternal(ctx, o); err != nil {
@@ -458,7 +458,7 @@ func (m msgServer) ModifyOrder(ctx context.Context, msg *types.MsgModifyOrder) (
 	return &types.MsgModifyOrderResponse{OrderIndex: resp.OrderIndex}, nil
 }
 
-func (m msgServer) UpdateParams(ctx context.Context, msg *types.MsgUpdateParams) (*types.MsgUpdateParamsResponse, error) {
+func (m MsgServer) UpdateParams(ctx context.Context, msg *types.MsgUpdateParams) (*types.MsgUpdateParamsResponse, error) {
 	if err := msg.ValidateBasic(); err != nil {
 		return nil, err
 	}

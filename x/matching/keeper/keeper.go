@@ -57,6 +57,13 @@ func NewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, authori
 // depending on x/matching for cancel-all in liquidation paths.
 func (k *Keeper) SetRiskKeeper(r types.RiskKeeper) { k.riskKeeper = r }
 
+// SetTradeKeeper swaps the trade keeper at runtime. Production wiring
+// always passes the keeper through `NewKeeper`; this setter exists so
+// external test packages can inject a fake trade keeper (e.g. for
+// error-injection / matching-recovery tests) without exposing the
+// underlying field.
+func (k *Keeper) SetTradeKeeper(t types.TradeKeeper) { k.tradeKeeper = t }
+
 // CancelAllOpenOrdersForAccount cancels every resting order owned by
 // `accountIdx` across every market, bypassing sender authority checks.
 // Reserved for the liquidation engine: per the spec the partial

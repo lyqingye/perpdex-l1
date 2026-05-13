@@ -1,7 +1,19 @@
-package keeper
+// match_recovery_test.go covers the matching loop's recovery and
+// cap semantics around fill failures:
+//
+//   - Soft maker rejections (risk regression / insufficient balance /
+//     invalid post-trade position / insufficient cross collateral)
+//     evict the maker on the outer ctx and the loop keeps going.
+//   - Soft taker rejections (symmetric variants) stop further fills
+//     but preserve any fills already committed via writeCache, then
+//     force-cancel the residue.
+//   - Hard (non-sentinel) trade errors propagate so the cosmos Msg
+//     reverts the whole transaction.
+//   - The per-account `MaxOpenOrdersPerAccount` cap is enforced for
+//     resting / trigger-pending orders, while IOC slips through.
+package tests
 
 import (
-	"context"
 	"fmt"
 	"testing"
 
@@ -10,88 +22,10 @@ import (
 	sdkerrors "cosmossdk.io/errors"
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
+	matchingkeeper "github.com/perpdex/perpdex-l1/x/matching/keeper"
 	matchingtypes "github.com/perpdex/perpdex-l1/x/matching/types"
-	orderbooktypes "github.com/perpdex/perpdex-l1/x/orderbook/types"
-	tradekeeper "github.com/perpdex/perpdex-l1/x/trade/keeper"
 	tradetypes "github.com/perpdex/perpdex-l1/x/trade/types"
 )
-
-// injectingTrade is a TradeKeeper double that returns the next preset
-// error from `errs` (consuming one per ApplyPerpsMatching call) so the
-// matching loop can be exercised with maker / taker / hard failure
-// patterns without standing up the real risk + funding stack.
-type injectingTrade struct {
-	*stubTrade
-	errs []error
-}
-
-func (s *injectingTrade) next() error {
-	if len(s.errs) == 0 {
-		return nil
-	}
-	err := s.errs[0]
-	s.errs = s.errs[1:]
-	return err
-}
-
-func (s *injectingTrade) ApplyPerpsMatching(ctx context.Context, f tradekeeper.PerpFill) error {
-	if err := s.next(); err != nil {
-		return err
-	}
-	return s.stubTrade.ApplyPerpsMatching(ctx, f)
-}
-
-func (s *injectingTrade) ApplySpotMatching(ctx context.Context, f tradekeeper.SpotFill, b, q uint32) error {
-	if err := s.next(); err != nil {
-		return err
-	}
-	return s.stubTrade.ApplySpotMatching(ctx, f, b, q)
-}
-
-// withInjectingTrade returns an env whose tradeKeeper consumes a script
-// of injected errors, then falls back to the regular stubTrade behaviour
-// for any remaining fills.
-func withInjectingTrade(t *testing.T, errs ...error) (*matchEnv, *injectingTrade) {
-	t.Helper()
-	e := newMatchEnv(t)
-	inj := &injectingTrade{stubTrade: e.tk, errs: errs}
-	// Rebuild matching keeper bound to the injecting trade.
-	e.k.tradeKeeper = inj
-	return e, inj
-}
-
-// makeMaker / makeTaker are tiny helpers to keep test bodies readable.
-func makeMaker(idx, owner uint64, price uint32, base uint64, isAsk bool, nonce int64) orderbooktypes.Order {
-	return orderbooktypes.Order{
-		OrderIndex:          idx,
-		OwnerAccountIndex:   owner,
-		MarketIndex:         1,
-		IsAsk:               isAsk,
-		OrderType:           perptypes.LimitOrder,
-		TimeInForce:         perptypes.GTT,
-		Price:               price,
-		Nonce:               nonce,
-		InitialBaseAmount:   base,
-		RemainingBaseAmount: base,
-		Status:              perptypes.OrderStatusOpen,
-	}
-}
-
-func makeTaker(idx, owner uint64, price uint32, base uint64, isAsk bool) *orderbooktypes.Order {
-	return &orderbooktypes.Order{
-		OrderIndex:          idx,
-		OwnerAccountIndex:   owner,
-		MarketIndex:         1,
-		IsAsk:               isAsk,
-		OrderType:           perptypes.LimitOrder,
-		TimeInForce:         perptypes.GTT,
-		Price:               price,
-		Nonce:               int64(idx),
-		InitialBaseAmount:   base,
-		RemainingBaseAmount: base,
-		Status:              perptypes.OrderStatusOpen,
-	}
-}
 
 // TestMatchOrder_BadMakerEvictedAndContinues verifies the
 // `cancel_maker_order` semantics: when a single maker fails the
@@ -111,7 +45,7 @@ func TestMatchOrder_BadMakerEvictedAndContinues(t *testing.T) {
 	e.rest(t, makerB, true)
 
 	taker := makeTaker(3, 20, 1000, 5, false)
-	filled, status, err := e.k.matchOrder(e.ctx, taker, 16)
+	filled, status, err := e.k.MatchOrder(e.ctx, taker, 16)
 	require.NoError(t, err, "soft maker error must not propagate")
 	require.EqualValues(t, 5, filled)
 	require.Equal(t, perptypes.OrderStatusFilled, status)
@@ -142,7 +76,7 @@ func TestMatchOrder_MultipleBadMakersAllEvicted(t *testing.T) {
 	e.rest(t, good, true)
 
 	taker := makeTaker(4, 20, 1000, 5, false)
-	filled, status, err := e.k.matchOrder(e.ctx, taker, 16)
+	filled, status, err := e.k.MatchOrder(e.ctx, taker, 16)
 	require.NoError(t, err)
 	require.EqualValues(t, 5, filled)
 	require.Equal(t, perptypes.OrderStatusFilled, status)
@@ -174,7 +108,7 @@ func TestMatchOrder_BadTakerStopsButPreservesPriorFills(t *testing.T) {
 	e.rest(t, m2, true)
 
 	taker := makeTaker(3, 20, 1000, 10, false)
-	filled, status, err := e.k.matchOrder(e.ctx, taker, 16)
+	filled, status, err := e.k.MatchOrder(e.ctx, taker, 16)
 	require.NoError(t, err)
 	require.EqualValues(t, 5, filled, "first fill should survive")
 	require.Equal(t, perptypes.OrderStatusCancelled, status,
@@ -205,7 +139,7 @@ func TestMatchOrder_HardErrorRevertsWholeMatch(t *testing.T) {
 	e.rest(t, m1, true)
 
 	taker := makeTaker(2, 20, 1000, 5, false)
-	filled, status, err := e.k.matchOrder(e.ctx, taker, 16)
+	filled, status, err := e.k.MatchOrder(e.ctx, taker, 16)
 	require.Error(t, err, "hard error must propagate")
 	require.Zero(t, filled)
 	require.Equal(t, perptypes.OrderStatusCancelled, status)
@@ -219,7 +153,7 @@ func TestCreateOrder_PerpOpenOrderCap(t *testing.T) {
 	e, _ := withInjectingTrade(t)
 	e.mk.maxOpenOrders = 2
 
-	srv := NewMsgServerImpl(e.k)
+	srv := matchingkeeper.NewMsgServerImpl(e.k)
 	const (
 		account = uint64(42)
 		market  = uint32(1)
@@ -265,7 +199,7 @@ func TestCreateOrder_IOCBypassesCap(t *testing.T) {
 	e, _ := withInjectingTrade(t)
 	e.mk.maxOpenOrders = 1
 
-	srv := NewMsgServerImpl(e.k)
+	srv := matchingkeeper.NewMsgServerImpl(e.k)
 	const (
 		account = uint64(42)
 		market  = uint32(1)
@@ -306,7 +240,7 @@ func TestMatchOrder_BadMakerInvalidPositionEvictedAndContinues(t *testing.T) {
 	e.rest(t, makerB, true)
 
 	taker := makeTaker(3, 20, 1000, 5, false)
-	filled, status, err := e.k.matchOrder(e.ctx, taker, 16)
+	filled, status, err := e.k.MatchOrder(e.ctx, taker, 16)
 	require.NoError(t, err, "soft maker error must not propagate")
 	require.EqualValues(t, 5, filled)
 	require.Equal(t, perptypes.OrderStatusFilled, status)
@@ -337,7 +271,7 @@ func TestMatchOrder_BadMakerInsufficientCollateralEvictedAndContinues(t *testing
 	e.rest(t, makerB, true)
 
 	taker := makeTaker(3, 20, 1000, 5, false)
-	filled, status, err := e.k.matchOrder(e.ctx, taker, 16)
+	filled, status, err := e.k.MatchOrder(e.ctx, taker, 16)
 	require.NoError(t, err, "soft maker error must not propagate")
 	require.EqualValues(t, 5, filled)
 	require.Equal(t, perptypes.OrderStatusFilled, status)
@@ -368,7 +302,7 @@ func TestMatchOrder_BadTakerInvalidPositionStops(t *testing.T) {
 	e.rest(t, m2, true)
 
 	taker := makeTaker(3, 20, 1000, 10, false)
-	filled, status, err := e.k.matchOrder(e.ctx, taker, 16)
+	filled, status, err := e.k.MatchOrder(e.ctx, taker, 16)
 	require.NoError(t, err)
 	require.EqualValues(t, 5, filled, "first fill should survive")
 	require.Equal(t, perptypes.OrderStatusCancelled, status,
@@ -398,7 +332,7 @@ func TestMatchOrder_BadTakerInsufficientCollateralStops(t *testing.T) {
 	e.rest(t, m2, true)
 
 	taker := makeTaker(3, 20, 1000, 10, false)
-	filled, status, err := e.k.matchOrder(e.ctx, taker, 16)
+	filled, status, err := e.k.MatchOrder(e.ctx, taker, 16)
 	require.NoError(t, err)
 	require.EqualValues(t, 5, filled, "first fill should survive")
 	require.Equal(t, perptypes.OrderStatusCancelled, status)
@@ -429,7 +363,7 @@ func TestMatchOrder_BadMakerCachePreservesUnfailedFills(t *testing.T) {
 	e.rest(t, m3, true)
 
 	taker := makeTaker(4, 20, 1000, 10, false)
-	filled, status, err := e.k.matchOrder(e.ctx, taker, 16)
+	filled, status, err := e.k.MatchOrder(e.ctx, taker, 16)
 	require.NoError(t, err)
 	require.EqualValues(t, 10, filled)
 	require.Equal(t, perptypes.OrderStatusFilled, status)

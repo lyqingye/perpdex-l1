@@ -1,4 +1,20 @@
-package keeper
+// setup_test.go owns the in-memory fixture that every matching test
+// composes against. The fixture stands up:
+//
+//   - a real `orderbook/keeper.Keeper` over an in-memory store, so book
+//     mechanics (open/cancel/iterate/evict, account-open + client-id
+//     indexes) execute with production semantics;
+//   - a real `matching/keeper.Keeper` wired through `NewKeeper`, with
+//     `Params` seeded so cap-bounded loops behave deterministically;
+//   - lightweight stubs for the dependencies that are not under test:
+//     account / market / trade. The stubs only model the slice of
+//     behaviour each test actually exercises (positions, market
+//     metadata, recorded fills, nonce allocation).
+//
+// The stubs intentionally stay package-private — they are NOT exported
+// from `x/matching/keeper`. Test packages outside this directory must
+// re-implement their own doubles rather than couple to these structs.
+package tests
 
 import (
 	"context"
@@ -20,14 +36,23 @@ import (
 	perptypes "github.com/perpdex/perpdex-l1/types"
 	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
 	markettypes "github.com/perpdex/perpdex-l1/x/market/types"
+	matchingkeeper "github.com/perpdex/perpdex-l1/x/matching/keeper"
 	matchingtypes "github.com/perpdex/perpdex-l1/x/matching/types"
 	orderbookkeeper "github.com/perpdex/perpdex-l1/x/orderbook/keeper"
 	orderbooktypes "github.com/perpdex/perpdex-l1/x/orderbook/types"
 	tradekeeper "github.com/perpdex/perpdex-l1/x/trade/keeper"
 )
 
-// --- minimal stubs for the matching dependencies --------------------------
+// --- account stub ---------------------------------------------------------
 
+// stubAccount models the slice of x/account the matching loop reads:
+// IsAuthorized (always true here — authority is asserted by msg-server
+// tests directly), GetAccount (returns a master account so the pool
+// gate in CreateOrder lets the test order through), GetPosition (the
+// per-(account, market) position the reduce-only and liquidation paths
+// consult), and AvailableBalance (infinite for matching tests so the
+// spot pre-rest gate never trips; dedicated lock tests live in
+// x/orderbook).
 type stubAccount struct {
 	pos map[[2]uint64]accounttypes.AccountPosition
 }
@@ -79,8 +104,11 @@ func (s *stubAccount) AvailableBalance(_ context.Context, _ uint64, _ uint32) (m
 	return math.NewInt(1 << 62), nil
 }
 
-// stubLocker is a no-op SpotLocker used by orderbook tests that do not
-// exercise spot lock semantics directly.
+// --- spot locker stub -----------------------------------------------------
+
+// stubLocker is a no-op SpotLocker. Matching's OpenOrder path threads
+// through here for spot residue locking; matching tests don't assert
+// lock semantics (those live in x/orderbook) so the stub returns nil.
 type stubLocker struct{}
 
 func (stubLocker) IncreaseLockedBalance(_ context.Context, _ uint64, _ uint32, _ math.Int) error {
@@ -90,6 +118,12 @@ func (stubLocker) DecreaseLockedBalance(_ context.Context, _ uint64, _ uint32, _
 	return nil
 }
 
+// --- market stub ----------------------------------------------------------
+
+// stubMarket returns a benign perps market and allocates monotonic
+// nonces per side. Tests that need to vary
+// `MaxOpenOrdersPerAccount` (e.g. the cap tests) mutate
+// `maxOpenOrders` directly before placing orders.
 type stubMarket struct {
 	maxOpenOrders uint32
 	nextNonceAsk  int64
@@ -131,6 +165,8 @@ func (*stubMarket) SetMarketDetails(_ context.Context, _ markettypes.MarketDetai
 	return nil
 }
 
+// --- trade stub -----------------------------------------------------------
+
 // stubFill is a flattened record over the small subset of fill fields
 // the matching tests assert against. Captured uniformly across perp
 // and spot so existing tests can keep using `.fills` for cardinality
@@ -139,9 +175,9 @@ func (*stubMarket) SetMarketDetails(_ context.Context, _ markettypes.MarketDetai
 //
 // The liquidation-specific fields (ZeroPrice, LiquidationFeeBps,
 // LiquidationFeeRecipient, NoRiskCheck, TakerFee, MakerFee, Price)
-// are populated from PerpFill so the matching internal liquidation
-// tests can assert end-to-end fill plumbing without standing up the
-// real trade keeper.
+// are populated from PerpFill so the matching liquidation tests can
+// assert end-to-end fill plumbing without standing up the real trade
+// keeper.
 type stubFill struct {
 	MakerAccountIndex       uint64
 	TakerAccountIndex       uint64
@@ -214,14 +250,110 @@ func (s *stubTrade) ApplySpotMatching(_ context.Context, f tradekeeper.SpotFill,
 	return nil
 }
 
-// --- test fixture ---------------------------------------------------------
+// --- injecting trade ------------------------------------------------------
 
+// injectingTrade is a TradeKeeper double that returns the next preset
+// error from `errs` (consuming one per ApplyPerpsMatching / spot call)
+// so the matching loop can be exercised with maker / taker / hard
+// failure patterns without standing up the real risk + funding stack.
+type injectingTrade struct {
+	*stubTrade
+	errs []error
+}
+
+func (s *injectingTrade) next() error {
+	if len(s.errs) == 0 {
+		return nil
+	}
+	err := s.errs[0]
+	s.errs = s.errs[1:]
+	return err
+}
+
+func (s *injectingTrade) ApplyPerpsMatching(ctx context.Context, f tradekeeper.PerpFill) error {
+	if err := s.next(); err != nil {
+		return err
+	}
+	return s.stubTrade.ApplyPerpsMatching(ctx, f)
+}
+
+func (s *injectingTrade) ApplySpotMatching(ctx context.Context, f tradekeeper.SpotFill, b, q uint32) error {
+	if err := s.next(); err != nil {
+		return err
+	}
+	return s.stubTrade.ApplySpotMatching(ctx, f, b, q)
+}
+
+// --- risk stubs -----------------------------------------------------------
+
+// stubRisk is a fixed-sequence risk classifier used by the liquidation
+// matching tests. `cross` and `iso` return the next status from a
+// per-account / per-(account, market) FIFO; an empty slice falls back
+// to `defaultStatus`. This lets tests step the victim's health from
+// PARTIAL → HEALTHY across loop iterations to exercise the
+// `is_not_in_liquidation_and_is_liquidation_order` short-circuit
+// without standing up the real risk keeper.
+type stubRisk struct {
+	defaultStatus uint32
+	cross         map[uint64][]uint32
+	iso           map[[2]uint64][]uint32
+}
+
+func newStubRisk() *stubRisk {
+	return &stubRisk{
+		defaultStatus: perptypes.HealthHealthy,
+		cross:         map[uint64][]uint32{},
+		iso:           map[[2]uint64][]uint32{},
+	}
+}
+
+func (s *stubRisk) GetHealthStatus(_ context.Context, acc uint64) (uint32, error) {
+	q := s.cross[acc]
+	if len(q) == 0 {
+		return s.defaultStatus, nil
+	}
+	v := q[0]
+	s.cross[acc] = q[1:]
+	return v, nil
+}
+
+func (s *stubRisk) GetIsolatedHealthStatus(_ context.Context, acc uint64, mkt uint32) (uint32, error) {
+	k := [2]uint64{acc, uint64(mkt)}
+	q := s.iso[k]
+	if len(q) == 0 {
+		return s.defaultStatus, nil
+	}
+	v := q[0]
+	s.iso[k] = q[1:]
+	return v, nil
+}
+
+// stubPreLiqRisk is a minimal RiskKeeper used to drive
+// CheckPreLiquidationGate: it returns the same cross / iso health
+// values on every call. Used by the gate's truth-table tests.
+type stubPreLiqRisk struct {
+	cross uint32
+	iso   uint32
+}
+
+func (s stubPreLiqRisk) GetHealthStatus(_ context.Context, _ uint64) (uint32, error) {
+	return s.cross, nil
+}
+func (s stubPreLiqRisk) GetIsolatedHealthStatus(_ context.Context, _ uint64, _ uint32) (uint32, error) {
+	return s.iso, nil
+}
+
+// --- matching env ---------------------------------------------------------
+
+// matchEnv bundles the in-memory store, the wired orderbook + matching
+// keepers, and the stub dependencies so individual tests can drive a
+// matching loop with three or four lines of setup.
 type matchEnv struct {
 	ctx sdk.Context
 	ak  *stubAccount
 	tk  *stubTrade
 	bk  orderbookkeeper.Keeper
-	k   Keeper
+	k   matchingkeeper.Keeper
 	mk  *stubMarket
 }
 
@@ -243,7 +375,7 @@ func newMatchEnv(t *testing.T) *matchEnv {
 
 	ak := newStubAccount()
 	tk := &stubTrade{ak: ak}
-	k := NewKeeper(
+	k := matchingkeeper.NewKeeper(
 		cdc,
 		runtime.NewKVStoreService(keys[matchingtypes.StoreKey]),
 		"px1xqcnyve5x5mrwwpev93xxer9venks6t29ke4l8",
@@ -266,234 +398,52 @@ func (e *matchEnv) rest(t *testing.T, o orderbooktypes.Order, _ bool) {
 	require.NoError(t, e.bk.OpenOrder(e.ctx, o, false))
 }
 
-// TestMatchOrder_MarketOrderBidAtZeroPrice pins the invariant that a
-// buy MarketOrder with Price=0 (the canonical no-limit-price form,
-// also produced by activated STOP/TAKE triggers) is accepted by the
-// limit-price gate.
-func TestMatchOrder_MarketOrderBidAtZeroPrice(t *testing.T) {
+// withInjectingTrade returns an env whose tradeKeeper consumes a script
+// of injected errors, then falls back to the regular stubTrade behaviour
+// for any remaining fills. The keeper exposes `SetTradeKeeper` so the
+// external test package can swap the trade keeper without touching the
+// (unexported) field directly.
+func withInjectingTrade(t *testing.T, errs ...error) (*matchEnv, *injectingTrade) {
+	t.Helper()
 	e := newMatchEnv(t)
-
-	maker := orderbooktypes.Order{
-		OrderIndex:          1,
-		OwnerAccountIndex:   10,
-		MarketIndex:         1,
-		IsAsk:               true,
-		OrderType:           perptypes.LimitOrder,
-		TimeInForce:         perptypes.GTT,
-		Price:               1000,
-		Nonce:               1,
-		InitialBaseAmount:   5,
-		RemainingBaseAmount: 5,
-		Status:              perptypes.OrderStatusOpen,
-		Expiry:              0,
-	}
-	e.rest(t, maker, true)
-
-	taker := &orderbooktypes.Order{
-		OrderIndex:          2,
-		OwnerAccountIndex:   20,
-		MarketIndex:         1,
-		IsAsk:               false,
-		OrderType:           perptypes.MarketOrder,
-		TimeInForce:         perptypes.IOC,
-		Price:               0, // no-limit-price
-		Nonce:               2,
-		InitialBaseAmount:   5,
-		RemainingBaseAmount: 5,
-		Status:              perptypes.OrderStatusOpen,
-	}
-
-	filled, status, err := e.k.matchOrder(e.ctx, taker, 16)
-	require.NoError(t, err)
-	require.EqualValues(t, 5, filled)
-	require.Equal(t, perptypes.OrderStatusFilled, status)
-	require.Len(t, e.tk.fills, 1)
-	require.EqualValues(t, 5, e.tk.fills[0].BaseAmount)
+	inj := &injectingTrade{stubTrade: e.tk, errs: errs}
+	e.k.SetTradeKeeper(inj)
+	return e, inj
 }
 
-// TestCancelAllOrders_HonorsMarketFilter ensures that an explicit
-// MarketIndexFilter restricts the cancel-all sweep to that market only,
-// and that filter==0 sweeps every market (proto contract).
-func TestCancelAllOrders_HonorsMarketFilter(t *testing.T) {
-	e := newMatchEnv(t)
-	srv := NewMsgServerImpl(e.k)
+// --- order builders -------------------------------------------------------
 
-	// Two resting orders, market 1 and market 2, same account, no client id.
-	o1 := orderbooktypes.Order{
-		OrderIndex: 1, OwnerAccountIndex: 99, MarketIndex: 1, IsAsk: true,
-		OrderType: perptypes.LimitOrder, TimeInForce: perptypes.GTT,
-		Price: 1000, Nonce: 1, InitialBaseAmount: 5, RemainingBaseAmount: 5,
-		Status: perptypes.OrderStatusOpen,
+// makeMaker / makeTaker are tiny helpers to keep test bodies readable.
+// Both pin MarketIndex=1 and LimitOrder+GTT; tests that need other
+// shapes should construct the Order literal inline.
+func makeMaker(idx, owner uint64, price uint32, base uint64, isAsk bool, nonce int64) orderbooktypes.Order {
+	return orderbooktypes.Order{
+		OrderIndex:          idx,
+		OwnerAccountIndex:   owner,
+		MarketIndex:         1,
+		IsAsk:               isAsk,
+		OrderType:           perptypes.LimitOrder,
+		TimeInForce:         perptypes.GTT,
+		Price:               price,
+		Nonce:               nonce,
+		InitialBaseAmount:   base,
+		RemainingBaseAmount: base,
+		Status:              perptypes.OrderStatusOpen,
 	}
-	o2 := orderbooktypes.Order{
-		OrderIndex: 2, OwnerAccountIndex: 99, MarketIndex: 2, IsAsk: true,
-		OrderType: perptypes.LimitOrder, TimeInForce: perptypes.GTT,
-		Price: 2000, Nonce: 1, InitialBaseAmount: 5, RemainingBaseAmount: 5,
-		Status: perptypes.OrderStatusOpen,
-	}
-	e.rest(t, o1, true)
-	e.rest(t, o2, true)
-
-	// Cancel only market 1.
-	_, err := srv.CancelAllOrders(e.ctx, &matchingtypes.MsgCancelAllOrders{
-		Sender:            "px1qv9pzxqlyckngw6zf9g9whn9d3eh4qvgsxc8cx",
-		AccountIndex:      99,
-		MarketIndexFilter: 1,
-		Mode:              perptypes.ImmediateCancelAll,
-	})
-	require.NoError(t, err)
-
-	o1Now, err := e.bk.GetOrder(e.ctx, 1)
-	require.NoError(t, err)
-	require.Equal(t, perptypes.OrderStatusCancelled, o1Now.Status)
-
-	o2Now, err := e.bk.GetOrder(e.ctx, 2)
-	require.NoError(t, err)
-	require.Equal(t, perptypes.OrderStatusOpen, o2Now.Status, "market 2 must be untouched")
 }
 
-// TestCancelAllOrders_CoversOrdersWithoutClientID verifies that an order
-// whose ClientOrderIndex is 0 (the optional default) is still reachable
-// via cancel-all.
-func TestCancelAllOrders_CoversOrdersWithoutClientID(t *testing.T) {
-	e := newMatchEnv(t)
-	srv := NewMsgServerImpl(e.k)
-
-	o := orderbooktypes.Order{
-		OrderIndex: 7, OwnerAccountIndex: 42, MarketIndex: 1, IsAsk: false,
-		OrderType: perptypes.LimitOrder, TimeInForce: perptypes.GTT,
-		Price: 100, Nonce: 1, InitialBaseAmount: 1, RemainingBaseAmount: 1,
-		ClientOrderIndex: 0, // explicit: not set
-		Status:           perptypes.OrderStatusOpen,
-	}
-	e.rest(t, o, false)
-
-	_, err := srv.CancelAllOrders(e.ctx, &matchingtypes.MsgCancelAllOrders{
-		Sender:            "px1qv9pzxqlyckngw6zf9g9whn9d3eh4qvgsxc8cx",
-		AccountIndex:      42,
-		MarketIndexFilter: 0,
-		Mode:              perptypes.ImmediateCancelAll,
-	})
-	require.NoError(t, err)
-
-	got, err := e.bk.GetOrder(e.ctx, 7)
-	require.NoError(t, err)
-	require.Equal(t, perptypes.OrderStatusCancelled, got.Status)
-}
-
-// TestMatchOrder_EvictReduceOnlyClearsOrderRecord pins the invariant
-// that evicting a reduce-only maker (no opposite-direction position)
-// goes through EvictMakerOrder, which atomically removes the entry,
-// marks the Order Cancelled, and clears the client + account-open
-// indexes — so a stale "open" order cannot linger after eviction.
-func TestMatchOrder_EvictReduceOnlyClearsOrderRecord(t *testing.T) {
-	e := newMatchEnv(t)
-
-	// maker account 10 holds no position, so the reduce-only ask is
-	// invalid the moment the taker bids against it.
-	maker := orderbooktypes.Order{
-		OrderIndex:          1,
-		ClientOrderIndex:    7,
-		OwnerAccountIndex:   10,
+func makeTaker(idx, owner uint64, price uint32, base uint64, isAsk bool) *orderbooktypes.Order {
+	return &orderbooktypes.Order{
+		OrderIndex:          idx,
+		OwnerAccountIndex:   owner,
 		MarketIndex:         1,
-		IsAsk:               true,
+		IsAsk:               isAsk,
 		OrderType:           perptypes.LimitOrder,
 		TimeInForce:         perptypes.GTT,
-		Price:               1000,
-		Nonce:               1,
-		InitialBaseAmount:   5,
-		RemainingBaseAmount: 5,
-		ReduceOnly:          true,
+		Price:               price,
+		Nonce:               int64(idx),
+		InitialBaseAmount:   base,
+		RemainingBaseAmount: base,
 		Status:              perptypes.OrderStatusOpen,
 	}
-	e.rest(t, maker, true)
-
-	// Sanity: the AccountOpenOrders index sees the maker as resting.
-	var pre int
-	require.NoError(t, e.bk.IterateAccountOpenOrders(e.ctx, 10, 0, func(orderbooktypes.Order) bool {
-		pre++
-		return false
-	}))
-	require.Equal(t, 1, pre)
-
-	taker := &orderbooktypes.Order{
-		OrderIndex:          2,
-		OwnerAccountIndex:   20,
-		MarketIndex:         1,
-		IsAsk:               false,
-		OrderType:           perptypes.LimitOrder,
-		TimeInForce:         perptypes.GTT,
-		Price:               1000,
-		Nonce:               2,
-		InitialBaseAmount:   5,
-		RemainingBaseAmount: 5,
-		Status:              perptypes.OrderStatusOpen,
-	}
-
-	filled, _, err := e.k.matchOrder(e.ctx, taker, 16)
-	require.NoError(t, err)
-	require.Zero(t, filled, "reduce-only maker without position must not produce a fill")
-	require.Empty(t, e.tk.fills)
-
-	got, err := e.bk.GetOrder(e.ctx, 1)
-	require.NoError(t, err)
-	require.Equal(t, perptypes.OrderStatusCancelled, got.Status)
-
-	// Client + account-open indexes are cleared.
-	_, err = e.bk.GetOrderByClientID(e.ctx, 1, 10, 7)
-	require.Error(t, err, "client_order_index mapping should be removed after eviction")
-
-	var post int
-	require.NoError(t, e.bk.IterateAccountOpenOrders(e.ctx, 10, 0, func(orderbooktypes.Order) bool {
-		post++
-		return false
-	}))
-	require.Zero(t, post, "evicted reduce-only maker must not survive in AccountOpenOrders")
-}
-
-// TestMatchOrder_MakerReduceOnlyNoFlip enforces that a reduce-only maker
-// cannot flip its own position even if the taker requests more base than
-// the maker actually holds. With maker long=5 and taker bid 10 against a
-// reduce-only ask of size 10, only 5 may fill.
-func TestMatchOrder_MakerReduceOnlyNoFlip(t *testing.T) {
-	e := newMatchEnv(t)
-
-	// maker is long 5
-	e.ak.setPosition(10, 1, 5)
-
-	maker := orderbooktypes.Order{
-		OrderIndex:          1,
-		OwnerAccountIndex:   10,
-		MarketIndex:         1,
-		IsAsk:               true,
-		OrderType:           perptypes.LimitOrder,
-		TimeInForce:         perptypes.GTT,
-		Price:               1000,
-		Nonce:               1,
-		InitialBaseAmount:   10,
-		RemainingBaseAmount: 10,
-		ReduceOnly:          true,
-		Status:              perptypes.OrderStatusOpen,
-	}
-	e.rest(t, maker, true)
-
-	taker := &orderbooktypes.Order{
-		OrderIndex:          2,
-		OwnerAccountIndex:   20,
-		MarketIndex:         1,
-		IsAsk:               false,
-		OrderType:           perptypes.LimitOrder,
-		TimeInForce:         perptypes.GTT,
-		Price:               1000,
-		Nonce:               2,
-		InitialBaseAmount:   10,
-		RemainingBaseAmount: 10,
-		Status:              perptypes.OrderStatusOpen,
-	}
-
-	filled, _, err := e.k.matchOrder(e.ctx, taker, 16)
-	require.NoError(t, err)
-	require.EqualValues(t, 5, filled, "maker reduce-only must cap fill to maker's |position|")
-	require.Len(t, e.tk.fills, 1)
-	require.EqualValues(t, 5, e.tk.fills[0].BaseAmount)
 }

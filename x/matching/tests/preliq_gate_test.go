@@ -1,4 +1,16 @@
-package keeper
+// preliq_gate_test.go covers the order-placement health gate that
+// keeper.(MsgServer).CheckPreLiquidationGate applies before any
+// orderbook mutation (CreateOrder / ModifyOrder). The truth table
+// follows the spec: HEALTHY allows everything, PRE_LIQUIDATION only
+// allows reduce-only, anything deeper rejects every user-initiated
+// order. The gate consults BOTH cross-account health and the
+// per-market isolated health; either being unhealthy is enough to
+// reject.
+//
+// A separate degraded-mode test pins the "risk keeper unwired"
+// fallback (`riskKeeper == nil`) — the gate must no-op so tests /
+// staged genesis that omit risk wiring keep working.
+package tests
 
 import (
 	"context"
@@ -7,21 +19,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
-	"github.com/perpdex/perpdex-l1/x/matching/types"
+	matchingkeeper "github.com/perpdex/perpdex-l1/x/matching/keeper"
+	matchingtypes "github.com/perpdex/perpdex-l1/x/matching/types"
 )
-
-// stubPreLiqRisk is a minimal RiskKeeper used to drive checkPreLiquidationGate.
-type stubPreLiqRisk struct {
-	cross uint32
-	iso   uint32
-}
-
-func (s stubPreLiqRisk) GetHealthStatus(_ context.Context, _ uint64) (uint32, error) {
-	return s.cross, nil
-}
-func (s stubPreLiqRisk) GetIsolatedHealthStatus(_ context.Context, _ uint64, _ uint32) (uint32, error) {
-	return s.iso, nil
-}
 
 // TestCheckPreLiquidationGate exercises the matching-side pre-liquidation
 // order-placement rule against the full spec table:
@@ -53,15 +53,13 @@ func TestCheckPreLiquidationGate(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			m := msgServer{
-				Keeper: Keeper{
-					riskKeeper: stubPreLiqRisk{cross: c.cross, iso: c.iso},
-				},
-			}
-			err := m.checkPreLiquidationGate(context.Background(), 1, 0, c.reduceOnly)
+			k := matchingkeeper.Keeper{}
+			k.SetRiskKeeper(stubPreLiqRisk{cross: c.cross, iso: c.iso})
+			m := matchingkeeper.MsgServer{Keeper: k}
+			err := m.CheckPreLiquidationGate(context.Background(), 1, 0, c.reduceOnly)
 			if c.wantErr {
 				require.Error(t, err)
-				require.ErrorIs(t, err, types.ErrAccountUnderLiquidation)
+				require.ErrorIs(t, err, matchingtypes.ErrAccountUnderLiquidation)
 			} else {
 				require.NoError(t, err)
 			}
@@ -73,6 +71,6 @@ func TestCheckPreLiquidationGate(t *testing.T) {
 // no-op when the risk keeper is unwired (some tests construct the
 // matching keeper without late-binding risk).
 func TestCheckPreLiquidationGate_NilRiskNoOp(t *testing.T) {
-	m := msgServer{Keeper: Keeper{}}
-	require.NoError(t, m.checkPreLiquidationGate(context.Background(), 1, 0, false))
+	m := matchingkeeper.MsgServer{Keeper: matchingkeeper.Keeper{}}
+	require.NoError(t, m.CheckPreLiquidationGate(context.Background(), 1, 0, false))
 }
