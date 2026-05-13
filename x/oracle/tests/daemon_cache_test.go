@@ -1,4 +1,11 @@
-package daemon_test
+// Suite: daemon in-memory price cache.
+//
+// The cache is the only state-shared component between the polling
+// goroutine and the consensus-side ExtendVote read path. These tests
+// pin its concurrency contract (RWMutex semantics) and the "zero price
+// is dropped" rule that prevents broken upstream feeds from leaking
+// into the vote extension.
+package tests
 
 import (
 	"sync"
