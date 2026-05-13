@@ -17,10 +17,6 @@ import (
 // regression check live in a function-local `types.PreRiskSnapshot`
 // value threaded through by the caller.
 //
-// Schema byte prefixes 0x01 / 0x02 were used for the now-removed
-// pre-state KV caches; future schema additions MUST pick a fresh
-// byte to avoid colliding with any historical state.
-//
 // Mark-price reads (zero + staleness gate) live on the market keeper,
 // not here; risk callers go through `k.marketKeeper.GetMarkPrice` /
 // `GetMarkPriceAndDetails` so x/trade, x/matching and x/liquidation can use
@@ -31,14 +27,13 @@ type Keeper struct {
 	authority     string
 	accountKeeper types.AccountKeeper
 	marketKeeper  types.MarketKeeper
-	oracleKeeper  types.OracleKeeper
 
 	Schema collections.Schema
 	Params collections.Item[types.Params]
 }
 
 func NewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, authority string,
-	ak types.AccountKeeper, mk types.MarketKeeper, ok types.OracleKeeper,
+	ak types.AccountKeeper, mk types.MarketKeeper,
 ) Keeper {
 	sb := collections.NewSchemaBuilder(storeService)
 	k := Keeper{
@@ -47,7 +42,6 @@ func NewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, authori
 		authority:     authority,
 		accountKeeper: ak,
 		marketKeeper:  mk,
-		oracleKeeper:  ok,
 
 		Params: collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
 	}

@@ -63,10 +63,9 @@ func (k Keeper) ComputeCrossRisk(ctx context.Context, accountIdx uint64) (types.
 			return false
 		}
 		// For any NON-ZERO position the gated markPrice read must succeed.
-		// Silently skipping a missing price previously made bankrupt
-		// accounts look healthy whenever the oracle hiccupped;
-		// fail-closed keeps the invariant "risk regression cannot be
-		// hidden by an oracle outage".
+		// Fail-closed: a missing or stale price MUST surface as an
+		// error, not silently zero the contribution, otherwise an
+		// oracle outage could hide risk regressions.
 		markPrice, md, err := k.marketKeeper.GetMarkPriceAndDetails(ctx, pos.MarketIndex)
 		if err != nil {
 			iterErr = errorsmod.Wrapf(err, "account=%d", accountIdx)

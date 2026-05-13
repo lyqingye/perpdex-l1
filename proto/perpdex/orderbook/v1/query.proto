@@ -75,8 +75,6 @@ message QueryImpactPriceResponse {
   uint32 impact_bid = 1;
   uint32 impact_ask = 2;
   uint32 impact_price = 3;
-  reserved 4, 5;
-  reserved "bid_ok", "ask_ok";
 }
 
 message QueryParamsRequest {}

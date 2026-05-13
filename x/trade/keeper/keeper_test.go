@@ -46,10 +46,10 @@ func (s *stubAccount) GetAccount(_ context.Context, idx uint64) (accounttypes.Ac
 	return accounttypes.Account{AccountIndex: idx, Collateral: math.ZeroInt()}, nil
 }
 
-// SetAccount is kept on the stub solely as a fixture-setup convenience
-// for tests in this package. Production code never calls it: the
-// AccountKeeper interface in x/trade/types no longer surfaces a
-// generic Account setter, all writes go through cohesive mutators.
+// SetAccount is a fixture-setup convenience kept on the stub for tests
+// in this package. Production code never calls it: the AccountKeeper
+// interface in x/trade/types does not expose a generic Account setter
+// — production writes go through cohesive mutators.
 func (s *stubAccount) SetAccount(_ context.Context, a accounttypes.Account) error {
 	cp := a
 	s.accounts[a.AccountIndex] = &cp
@@ -201,8 +201,8 @@ func (s *stubAccount) TransferAccountAssetBalance(
 type stubMarket struct {
 	oi map[uint32]int64
 	// markPrice + imfBps populate the MarketDetails returned by
-	// GetMarkPriceAndDetails; default 0 short-circuits the IM / uPnL math
-	// to zero so legacy test expectations stay intact.
+	// GetMarkPriceAndDetails; default 0 short-circuits the IM / uPnL
+	// math, so tests that do not care about either field can ignore them.
 	markPrice uint64
 	imfBps    uint64
 }
@@ -221,10 +221,9 @@ func (s *stubMarket) UpdateOpenInterest(_ context.Context, idx uint32, delta int
 	return nil
 }
 
-// GetMarkPriceAndDetails feeds the isolated-margin auto-allocation path.
-// `markPrice` + `imfBps` from the surrounding test mutate the
-// per-test return; defaults (zero) short-circuit the IM/uPnL math to
-// zero so legacy expectations hold.
+// GetMarkPriceAndDetails feeds the isolated-margin auto-allocation
+// path. `markPrice` + `imfBps` from the surrounding test mutate the
+// per-test return; defaults (zero) short-circuit the IM / uPnL math.
 func (s *stubMarket) GetMarkPriceAndDetails(_ context.Context, idx uint32) (uint32, markettypes.MarketDetails, error) {
 	md := markettypes.MarketDetails{
 		MarketIndex:                  idx,
@@ -327,8 +326,9 @@ func TestApplyPerpsMatching_OIRoundTrip(t *testing.T) {
 	require.Equal(t, int64(0), mk.oi[1])
 }
 
-// TestApplyPerpsMatching_RejectsMakerRisk ensures the maker side is still
-// risk-checked (not only taker) — audit Blocker trade-1.
+// TestApplyPerpsMatching_RejectsMakerRisk pins the invariant that the
+// maker side is risk-checked alongside the taker; failing the maker
+// risk check rejects the whole match.
 func TestApplyPerpsMatching_RejectsMakerRisk(t *testing.T) {
 	ctx, ak, _, rk, k := newSdkCtx(t)
 	rk.rejectOnCall = 2 // first call = taker, second = maker

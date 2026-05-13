@@ -105,8 +105,8 @@ func (s *FundingSuite) TestPremiumAccumulatesAndSettles() {
 	}
 
 	// Seed the oracle up front so the risk keeper can classify the
-	// fresh positions created by the crossing fill below (audit fix:
-	// missing prices on non-zero positions now fail closed).
+	// fresh positions created by the crossing fill below — risk fails
+	// closed when a non-zero position has no mark price.
 	s.SetOraclePrice(s.MarketIndex, tradePrice, tradePrice)
 
 	// 1. Open opposite positions: user0 short 1M @ 50000, user1 long 1M.

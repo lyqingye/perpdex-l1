@@ -266,9 +266,10 @@ func (e *matchEnv) rest(t *testing.T, o orderbooktypes.Order, _ bool) {
 	require.NoError(t, e.bk.OpenOrder(e.ctx, o, false))
 }
 
-// TestMatchOrder_MarketOrderBidAtZeroPrice ensures a buy MarketOrder with
-// Price=0 (the canonical no-limit-price form, also produced by activated
-// STOP/TAKE triggers) is no longer cancelled at the limit-price gate.
+// TestMatchOrder_MarketOrderBidAtZeroPrice pins the invariant that a
+// buy MarketOrder with Price=0 (the canonical no-limit-price form,
+// also produced by activated STOP/TAKE triggers) is accepted by the
+// limit-price gate.
 func TestMatchOrder_MarketOrderBidAtZeroPrice(t *testing.T) {
 	e := newMatchEnv(t)
 
@@ -380,16 +381,11 @@ func TestCancelAllOrders_CoversOrdersWithoutClientID(t *testing.T) {
 	require.Equal(t, perptypes.OrderStatusCancelled, got.Status)
 }
 
-// TestMatchOrder_EvictReduceOnlyClearsOrderRecord is the regression test
-// for the historical leak where matchOrder would only call
-// RemoveOrderbookEntry when a reduce-only maker was found to be invalid
-// (no opposite-direction position), leaving the maker Order record
-// stuck at Status=Open and its client / account-open indexes alive.
-//
-// After the orderbook lifecycle refactor, this path goes through
-// EvictMakerOrder which atomically: removes the entry, marks the Order
-// Cancelled, and clears the client + account-open indexes — so a stale
-// "open" order can no longer linger after eviction.
+// TestMatchOrder_EvictReduceOnlyClearsOrderRecord pins the invariant
+// that evicting a reduce-only maker (no opposite-direction position)
+// goes through EvictMakerOrder, which atomically removes the entry,
+// marks the Order Cancelled, and clears the client + account-open
+// indexes — so a stale "open" order cannot linger after eviction.
 func TestMatchOrder_EvictReduceOnlyClearsOrderRecord(t *testing.T) {
 	e := newMatchEnv(t)
 

@@ -48,9 +48,8 @@ func (s *TradingFlowSuite) SetupTest() {
 	s.MarketIndex = s.CreatePerpMarket(msg.DefaultPerpMarketOpts(1, s.BTCAssetIndex))
 
 	// Seed a live oracle price so the risk keeper can classify
-	// non-zero positions. Prior to the audit fixes the risk module
-	// silently skipped missing prices; it now fails closed, so
-	// tests that open perp positions must provide a mark price.
+	// non-zero positions. Risk fails closed on missing prices, so any
+	// test that opens a perp position must seed a mark price first.
 	s.SetOraclePrice(s.MarketIndex, 50_000, 50_000)
 }
 
@@ -169,7 +168,7 @@ func (s *TradingFlowSuite) TestCrossingFillRoundTrip() {
 }
 
 // TestStaleMarkPriceBlocksRiskChange exercises the wiring of the
-// median-mark staleness gate end-to-end. The gate now lives on
+// median-mark staleness gate end-to-end. The gate lives on
 // `x/market.Keeper.gateMarkPrice` (driven by
 // `market.Params.MaxMarkPriceStalenessMs`), and every downstream consumer
 // (x/trade.Engine.Apply via IsValidRiskChangeFrom → ComputeCrossRisk

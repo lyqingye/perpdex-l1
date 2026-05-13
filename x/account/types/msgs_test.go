@@ -26,8 +26,8 @@ func TestMain(m *testing.M) {
 }
 
 // TestMsgDeposit_ValidateBasic_RouteEnum locks in that the
-// route_type ∈ {Perps, Spot} guard now lives at the ValidateBasic
-// layer rather than scattered across msg_server handlers.
+// route_type ∈ {Perps, Spot} guard is enforced at the ValidateBasic
+// layer (not at the msg_server handler layer).
 func TestMsgDeposit_ValidateBasic_RouteEnum(t *testing.T) {
 	base := types.MsgDeposit{
 		Sender:     testBech,

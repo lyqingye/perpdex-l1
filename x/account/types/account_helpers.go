@@ -51,8 +51,9 @@ func (a Account) IsPoolType() bool {
 }
 
 // EnsureNotFrozen rejects state transitions on a frozen public pool.
-// Pure value-level guard so it can live in `types`; keeper packages
-// re-export it via accountkeeper.EnsureNotFrozen for legacy callers.
+// Pure value-level guard so it can live in `types`; the account keeper
+// re-exports it as accountkeeper.EnsureNotFrozen for callers that
+// already hold a keeper handle.
 func EnsureNotFrozen(info *PublicPoolInfo) error {
 	if info == nil {
 		return ErrInvalidPoolAccount

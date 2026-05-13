@@ -89,8 +89,8 @@ func PlaceLimitOrder(
 	if opts.ClientOrderIndex == 0 {
 		opts.ClientOrderIndex = perptypes.MinClientOrderIndex
 	}
-	// GTT orders now require expiry > 0; provide a far-future default so
-	// legacy helpers that only cared about price / size still compile.
+	// GTT orders require expiry > 0; default to one year out when the
+	// caller does not set it explicitly.
 	if opts.TimeInForce == perptypes.GTT && opts.Expiry == 0 {
 		opts.Expiry = ctx.BlockTime().UnixMilli() + 365*24*3600*1000
 	}

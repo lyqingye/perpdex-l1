@@ -7,7 +7,6 @@ import (
 
 	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
 	markettypes "github.com/perpdex/perpdex-l1/x/market/types"
-	oracletypes "github.com/perpdex/perpdex-l1/x/oracle/types"
 )
 
 type AccountKeeper interface {
@@ -32,14 +31,6 @@ type MarketKeeper interface {
 	// GetMarkPriceAndDetails returns the mark price and MarketDetails row in
 	// a single round-trip, applying the same gate as GetMarkPrice.
 	GetMarkPriceAndDetails(ctx context.Context, marketIdx uint32) (uint32, markettypes.MarketDetails, error)
-}
-
-// OracleKeeper is retained only for legacy callers / tests; the live mark
-// price is no longer read through it. The chain's authoritative mark
-// price is `MarketDetails.MarkPrice`, written every block by the funding
-// BeginBlocker. Risk reads it via `MarketKeeper.GetMarkPriceAndDetails`.
-type OracleKeeper interface {
-	GetPrice(ctx context.Context, marketIdx uint32) (oracletypes.OraclePrice, error)
 }
 
 // Helpers used by tests.

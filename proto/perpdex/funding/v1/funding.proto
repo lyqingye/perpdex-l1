@@ -11,8 +11,4 @@ message Params {
   int64 funding_period_ms = 1;
   int64 funding_period_divisor = 2;
   uint32 max_premium_sample_count = 3;
-  // Field 4 retired; mark-price staleness moved to
-  // market.Params.max_mark_price_staleness_ms.
-  reserved 4;
-  reserved "max_mark_staleness_ms";
 }

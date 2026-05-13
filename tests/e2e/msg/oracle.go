@@ -1,12 +1,12 @@
 // Package msg provides thin Msg-server wrappers used by the e2e suite.
 //
-// After the move to the dydx/Connect-style ABCI++ pipeline, the oracle
-// module exposes only `MsgUpdateParams` as an SDK message. Price updates
-// land on chain via PreBlock decoding the proposer-injected
-// ExtendedCommitInfo bytes; the dedicated oracle e2e exercises that
-// pipeline directly. For other suites that just need to seed prices,
-// use the `SetOraclePrice` helper on the e2e suite (writes through the
-// keeper, bypassing the VE pipeline).
+// The oracle module exposes only `MsgUpdateParams` as an SDK message;
+// price updates land on chain via the ABCI++ vote-extension pipeline
+// (PreBlock decodes the proposer-injected ExtendedCommitInfo bytes).
+// The dedicated oracle e2e exercises that pipeline directly. Other
+// suites that just need to seed prices should use the
+// `SetOraclePrice` helper on the e2e suite, which writes through the
+// keeper and bypasses the VE pipeline.
 package msg
 
 import (

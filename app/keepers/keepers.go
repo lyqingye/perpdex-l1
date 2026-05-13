@@ -357,7 +357,6 @@ func NewAppKeeper(
 		govModuleAddr,
 		appKeepers.PerpAccountKeeper,
 		appKeepers.MarketKeeper,
-		appKeepers.OracleKeeper,
 	)
 	appKeepers.TradeKeeper = tradekeeper.NewKeeper(
 		appCodec,
@@ -395,7 +394,6 @@ func NewAppKeeper(
 	appKeepers.PerpAccountKeeper.SetRiskKeeper(appKeepers.RiskKeeper)
 	appKeepers.PerpAccountKeeper.SetMarketKeeper(appKeepers.MarketKeeper)
 	appKeepers.MarketKeeper.SetLiquidationKeeper(appKeepers.LiquidationKeeper)
-	appKeepers.MatchingKeeper.SetOracleKeeper(appKeepers.OracleKeeper)
 	appKeepers.MatchingKeeper.SetRiskKeeper(appKeepers.RiskKeeper)
 
 	return appKeepers

@@ -241,9 +241,9 @@ func (k Keeper) matchLiquidation(
 //     The taker side (victim) almost always passes by construction
 //     (filling at >= zero price strictly improves TAV/MMR), but
 //     leaving the check in place catches pathological pricing /
-//     funding interactions and removes the previous "trust placement
-//     vetting" assumption on the maker side, since the maker's
-//     account state may have changed between order placement and
+//     funding interactions. The maker side is re-checked here rather
+//     than relying on order-placement vetting alone, because the
+//     maker's account state may have changed between placement and
 //     this fill (other fills, funding accruals).
 func (k Keeper) applyLiquidationFill(
 	ctx context.Context,

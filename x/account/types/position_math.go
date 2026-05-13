@@ -27,9 +27,6 @@ func (p *AccountPosition) NormalizeIntFields() {
 // `Delta` point the same way (increase vs decrease vs flip), so a zero
 // input returns false rather than true — "no direction" is not "same
 // direction".
-//
-// Centralised here to retire the duplicate sameSign / sameSignInt helpers
-// that previously lived inside x/trade/keeper/perp and x/risk/keeper.
 func IsSameSide(a, b math.Int) bool {
 	if a.IsZero() || b.IsZero() {
 		return false
@@ -162,8 +159,8 @@ type FillResult struct {
 //
 // Both x/trade `applyPositionChange` (which persists the result via
 // UpdatePosition) and x/risk `SimulateRiskAfterTakeover` (which inspects
-// the post-state for IM/MM/CM aggregation) consume this single source of
-// truth, retiring the duplicate switch that previously lived in both.
+// the post-state for IM/MM/CM aggregation) consume this as the single
+// source of truth for fill-side classification.
 func (p AccountPosition) ApplyFill(delta math.Int, price uint32) FillResult {
 	curSize := p.BaseSize
 	curEntryQuote := p.EntryQuote

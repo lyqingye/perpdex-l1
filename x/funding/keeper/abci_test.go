@@ -155,9 +155,9 @@ func (s *statefulAccount) GetPosition(_ context.Context, acc uint64, mkt uint32)
 	}, nil
 }
 
-// SetPosition is the stub-only fixture helper used by the suite to
-// preload positions. The production AccountKeeper interface no longer
-// surfaces a generic position setter.
+// SetPosition is a stub-only fixture helper used by this suite to
+// preload positions. The production AccountKeeper interface does not
+// expose a generic position setter.
 func (s *statefulAccount) SetPosition(_ context.Context, p accounttypes.AccountPosition) error {
 	key := [2]uint64{p.AccountIndex, uint64(p.MarketIndex)}
 	s.positions[key] = p
@@ -237,9 +237,10 @@ func newFundingKeeperWithAccount(
 	return k, ctx
 }
 
-// TestSettlePositionFunding_ZeroPositionSnapshotsCurrentPrefix ensures a fresh
-// or fully closed position starts from the current funding prefix instead of
-// inheriting all historical funding accumulated before it opened.
+// TestSettlePositionFunding_ZeroPositionSnapshotsCurrentPrefix ensures
+// a fresh or fully closed position snapshots the current funding
+// prefix so it does not inherit any prefix accumulated before it
+// opened.
 func TestSettlePositionFunding_ZeroPositionSnapshotsCurrentPrefix(t *testing.T) {
 	const (
 		accountIndex = uint64(7)
@@ -273,10 +274,10 @@ func TestSettlePositionFunding_ZeroPositionSnapshotsCurrentPrefix(t *testing.T) 
 	require.True(t, snapshotted.BaseSize.IsZero())
 	require.EqualValues(t, 100_000_000, snapshotted.LastFundingRatePrefixSum.Int64())
 
-	// Simulate ApplyPerpsMatching opening a new position after the zero-size
-	// settle above, then advance the market prefix by only 20_000_000. The next
-	// funding settlement must charge that new delta, not the full historical
-	// 120_000_000 prefix.
+	// Simulate ApplyPerpsMatching opening a new position after the
+	// zero-size settle above, then advance the market prefix by only
+	// 20_000_000. The next funding settlement must charge that new
+	// delta only, not the full 120_000_000 prefix.
 	snapshotted.BaseSize = math.NewInt(1_000_000)
 	snapshotted.EntryQuote = math.ZeroInt()
 	ak.positions[key] = snapshotted
@@ -744,7 +745,7 @@ func (s *spyOracle) GetPrice(_ context.Context, marketIdx uint32) (oracletypes.O
 // refreshMarkPrice — and zero calls from settleMarket. Because the spy
 // returns an error, refreshMarkPrice bails out early without mutating
 // d.MarkPrice, so the cached `50_000` survives into settleMarket and
-// the prefix increment matches the legacy expected value.
+// the prefix increment matches the expected value.
 func TestSettleMarket_NoOracleCallInSettlePath(t *testing.T) {
 	mk := &stubMarket{
 		markets: map[uint32]markettypes.Market{
@@ -791,13 +792,11 @@ func TestSettleMarket_NoOracleCallInSettlePath(t *testing.T) {
 	require.EqualValues(t, 0, got.TotalPremiumSamples)
 }
 
-// TestProcessMarketSample_LargePriceDoesNotOverflow exercises the math.Int
-// upgrade by feeding an impact price near uint32-max so the
-// `(IB - idx) * FundingRateTick` intermediate would overflow int64
-// (~ 4.29e9 * 1e6 = 4.29e15 -- still within int64, but multiplied by 60
-// samples and other intermediates the legacy path was uncomfortably close).
-// The test simply asserts the post-sample state is sane (no panic, premium
-// in the expected ballpark).
+// TestProcessMarketSample_LargePriceDoesNotOverflow feeds an impact
+// price near uint32-max so the `(IB - idx) * FundingRateTick`
+// intermediate (~ 4.29e9 * 1e6 = 4.29e15) plus accumulation across 60
+// samples stays inside math.Int. The test asserts the post-sample
+// state is sane (no panic, premium in the expected ballpark).
 func TestProcessMarketSample_LargePriceDoesNotOverflow(t *testing.T) {
 	const ib = uint32(4_000_000_000)
 	const ia = uint32(4_000_000_002)

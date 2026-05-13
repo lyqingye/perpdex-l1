@@ -7,7 +7,6 @@ import (
 
 	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
 	markettypes "github.com/perpdex/perpdex-l1/x/market/types"
-	oracletypes "github.com/perpdex/perpdex-l1/x/oracle/types"
 	orderbooktypes "github.com/perpdex/perpdex-l1/x/orderbook/types"
 	tradekeeper "github.com/perpdex/perpdex-l1/x/trade/keeper"
 )
@@ -101,14 +100,6 @@ type OrderbookKeeper interface {
 type TradeKeeper interface {
 	ApplyPerpsMatching(ctx context.Context, f tradekeeper.PerpFill) error
 	ApplySpotMatching(ctx context.Context, f tradekeeper.SpotFill, baseAssetID, quoteAssetID uint32) error
-}
-
-// OracleKeeper is retained only for legacy tests; no production caller
-// dereferences `oracleKeeper` after the move to the median-mark
-// pipeline (trigger activation reads the gated mark via
-// MarketKeeper.GetMarkPriceAndDetails).
-type OracleKeeper interface {
-	GetPrice(ctx context.Context, marketIdx uint32) (oracletypes.OraclePrice, error)
 }
 
 // RiskKeeper exposes the post-state health classification used by the

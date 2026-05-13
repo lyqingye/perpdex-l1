@@ -543,8 +543,8 @@ func newKeeperWithFunding(
 }
 
 // TestLiquidate_BaseAmountCappedByPosition ensures that passing a
-// base_amount greater than the victim's position is rejected rather than
-// silently flipping the position (audit Blocker liquidation-2).
+// base_amount greater than the victim's position is rejected rather
+// than silently flipping the position.
 func TestLiquidate_BaseAmountCappedByPosition(t *testing.T) {
 	ak := newStubAccount()
 	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.ZeroInt()}
@@ -566,8 +566,8 @@ func TestLiquidate_BaseAmountCappedByPosition(t *testing.T) {
 		"oversized base must reject before MatchLiquidationOrder is invoked")
 }
 
-// TestLiquidate_ZeroBaseRejected checks the audit fix that rejects
-// base_amount == 0 explicitly.
+// TestLiquidate_ZeroBaseRejected pins the invariant that base_amount
+// == 0 is rejected explicitly.
 func TestLiquidate_ZeroBaseRejected(t *testing.T) {
 	ak := newStubAccount()
 	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.ZeroInt()}
@@ -702,8 +702,8 @@ func TestLiquidate_DelegatesToMatchingKeeperWithLLPRecipient(t *testing.T) {
 		"market.LiquidationFee must populate the fee bps on the IOC call")
 	require.Equal(t, perptypes.InsuranceFundOperatorAccountIdx, got.LiquidationFeeRecipient,
 		"liquidation fee must route to LLP / Insurance Fund operator")
-	// Liquidate path no longer invokes ApplyPerpsMatching directly
-	// — that is the matching keeper's job.
+	// Liquidation routes through the orderbook IOC path (matching
+	// keeper); it MUST NOT call ApplyPerpsMatching directly.
 	require.Empty(t, tk.calls,
 		"liquidation must not bypass the orderbook IOC route")
 }
@@ -1028,15 +1028,13 @@ func TestEndBlocker_PreLiquidationClearsFlags(t *testing.T) {
 // Fund as a post-trade safety net.
 // `internal_liquidate_position.rs` only inserts a `LIQUIDATION_ORDER +
 // IOC + reduce_only` and lets the matching engine settle improvements
-// above zero_price; there is no analogue of a chain-level
-// "absorbNegativeCollateral" sweep, and the previous implementation's
-// silent transfer let the IF go arbitrarily negative without any
-// balance check (and bypassed the `tryLLPAbsorb` IMR gate).
+// above zero_price; the chain has no "absorbNegativeCollateral" sweep
+// that could silently transfer the deficit to the IF without an IMR
+// gate.
 //
 // To make the assertion concrete we deliberately seed the victim with
-// a pre-existing negative collateral value: under the old code path
-// this would have moved the deficit straight to the IF account; under
-// the new code path both accounts must be left exactly as they were.
+// a pre-existing negative collateral value and assert that both the
+// victim's and the IF's balances are left untouched.
 func TestLiquidate_DoesNotTopUpFromIF(t *testing.T) {
 	ak := newStubAccount()
 	ak.accounts[perptypes.InsuranceFundOperatorAccountIdx] = accounttypes.Account{
@@ -1204,16 +1202,12 @@ func TestEndBlocker_BankruptResidueStaysWithVictim(t *testing.T) {
 	)
 }
 
-// TestDeleverage_BankruptRiskRegressionRejected covers Gap B: when the
-// bankrupt's post-trade IsValidRiskChangeFrom rejects (e.g., a pricing
-// pathology that worsens TAV/MMR despite the close-out being
-// supposedly improving), the entire deleverage trade is aborted —
-// previously perpdex skipped the bankrupt check on the LLP path
-// (`SkipMakerRiskCheck=true`), allowing such regressions through.
-//
-// The new behaviour mirrors `internal_deleverage.rs` which asserts
-// `is_valid_risk_change` on bankrupt regardless of the deleverager
-// type.
+// TestDeleverage_BankruptRiskRegressionRejected pins the invariant
+// that the bankrupt's post-trade IsValidRiskChangeFrom is enforced on
+// the LLP path: if the close-out worsens TAV/MMR despite supposedly
+// improving the account, the entire deleverage trade is aborted. The
+// per-side SkipMakerRiskCheck flag never disables this check on a
+// bankrupt account.
 func TestDeleverage_BankruptRiskRegressionRejected(t *testing.T) {
 	ak := newStubAccount()
 	ak.accounts[perptypes.InsuranceFundOperatorAccountIdx] = accounttypes.Account{
