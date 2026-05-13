@@ -101,7 +101,7 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		filled, status, err := k.matchOrder(ctx, &o, params.MaxFillsPerMsg)
+		filled, status, err := k.MatchOrder(ctx, &o, params.MaxFillsPerMsg)
 		_ = filled
 		if err != nil {
 			// Match failed mid-trigger: we already removed the

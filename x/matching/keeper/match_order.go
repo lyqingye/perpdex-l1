@@ -12,13 +12,13 @@ import (
 	tradekeeper "github.com/perpdex/perpdex-l1/x/trade/keeper"
 )
 
-// matchOrder runs the user-driven matching loop for a CreateOrder /
+// MatchOrder runs the user-driven matching loop for a CreateOrder /
 // ModifyOrder taker, implementing 17-matching.md §3. Triggers,
 // POST_ONLY cross detection and empty-book outcomes are handled by the
 // caller (msg_server) before this function is invoked; the
 // per-iteration mechanics live in match_core.go (nextMaker / matchSize
 // / applyUserFill).
-func (k Keeper) matchOrder(ctx context.Context, taker *orderbooktypes.Order, maxFills uint32) (uint64, uint32, error) {
+func (k Keeper) MatchOrder(ctx context.Context, taker *orderbooktypes.Order, maxFills uint32) (uint64, uint32, error) {
 	now := sdk.UnwrapSDKContext(ctx).BlockTime().UnixMilli()
 	market, err := k.marketKeeper.GetMarket(ctx, taker.MarketIndex)
 	if err != nil {

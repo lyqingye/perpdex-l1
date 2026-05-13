@@ -1,7 +1,26 @@
-package keeper
+// match_liquidation_test.go covers the system-only matching entry
+// `keeper.Keeper.MatchLiquidationOrder`, which drives a synthetic
+// LIQUIDATION_ORDER + IOC + reduce_only taker against the public
+// orderbook on behalf of a liquidating account.
+//
+// The matrix exercises:
+//
+//   - End-to-end fill-record plumbing: maker/taker indices, price
+//     (maker price, not zero price), zero-price floor pass-through,
+//     liquidation fee + recipient routing, and both-side risk-check
+//     wiring.
+//   - The `is_not_in_liquidation_and_is_liquidation_order` short-circuit
+//     when the victim recovers to HEALTHY mid-loop, plus the spec
+//     parity case where BANKRUPTCY stays inside the liquidation
+//     predicate.
+//   - The zero-price floor guard: an IOC that cannot reach the floor
+//     immediately terminates with zero fills and zero residue, never
+//     persisting the synthetic taker to the orderbook indexes.
+//   - Recoverable taker regression aborting the loop gracefully while
+//     keeping prior fills and dropping the IOC residue.
+package tests
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -10,48 +29,6 @@ import (
 	orderbooktypes "github.com/perpdex/perpdex-l1/x/orderbook/types"
 	tradetypes "github.com/perpdex/perpdex-l1/x/trade/types"
 )
-
-// stubRisk is a fixed-sequence risk classifier used by the liquidation
-// matching tests. `cross` and `iso` return the next status from a
-// per-account / per-(account, market) FIFO; an empty slice falls back
-// to `defaultStatus`. This lets tests step the victim's health from
-// PARTIAL → HEALTHY across loop iterations to exercise the
-// `is_not_in_liquidation_and_is_liquidation_order` short-circuit
-// without standing up the real risk keeper.
-type stubRisk struct {
-	defaultStatus uint32
-	cross         map[uint64][]uint32
-	iso           map[[2]uint64][]uint32
-}
-
-func newStubRisk() *stubRisk {
-	return &stubRisk{
-		defaultStatus: perptypes.HealthHealthy,
-		cross:         map[uint64][]uint32{},
-		iso:           map[[2]uint64][]uint32{},
-	}
-}
-
-func (s *stubRisk) GetHealthStatus(_ context.Context, acc uint64) (uint32, error) {
-	q := s.cross[acc]
-	if len(q) == 0 {
-		return s.defaultStatus, nil
-	}
-	v := q[0]
-	s.cross[acc] = q[1:]
-	return v, nil
-}
-
-func (s *stubRisk) GetIsolatedHealthStatus(_ context.Context, acc uint64, mkt uint32) (uint32, error) {
-	k := [2]uint64{acc, uint64(mkt)}
-	q := s.iso[k]
-	if len(q) == 0 {
-		return s.defaultStatus, nil
-	}
-	v := q[0]
-	s.iso[k] = q[1:]
-	return v, nil
-}
 
 // TestMatchLiquidation_PerpFillCarriesLiquidationFields exercises the
 // end-to-end plumbing from the matching keeper's
