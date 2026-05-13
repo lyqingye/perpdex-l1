@@ -43,7 +43,10 @@ message MarketDetails {
     (gogoproto.customtype) = "cosmossdk.io/math.Int",
     (gogoproto.nullable) = false
   ];
-  int64 aggregate_premium_sum = 9;
+  string aggregate_premium_sum = 9 [
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
   uint32 impact_bid_price = 10;
   uint32 impact_ask_price = 11;
   uint32 impact_price = 12;

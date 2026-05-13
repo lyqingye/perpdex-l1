@@ -306,7 +306,7 @@ func TestMsgCreateMarket_RejectsNonZeroRuntimeFields(t *testing.T) {
 		{"open_interest", func(d *types.MarketDetails) { d.OpenInterest = 1 }},
 		{"mark_price", func(d *types.MarketDetails) { d.MarkPrice = 1 }},
 		{"impact_price", func(d *types.MarketDetails) { d.ImpactPrice = 1 }},
-		{"premium_sum", func(d *types.MarketDetails) { d.AggregatePremiumSum = 1 }},
+		{"premium_sum", func(d *types.MarketDetails) { d.AggregatePremiumSum = math.NewInt(1) }},
 		{"total_order_count", func(d *types.MarketDetails) { d.TotalOrderCount = 1 }},
 	}
 	for _, tc := range cases {
