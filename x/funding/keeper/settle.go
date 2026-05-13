@@ -10,11 +10,6 @@ import (
 	markettypes "github.com/perpdex/perpdex-l1/x/market/types"
 )
 
-// This file owns the once-per-funding-round settlement step. It folds the
-// accumulated premium samples into a clamped funding rate and advances
-// `MarketDetails.FundingRatePrefixSum`, which downstream account-level
-// settlement consumes via `Keeper.SettlePositionFunding`.
-
 // SettleAllMarkets converts each market's aggregate_premium_sum into a clamped
 // funding rate and advances `FundingRatePrefixSum` by `mark_price * rate`.
 // Markets settle independently on the global funding boundary; per-market
@@ -41,12 +36,8 @@ func (k Keeper) SettleAllMarkets(ctx context.Context, params types.ParamsAlias) 
 // `position * markPrice * rate / FundingRateTick` -- exactly the funding
 // payment definition `funding = position * markPrice * fundingRate`.
 //
-// Note: `mark_price` is read from `MarketDetails.MarkPrice`, which the
-// per-block `refreshMarkPrice` recomputes as median(impact_price,
-// index + ema(clamp(impact-idx, ±idx/200)), oracle_mark). The funding
-// settlement path itself does not touch the oracle: rate computation
-// depends only on the accumulated per-minute premiums + governance
-// clamps + interest rate.
+// `mark_price` is the cached `MarketDetails.MarkPrice` (refreshed every
+// block by `refreshMarkPrice`); settlement itself never reads the oracle.
 //
 // Invariant: `TotalPremiumSamples > 0` ⇒ at least one in-window
 // `processMarketSample` succeeded ⇒ `d.MarkPrice > 0`. The early-return on

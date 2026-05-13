@@ -9,14 +9,8 @@ import (
 	"github.com/perpdex/perpdex-l1/x/funding/types"
 )
 
-// This file owns the per-market premium sampling step of the funding
-// pipeline. `BeginBlocker` invokes `processMarketSample` once per active
-// perp market per block; the function itself enforces a 1-minute throttle
-// via `MarketDetails.LastPremiumSampleTimestamp`.
-
-// premiumSampleIntervalMs is the per-market spacing between two consecutive
-// premium samples. We sample once a minute (60 samples per hour) on a
-// per-market basis using `MarketDetails.LastPremiumSampleTimestamp`.
+// premiumSampleIntervalMs throttles premium sampling to once per minute
+// per market (~60 samples/hour).
 const premiumSampleIntervalMs = perptypes.MinuteInMs
 
 // processMarketSample refreshes impact prices and (every

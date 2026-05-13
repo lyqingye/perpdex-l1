@@ -8,12 +8,6 @@ import (
 	perptypes "github.com/perpdex/perpdex-l1/types"
 )
 
-// This file owns the per-block mark price refresh. It rewrites
-// `MarketDetails.MarkPrice` every block as a median3 of the impact
-// price, an EMA-smoothed index+premium curve, and the oracle mark
-// price, with degenerate inputs handled via mean / passthrough
-// fallbacks.
-
 // refreshMarkPrice rewrites `MarketDetails.MarkPrice` every block as
 //
 //	premium_raw  = clamp(impact_price - index, ±index/MarkPremiumClampDivisor)
@@ -32,47 +26,31 @@ import (
 // the staleness gate eventually fires); zero impact_price / price_1 /
 // price_2 degrade to the mean of the remaining non-zero inputs; all
 // three zero keeps the previous markPrice.
-//
-// On success `LastMarkPriceRefreshTimestamp` is bumped to `now` (distinct from
-// `LastPremiumSampleTimestamp`, which throttles `processMarketSample`).
 func (k Keeper) refreshMarkPrice(ctx context.Context, marketIdx uint32, now int64) {
 	d, err := k.marketKeeper.GetMarketDetails(ctx, marketIdx)
 	if err != nil {
 		return
 	}
-	// Oracle failure leaves MarkPrice/LastMarkPriceRefreshTimestamp untouched
-	// so the downstream staleness gate eventually trips. Index/markPrice
-	// from the oracle may individually be 0 (degenerate aggregation);
-	// the median switch below handles that.
+	// Oracle failure leaves MarkPrice/timestamp untouched so the
+	// staleness gate eventually trips. Individual zero fields from a
+	// degenerate oracle aggregation are tolerated by the median switch
+	// below.
 	px, err := k.oracleKeeper.GetPrice(ctx, marketIdx)
 	if err != nil {
 		return
 	}
-	// Preserve the previous d.IndexPrice on a px.IndexPrice == 0
-	// reading so the markPrice path retains a meaningful clamp bound.
-	// Note: this only delivers across the ~11/12 blocks per minute
-	// where processMarketSample is throttled out by
-	// premiumSampleIntervalMs. When both call sites run in the same
-	// block, processMarketSample writes d.IndexPrice = px.IndexPrice
-	// unconditionally first, so a zero idx is already persisted before
-	// we get here. The asymmetry is acceptable because
-	// processMarketSample explicitly short-circuits on d.IndexPrice == 0
-	// (it would otherwise divide by zero), while refreshMarkPrice can
-	// still emit a useful markPrice via the median fallback even with a
-	// stale d.IndexPrice.
+	// Keep the cached IndexPrice on a zero oracle reading so the clamp
+	// bound below stays meaningful. processMarketSample overwrites
+	// unconditionally but short-circuits on idx == 0; refreshMarkPrice
+	// can still emit a useful mark via the median fallback.
 	if px.IndexPrice != 0 {
 		d.IndexPrice = px.IndexPrice
 	}
 
 	// premium_raw = clamp(impact - index, ±index/divisor). When impact
-	// or index is 0 we cannot compute a meaningful premium, so raw is
-	// forced to 0; emaStep then decays the existing EMA toward 0
-	// (rather than freezing it). The decay rate is bounded by the
-	// usual `dt / TAU` step, so a transient one-sided drain causes at
-	// most ~`block_dt / TAU` proportional pull-back per block. This
-	// matches the spec's "neutral premium when signal is missing"
-	// semantic — freezing the last good EMA would let a stale spike
-	// dominate markPrice price indefinitely on a halted book.
+	// or index is 0, raw stays 0 so emaStep decays prev toward 0;
+	// freezing instead would let a stale spike dominate markPrice
+	// indefinitely on a halted book.
 	idx := int64(d.IndexPrice)
 	var rawPremium int64
 	if d.ImpactPrice != 0 && idx > 0 {
@@ -82,14 +60,11 @@ func (k Keeper) refreshMarkPrice(ctx context.Context, marketIdx uint32, now int6
 
 	dt := now - d.LastMarkPriceRefreshTimestamp
 	ema := emaStep(d.MarkPremiumEma, rawPremium, dt, perptypes.MarkPremiumEmaTauMs, d.LastMarkPriceRefreshTimestamp == 0)
-	// Re-clamp the persisted EMA against the CURRENT clamp band. Without
-	// this an idx that just collapsed by >MarkPremiumClampDivisor× would
-	// leave the stored momentum outside the new ±idx/200 band, and
-	// `clampUint32(idx + ema)` could underflow to 0 — silently degrading
-	// the median to mean(impact, oracle_mark) for many blocks because
-	// emaStep can stall at zero-step (|raw-prev|*dt/tau < 1) when raw is
-	// pinned near 0. We skip this when idx == 0; in that case rawPremium
-	// is already 0 and emaStep decays prev toward 0 proportionally.
+	// Re-clamp the persisted EMA against the CURRENT band: if idx just
+	// collapsed by >divisor×, stale ema could push `idx+ema` to underflow
+	// and emaStep stalls when `|raw-prev|*dt/tau < 1`, so it cannot
+	// self-heal on its own. Skipped when idx == 0; raw is already 0 and
+	// emaStep decays prev.
 	if idx > 0 {
 		b := idx / perptypes.MarkPremiumClampDivisor
 		ema = clampInt64(ema, -b, b)
@@ -138,13 +113,9 @@ func emaStep(prev, raw, dt, tau int64, reset bool) int64 {
 	if dt <= 0 {
 		return prev
 	}
-	// math.Int wraps the multiplication so `(raw - prev) * dt` cannot
-	// overflow int64; the subtraction itself is bounded by
-	// `±2 * idx / MarkPremiumClampDivisor` (≤ ~4.3e7 for a uint32
-	// price) and safe in plain int64. Quo truncates toward zero, so
-	// |delta| <= |raw - prev| in both directions; once
-	// `|raw - prev| * dt / tau < 1` the step rounds to 0 and EMA
-	// stalls at price-tick precision — acceptable for uint32 marks.
+	// math.Int avoids int64 overflow on `(raw-prev) * dt`. Quo truncates,
+	// so |delta| <= |raw-prev|; once `|raw-prev|*dt/tau < 1` the step
+	// rounds to 0 and the EMA stalls at tick precision.
 	delta := math.NewInt(raw - prev).
 		Mul(math.NewInt(dt)).
 		Quo(math.NewInt(tau))

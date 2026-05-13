@@ -22,10 +22,6 @@ import (
 // Per-market business errors (stale oracle, one-sided depth, etc.) are
 // silently swallowed so one bad market cannot abort the whole block.
 // `SetMarketDetails` failures panic — the runtime store must never fail.
-//
-// The individual pipeline steps live in dedicated files: sample.go,
-// mark_price.go and settle.go. Shared numeric helpers and the
-// panic-on-write persistence wrapper live in helpers.go.
 func (k Keeper) BeginBlocker(ctx context.Context) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	now := sdkCtx.BlockTime().UnixMilli()
@@ -42,12 +38,10 @@ func (k Keeper) BeginBlocker(ctx context.Context) error {
 			return false
 		}
 		// Per-market sampling errors (stale oracle / one-sided depth) are
-		// expected and swallowed. The next block will retry automatically.
+		// swallowed; the next block retries.
 		k.processMarketSample(ctx, m.MarketIndex, now, params)
-		// Refresh the authoritative markPrice every block (cheap: it just
-		// medians three uint32 values plus an oracle read). Must run
-		// AFTER processMarketSample so the impact mid / premium
-		// average reflect this block's data.
+		// Must run AFTER processMarketSample so the refreshed impact
+		// mid feeds into the markPrice median.
 		k.refreshMarkPrice(ctx, m.MarketIndex, now)
 		return false
 	}); err != nil {

@@ -10,14 +10,6 @@ import (
 	markettypes "github.com/perpdex/perpdex-l1/x/market/types"
 )
 
-// This file groups the small, dependency-free helpers shared by the funding
-// pipeline (sample / mark price / settle). Keeping them in one place makes
-// the per-step files focus on business logic, not bit-twiddling.
-
-// -----------------------------------------------------------------------------
-// Numeric clamps
-// -----------------------------------------------------------------------------
-
 // clampInt64 clamps v into [lo, hi]. Caller guarantees lo <= hi.
 func clampInt64(v, lo, hi int64) int64 {
 	if v < lo {
@@ -52,10 +44,6 @@ func clampInt(v, lo, hi math.Int) math.Int {
 	return v
 }
 
-// -----------------------------------------------------------------------------
-// Median
-// -----------------------------------------------------------------------------
-
 // median3Uint32 returns the median of three uint32 inputs.
 func median3Uint32(a, b, c uint32) uint32 {
 	xs := [3]uint32{a, b, c}
@@ -63,15 +51,9 @@ func median3Uint32(a, b, c uint32) uint32 {
 	return xs[1]
 }
 
-// -----------------------------------------------------------------------------
-// Persistence
-// -----------------------------------------------------------------------------
-
 // mustSetMarketDetails persists the runtime market details and panics on
-// failure. The market keeper writes the chain's runtime KV store; a write
-// failure indicates state-machine corruption (out-of-disk, store layer bug,
-// etc.) and there is no safe path to continue producing blocks with stale
-// in-memory state.
+// failure. A store write failure is state-machine corruption (out-of-disk
+// or store bug); continuing with stale in-memory state is unsafe.
 func (k Keeper) mustSetMarketDetails(ctx context.Context, d markettypes.MarketDetails) {
 	if err := k.marketKeeper.SetMarketDetails(ctx, d); err != nil {
 		panic(fmt.Errorf("funding: persist market %d details: %w", d.MarketIndex, err))
