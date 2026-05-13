@@ -1,4 +1,9 @@
-package keeper_test
+// mark_price_test.go covers GetMarkPrice and its companion
+// GetMarkPriceAndDetails read path. The tests fix the gating rules
+// that protect downstream margin / pnl math: zero-price refusal,
+// staleness window enforcement, missing-row mapping to ErrMissingPrice
+// and the future-timestamp / disabled-staleness escape hatches.
+package tests
 
 import (
 	"testing"
