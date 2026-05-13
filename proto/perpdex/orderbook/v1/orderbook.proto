@@ -46,8 +46,5 @@ message PriceLevelAggregate {
   uint32 bid_count = 8;
 }
 
-message Params {
-  uint32 max_fills_per_msg = 1;
-  uint32 max_cancels_per_msg = 2;
-  uint64 impact_usdc_amount = 3;
-}
+// Reserved for future orderbook-only governance knobs.
+message Params {}

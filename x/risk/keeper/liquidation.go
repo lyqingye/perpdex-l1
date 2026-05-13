@@ -11,7 +11,7 @@ import (
 	"github.com/perpdex/perpdex-l1/x/risk/types"
 )
 
-// GetLiquidationRiskSnapshot returns the cohesive (pos, mark, md, Risk,
+// GetLiquidationRiskSnapshot returns the cohesive (pos, markPrice, md, Risk,
 // CrossRisk, ZeroPrice) bundle for one (accountIdx, marketIdx) pair.
 // `Risk` is the position's targeted envelope (cross aggregate or
 // isolated per-position params); `CrossRisk` is always the account's
@@ -20,9 +20,9 @@ import (
 //
 // The snapshot represents a single CONSISTENT view of (account,
 // market) at the moment of the call: position is read first, then
-// the targeted market's mark/md, then the cross (and optionally
+// the targeted market's markPrice/md, then the cross (and optionally
 // isolated) risk aggregate. Note that the cross aggregation walks
-// the account's other positions and queries each of THEIR mark
+// the account's other positions and queries each of THEIR markPrice
 // prices independently — the snapshot does not yet share a per-block
 // oracle cache, so a follow-up that fans those reads through a
 // shared cache is still possible. Snapshots are values and MUST be
@@ -48,7 +48,7 @@ func (k Keeper) GetLiquidationRiskSnapshot(
 	if pos.BaseSize.IsZero() {
 		return types.LiquidationRiskSnapshot{Position: pos}, nil
 	}
-	mark, md, err := k.GetMarkAndMarketDetails(ctx, marketIdx)
+	markPrice, md, err := k.marketKeeper.GetMarkPriceAndDetails(ctx, marketIdx)
 	if err != nil {
 		return types.LiquidationRiskSnapshot{}, err
 	}
@@ -64,10 +64,10 @@ func (k Keeper) GetLiquidationRiskSnapshot(
 		}
 		risk = rp
 	}
-	zp := pureComputeZeroPrice(pos, mark, md, risk.TotalAccountValue, risk.MaintenanceMarginRequirement)
+	zp := pureComputeZeroPrice(pos, markPrice, md, risk.TotalAccountValue, risk.MaintenanceMarginRequirement)
 	return types.LiquidationRiskSnapshot{
 		Position:      pos,
-		MarkPrice:     mark,
+		MarkPrice:     markPrice,
 		MarketDetails: md,
 		Risk:          risk,
 		CrossRisk:     crossRP,
@@ -77,32 +77,32 @@ func (k Keeper) GetLiquidationRiskSnapshot(
 
 // pureComputeZeroPrice is the package-private zero-price formula. The
 // returned uint32 satisfies (0, MaxOrderPrice]; zero-position and
-// zero-mark short-circuit to 0 because the caller is expected to
+// zero-markPrice short-circuit to 0 because the caller is expected to
 // detect those cases before quoting a price.
 //
 // The formula is:
 //
-//	zeroPrice_long  = mark * (1 - sign(pos) * M_i * TAV / MMR)
-//	zeroPrice_short = mark * (1 + |sign(pos)| * M_i * TAV / MMR)
+//	zeroPrice_long  = markPrice * (1 - sign(pos) * M_i * TAV / MMR)
+//	zeroPrice_short = markPrice * (1 + |sign(pos)| * M_i * TAV / MMR)
 //
 // where `M_i` is `md.MaintenanceMarginFraction` (basis points /
 // MarginTick) and `tav` / `mmr` are the relevant scope's totals
 // (cross aggregate or isolated per-position).
 func pureComputeZeroPrice(
 	pos accounttypes.AccountPosition,
-	mark uint32,
+	markPrice uint32,
 	md markettypes.MarketDetails,
 	tav, mmr math.Int,
 ) uint32 {
-	if pos.BaseSize.IsZero() || mark == 0 {
+	if pos.BaseSize.IsZero() || markPrice == 0 {
 		return 0
 	}
-	markBig := math.NewIntFromUint64(uint64(mark))
+	markBig := math.NewIntFromUint64(uint64(markPrice))
 	// Degenerate case: no maintenance requirement (only happens when
 	// the position has been fully closed — guarded above — or for
-	// malformed market configs). Fall back to the mark.
+	// malformed market configs). Fall back to the markPrice.
 	if mmr.IsZero() {
-		return mark
+		return markPrice
 	}
 	mi := math.NewIntFromUint64(uint64(md.MaintenanceMarginFraction))
 	tickBig := math.NewIntFromUint64(uint64(perptypes.MarginTick))
@@ -112,10 +112,10 @@ func pureComputeZeroPrice(
 
 	var zp math.Int
 	if pos.IsShort() {
-		// Short: zeroPrice = mark * (1 + M·TAV/MMR).
+		// Short: zeroPrice = markPrice * (1 + M·TAV/MMR).
 		zp = markBig.Add(adjustment)
 	} else {
-		// Long: zeroPrice = mark * (1 - M·TAV/MMR).
+		// Long: zeroPrice = markPrice * (1 - M·TAV/MMR).
 		zp = markBig.Sub(adjustment)
 	}
 	if zp.IsNegative() || zp.IsZero() {
@@ -136,7 +136,7 @@ func pureComputeZeroPrice(
 //
 // Public entry point used by the gRPC query path. The ADL hot loops
 // use `GetLiquidationRiskSnapshot` instead so the snapshot's other
-// fields (Risk / CrossRisk / mark / md) are not thrown away.
+// fields (Risk / CrossRisk / markPrice / md) are not thrown away.
 func (k Keeper) GetPositionZeroPrice(ctx context.Context, accountIdx uint64, marketIdx uint32) (uint32, error) {
 	snap, err := k.GetZeroPriceSnapshot(ctx, accountIdx, marketIdx)
 	if err != nil {
@@ -165,7 +165,7 @@ func (k Keeper) GetZeroPriceSnapshot(
 	if pos.BaseSize.IsZero() {
 		return types.ZeroPriceSnapshot{Position: pos}, nil
 	}
-	mark, md, err := k.GetMarkAndMarketDetails(ctx, marketIdx)
+	markPrice, md, err := k.marketKeeper.GetMarkPriceAndDetails(ctx, marketIdx)
 	if err != nil {
 		return types.ZeroPriceSnapshot{}, err
 	}
@@ -183,7 +183,7 @@ func (k Keeper) GetZeroPriceSnapshot(
 		}
 		risk = rp
 	}
-	zp := pureComputeZeroPrice(pos, mark, md, risk.TotalAccountValue, risk.MaintenanceMarginRequirement)
+	zp := pureComputeZeroPrice(pos, markPrice, md, risk.TotalAccountValue, risk.MaintenanceMarginRequirement)
 	return types.ZeroPriceSnapshot{Position: pos, ZeroPrice: zp}, nil
 }
 
@@ -238,11 +238,11 @@ func (k Keeper) SimulateRiskAfterTakeover(
 			accountIdx, marketIdx,
 		)
 	}
-	mark, md, err := k.GetMarkAndMarketDetails(ctx, marketIdx)
+	markPrice, md, err := k.marketKeeper.GetMarkPriceAndDetails(ctx, marketIdx)
 	if err != nil {
 		return types.RiskParameters{}, err
 	}
-	return pureApplySimulatedTakeover(pos, cur, mark, md, delta, entryPrice), nil
+	return pureApplySimulatedTakeover(pos, cur, markPrice, md, delta, entryPrice), nil
 }
 
 // pureApplySimulatedTakeover folds `delta` of `pos` (settled at
@@ -253,7 +253,7 @@ func (k Keeper) SimulateRiskAfterTakeover(
 func pureApplySimulatedTakeover(
 	pos accounttypes.AccountPosition,
 	current types.RiskParameters,
-	mark uint32,
+	markPrice uint32,
 	md markettypes.MarketDetails,
 	delta math.Int,
 	entryPrice uint32,
@@ -264,10 +264,10 @@ func pureApplySimulatedTakeover(
 	cur := current
 	// Subtract the OLD contribution of (account, market) from cur.
 	if !pos.BaseSize.IsZero() {
-		cur.InitialMarginRequirement = cur.InitialMarginRequirement.Sub(pos.InitialMargin(mark, md))
-		cur.MaintenanceMarginRequirement = cur.MaintenanceMarginRequirement.Sub(pos.MaintenanceMargin(mark, md))
-		cur.CloseOutMarginRequirement = cur.CloseOutMarginRequirement.Sub(pos.CloseOutMargin(mark, md))
-		cur.TotalAccountValue = cur.TotalAccountValue.Sub(pos.UnrealizedPnL(mark))
+		cur.InitialMarginRequirement = cur.InitialMarginRequirement.Sub(pos.InitialMargin(markPrice, md))
+		cur.MaintenanceMarginRequirement = cur.MaintenanceMarginRequirement.Sub(pos.MaintenanceMargin(markPrice, md))
+		cur.CloseOutMarginRequirement = cur.CloseOutMarginRequirement.Sub(pos.CloseOutMargin(markPrice, md))
+		cur.TotalAccountValue = cur.TotalAccountValue.Sub(pos.UnrealizedPnL(markPrice))
 	}
 	// Apply the simulated takeover via the canonical fill helper. This
 	// shares the four-quadrant entry_quote logic with x/trade so the
@@ -275,10 +275,10 @@ func pureApplySimulatedTakeover(
 	res := pos.ApplyFill(delta, entryPrice)
 	newPos := res.Position
 	if !newPos.BaseSize.IsZero() {
-		cur.InitialMarginRequirement = cur.InitialMarginRequirement.Add(newPos.InitialMargin(mark, md))
-		cur.MaintenanceMarginRequirement = cur.MaintenanceMarginRequirement.Add(newPos.MaintenanceMargin(mark, md))
-		cur.CloseOutMarginRequirement = cur.CloseOutMarginRequirement.Add(newPos.CloseOutMargin(mark, md))
-		cur.TotalAccountValue = cur.TotalAccountValue.Add(newPos.UnrealizedPnL(mark))
+		cur.InitialMarginRequirement = cur.InitialMarginRequirement.Add(newPos.InitialMargin(markPrice, md))
+		cur.MaintenanceMarginRequirement = cur.MaintenanceMarginRequirement.Add(newPos.MaintenanceMargin(markPrice, md))
+		cur.CloseOutMarginRequirement = cur.CloseOutMarginRequirement.Add(newPos.CloseOutMargin(markPrice, md))
+		cur.TotalAccountValue = cur.TotalAccountValue.Add(newPos.UnrealizedPnL(markPrice))
 	}
 	return cur
 }

@@ -7,7 +7,6 @@ import (
 
 	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
 	markettypes "github.com/perpdex/perpdex-l1/x/market/types"
-	oracletypes "github.com/perpdex/perpdex-l1/x/oracle/types"
 )
 
 type AccountKeeper interface {
@@ -24,10 +23,14 @@ type AccountKeeper interface {
 type MarketKeeper interface {
 	GetMarket(ctx context.Context, idx uint32) (markettypes.Market, error)
 	GetMarketDetails(ctx context.Context, idx uint32) (markettypes.MarketDetails, error)
-}
-
-type OracleKeeper interface {
-	GetPrice(ctx context.Context, marketIdx uint32) (oracletypes.OraclePrice, error)
+	// GetMarkPrice returns the authoritative mark price after a zero +
+	// staleness gate. Risk math (IM/MM/CM/uPnL) MUST route every mark
+	// read through this method so a halted funding pipeline or a
+	// freshly-created market cannot silently feed stale / zero marks.
+	GetMarkPrice(ctx context.Context, marketIdx uint32) (uint32, error)
+	// GetMarkPriceAndDetails returns the mark price and MarketDetails row in
+	// a single round-trip, applying the same gate as GetMarkPrice.
+	GetMarkPriceAndDetails(ctx context.Context, marketIdx uint32) (uint32, markettypes.MarketDetails, error)
 }
 
 // Helpers used by tests.

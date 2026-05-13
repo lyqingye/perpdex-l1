@@ -91,6 +91,68 @@ func (k Keeper) GetMarketDetails(ctx context.Context, idx uint32) (types.MarketD
 	return d, nil
 }
 
+// GetMarkPrice returns the authoritative mark price for `marketIdx`
+// after a zero / staleness check. Consumers (x/risk, x/trade,
+// x/matching, x/liquidation) MUST route mark reads through this gate
+// so a halted funding BeginBlocker or a freshly-created market cannot
+// silently feed stale or zero marks into risk math.
+//
+// Returns ErrZeroMarkPrice when `d.MarkPrice == 0`, ErrStaleMarkPrice
+// when `now - LastMarkPriceRefreshTimestamp > Params.MaxMarkPriceStalenessMs`, and
+// ErrMissingPrice for upstream failures (missing market, params read).
+// `Params.MaxMarkPriceStalenessMs == 0` disables the staleness gate
+// entirely (only intended for tests / genesis bootstrap).
+func (k Keeper) GetMarkPrice(ctx context.Context, marketIdx uint32) (uint32, error) {
+	d, err := k.GetMarketDetails(ctx, marketIdx)
+	if err != nil {
+		return 0, types.ErrMissingPrice.Wrapf("market=%d: %s", marketIdx, err.Error())
+	}
+	if err := k.gateMarkPrice(ctx, marketIdx, d); err != nil {
+		return 0, err
+	}
+	return d.MarkPrice, nil
+}
+
+// GetMarkPriceAndDetails returns the live mark price and MarketDetails in
+// a single round-trip, applying the same gate as GetMarkPrice.
+// Callers that already need MarketDetails should prefer this over
+// GetMarkPrice + GetMarketDetails to avoid a redundant lookup.
+func (k Keeper) GetMarkPriceAndDetails(ctx context.Context, marketIdx uint32) (uint32, types.MarketDetails, error) {
+	d, err := k.GetMarketDetails(ctx, marketIdx)
+	if err != nil {
+		return 0, types.MarketDetails{}, types.ErrMissingPrice.Wrapf("market=%d: %s", marketIdx, err.Error())
+	}
+	if err := k.gateMarkPrice(ctx, marketIdx, d); err != nil {
+		return 0, types.MarketDetails{}, err
+	}
+	return d.MarkPrice, d, nil
+}
+
+// gateMarkPrice fails closed when `d.MarkPrice` is zero or stale.
+// A zero mark would silently zero out IM/MM/CM/uPnL in downstream
+// risk math; a stale-but-nonzero mark could honour a price that no
+// longer reflects reality. Both must be rejected.
+func (k Keeper) gateMarkPrice(ctx context.Context, marketIdx uint32, d types.MarketDetails) error {
+	if d.MarkPrice == 0 {
+		return types.ErrZeroMarkPrice.Wrapf("market=%d", marketIdx)
+	}
+	p, err := k.Params.Get(ctx)
+	if err != nil {
+		return types.ErrMissingPrice.Wrapf("market=%d: load params: %s", marketIdx, err.Error())
+	}
+	if p.MaxMarkPriceStalenessMs <= 0 {
+		return nil
+	}
+	now := sdk.UnwrapSDKContext(ctx).BlockTime().UnixMilli()
+	if d.LastMarkPriceRefreshTimestamp == 0 || now-d.LastMarkPriceRefreshTimestamp > p.MaxMarkPriceStalenessMs {
+		return types.ErrStaleMarkPrice.Wrapf(
+			"market=%d: last_update_ms=%d now_ms=%d max_staleness_ms=%d",
+			marketIdx, d.LastMarkPriceRefreshTimestamp, now, p.MaxMarkPriceStalenessMs,
+		)
+	}
+	return nil
+}
+
 // createMarket persists a brand-new Market record. The ExpiryIndex is
 // populated only when the market is "auto-expiry eligible" — ACTIVE
 // with a future ExpiryTimestamp. Genesis may legitimately carry a

@@ -269,9 +269,9 @@ func TestSentinel_ApplyPerpsMatching_TakerInvalidPosition(t *testing.T) {
 // with `ErrMakerInsufficientCollateral` before the post-trade risk
 // check fires.
 func TestSentinel_ApplyPerpsMatching_MakerInsufficientCollateral(t *testing.T) {
-	ctx, ak, _, rk, k := newSdkCtx(t)
-	rk.markPrice = 100
-	rk.imfBps = 1_000 // 10%
+	ctx, ak, mk, rk, k := newSdkCtx(t)
+	mk.markPrice = 100
+	mk.imfBps = 1_000 // 10%
 	rk.availableCollateral = map[uint64]math.Int{
 		10: math.NewInt(1), // far less than the IM the fill demands
 	}
@@ -306,9 +306,9 @@ func TestSentinel_ApplyPerpsMatching_MakerInsufficientCollateral(t *testing.T) {
 // TestSentinel_ApplyPerpsMatching_TakerInsufficientCollateral is the
 // symmetric taker variant.
 func TestSentinel_ApplyPerpsMatching_TakerInsufficientCollateral(t *testing.T) {
-	ctx, ak, _, rk, k := newSdkCtx(t)
-	rk.markPrice = 100
-	rk.imfBps = 1_000
+	ctx, ak, mk, rk, k := newSdkCtx(t)
+	mk.markPrice = 100
+	mk.imfBps = 1_000
 	rk.availableCollateral = map[uint64]math.Int{
 		20: math.NewInt(1),
 	}
@@ -346,9 +346,9 @@ func TestSentinel_ApplyPerpsMatching_TakerInsufficientCollateral(t *testing.T) {
 // IM of the OI delta and an equal amount must be debited from cross
 // collateral.
 func TestSentinel_IsolatedMarginDelta_OpenIncreasesAllocation(t *testing.T) {
-	ctx, ak, _, rk, k := newSdkCtx(t)
-	rk.markPrice = 100
-	rk.imfBps = 1_000 // 10%
+	ctx, ak, mk, _, k := newSdkCtx(t)
+	mk.markPrice = 100
+	mk.imfBps = 1_000 // 10%
 
 	const (
 		makerIdx = uint64(10)
@@ -390,9 +390,9 @@ func TestSentinel_IsolatedMarginDelta_OpenIncreasesAllocation(t *testing.T) {
 // case-1 (closed) branch: closing an isolated position releases the
 // remaining allocated_margin back to cross collateral.
 func TestSentinel_IsolatedMarginDelta_CloseReleasesAllocation(t *testing.T) {
-	ctx, ak, _, rk, k := newSdkCtx(t)
-	rk.markPrice = 100
-	rk.imfBps = 1_000
+	ctx, ak, mk, _, k := newSdkCtx(t)
+	mk.markPrice = 100
+	mk.imfBps = 1_000
 
 	const (
 		makerIdx = uint64(10)
@@ -437,9 +437,9 @@ func TestSentinel_IsolatedMarginDelta_CloseReleasesAllocation(t *testing.T) {
 // 200 + 0 = 200 (allocated unchanged so far). excess = 200 - 100 =
 // 100. Move 100 back to cross.
 func TestSentinel_IsolatedMarginDelta_DecreaseProportional(t *testing.T) {
-	ctx, ak, _, rk, k := newSdkCtx(t)
-	rk.markPrice = 100
-	rk.imfBps = 1_000
+	ctx, ak, mk, _, k := newSdkCtx(t)
+	mk.markPrice = 100
+	mk.imfBps = 1_000
 
 	const (
 		makerIdx = uint64(10)
@@ -483,9 +483,9 @@ func TestSentinel_IsolatedMarginDelta_DecreaseProportional(t *testing.T) {
 // (allocated_after_pnl + uPnL_new) = 50 - 50 = 0. allocated stays
 // at 50.
 func TestSentinel_IsolatedMarginDelta_FlipReMarginsToPositionRequirement(t *testing.T) {
-	ctx, ak, _, rk, k := newSdkCtx(t)
-	rk.markPrice = 100
-	rk.imfBps = 1_000
+	ctx, ak, mk, _, k := newSdkCtx(t)
+	mk.markPrice = 100
+	mk.imfBps = 1_000
 
 	const (
 		makerIdx = uint64(10)

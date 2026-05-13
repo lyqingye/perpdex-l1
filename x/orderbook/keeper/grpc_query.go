@@ -76,20 +76,27 @@ func (q Querier) BestBidAsk(ctx context.Context, req *types.QueryBestBidAskReque
 }
 
 func (q Querier) ImpactPrice(ctx context.Context, req *types.QueryImpactPriceRequest) (*types.QueryImpactPriceResponse, error) {
-	params, err := q.k.Params.Get(ctx)
+	bidImp, err := q.k.ComputeImpactPrice(ctx, req.MarketIndex, false)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-	bidImp, _, err := q.k.ComputeImpactPrice(ctx, req.MarketIndex, false, params.ImpactUsdcAmount)
+	askImp, err := q.k.ComputeImpactPrice(ctx, req.MarketIndex, true)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-	askImp, _, err := q.k.ComputeImpactPrice(ctx, req.MarketIndex, true, params.ImpactUsdcAmount)
-	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+	// Mid is only meaningful when both sides resolved. A zero on
+	// either side means the corresponding depth is insufficient;
+	// returning a half-zero mid would silently halve any consumer
+	// using this as a mark proxy.
+	var mid uint32
+	if bidImp != 0 && askImp != 0 {
+		mid = uint32((uint64(bidImp) + uint64(askImp)) / 2)
 	}
-	mid := (uint64(bidImp) + uint64(askImp)) / 2
-	return &types.QueryImpactPriceResponse{ImpactBid: bidImp, ImpactAsk: askImp, ImpactPrice: uint32(mid)}, nil
+	return &types.QueryImpactPriceResponse{
+		ImpactBid:   bidImp,
+		ImpactAsk:   askImp,
+		ImpactPrice: mid,
+	}, nil
 }
 
 func (q Querier) Params(ctx context.Context, _ *types.QueryParamsRequest) (*types.QueryParamsResponse, error) {

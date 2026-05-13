@@ -489,11 +489,9 @@ func (k Keeper) setPosition(ctx context.Context, p types.AccountPosition) error 
 // runs the supplied `mut` callback against a mutable pointer, then
 // persists the result through the package-private `setPosition`.
 //
-// Cross-module callers (x/trade, x/funding, x/liquidation) own the
-// mutation logic in their own keeper but no longer touch the
-// underlying setter directly; this is what lets x/account add
-// invariants / events / metrics in exactly one place once the
-// schema lands.
+// Cross-module callers (x/trade, x/funding, x/liquidation) own their
+// mutation logic but MUST go through this entry point so x/account
+// can attach invariants / events / metrics in exactly one place.
 //
 // If `mut` returns an error the position is NOT persisted (so a
 // caller can short-circuit on bounds violations like
@@ -557,8 +555,8 @@ func (k Keeper) UpdateAccountTradingMode(ctx context.Context, idx uint64, mode u
 // PublicPoolInfo the caller gets `ErrInvalidPoolAccount`. If `mut`
 // returns an error the account is NOT persisted.
 //
-// Replaces the GetAccount -> mutate info -> SetAccount pattern that
-// used to be inlined in UpdatePublicPool / MintShares / BurnShares /
+// Single entry point for the GetAccount → mutate info → SetAccount
+// pattern, shared by UpdatePublicPool / MintShares / BurnShares /
 // StrategyTransfer.
 func (k Keeper) UpdatePublicPoolInfo(
 	ctx context.Context,
@@ -737,15 +735,14 @@ func (k Keeper) GetPosition(ctx context.Context, accIdx uint64, marketIdx uint32
 	return p, nil
 }
 
-// IterateAccountPositions walks every persisted AccountPosition row owned
-// by `accountIdx`. The callback returns `true` to stop early.
+// IterateAccountPositions walks every persisted AccountPosition row
+// owned by `accountIdx`. The callback returns `true` to stop early.
 //
-// Replaces the old MaxPerpsMarketIndex-wide loops in
-// risk.ComputeCrossRisk / IsValidRiskChangeFrom / SnapshotRisk /
-// IterateIsolatedPositions / liquidation.processAccount /
-// rankVictimPositionsByUPnL / account.settleAllPositionFunding which each
-// did up to 256 GetPosition reads per call. With this iterator we only
-// touch persisted rows.
+// Per-account driver for risk / liquidation / funding loops
+// (ComputeCrossRisk, IsValidRiskChangeFrom, SnapshotRisk,
+// IterateIsolatedPositions, processAccount, rankVictimPositionsByUPnL,
+// settleAllPositionFunding) so they touch only persisted rows instead
+// of scanning the full MaxPerpsMarketIndex range.
 //
 // Callers may still see Position == 0 rows (the keeper does not delete
 // positions when they net to zero, only when funding is settled and the

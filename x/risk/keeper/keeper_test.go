@@ -20,7 +20,6 @@ import (
 	perptypes "github.com/perpdex/perpdex-l1/types"
 	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
 	markettypes "github.com/perpdex/perpdex-l1/x/market/types"
-	oracletypes "github.com/perpdex/perpdex-l1/x/oracle/types"
 	riskkeeper "github.com/perpdex/perpdex-l1/x/risk/keeper"
 	risktypes "github.com/perpdex/perpdex-l1/x/risk/types"
 )
@@ -73,7 +72,15 @@ func (s *stubAccountKeeper) IterateAccountPositions(
 	return nil
 }
 
-type stubMarketKeeper struct{ md markettypes.MarketDetails }
+// stubMarketKeeper implements the gated mark reader locally so risk
+// tests can exercise the same zero / staleness invariants as the live
+// market keeper. `maxStaleness` defaults to 0 (gate disabled); tests
+// that exercise the staleness gate set it together with
+// `md.LastMarkPriceRefreshTimestamp`.
+type stubMarketKeeper struct {
+	md           markettypes.MarketDetails
+	maxStaleness int64
+}
 
 func (s stubMarketKeeper) GetMarket(_ context.Context, idx uint32) (markettypes.Market, error) {
 	return markettypes.Market{MarketIndex: idx, MarketType: perptypes.MarketTypePerps}, nil
@@ -82,16 +89,43 @@ func (s stubMarketKeeper) GetMarketDetails(_ context.Context, _ uint32) (markett
 	return s.md, nil
 }
 
-type stubOracleKeeper struct {
-	price oracletypes.OraclePrice
-	err   error
+func (s stubMarketKeeper) gateMark(ctx context.Context, marketIdx uint32, d markettypes.MarketDetails) error {
+	if d.MarkPrice == 0 {
+		return markettypes.ErrZeroMarkPrice.Wrapf("market=%d", marketIdx)
+	}
+	if s.maxStaleness <= 0 {
+		return nil
+	}
+	now := sdk.UnwrapSDKContext(ctx).BlockTime().UnixMilli()
+	if d.LastMarkPriceRefreshTimestamp == 0 || now-d.LastMarkPriceRefreshTimestamp > s.maxStaleness {
+		return markettypes.ErrStaleMarkPrice.Wrapf("market=%d", marketIdx)
+	}
+	return nil
 }
 
-func (s stubOracleKeeper) GetPrice(_ context.Context, _ uint32) (oracletypes.OraclePrice, error) {
-	return s.price, s.err
+func (s stubMarketKeeper) GetMarkPrice(ctx context.Context, marketIdx uint32) (uint32, error) {
+	d, err := s.GetMarketDetails(ctx, marketIdx)
+	if err != nil {
+		return 0, err
+	}
+	if err := s.gateMark(ctx, marketIdx, d); err != nil {
+		return 0, err
+	}
+	return d.MarkPrice, nil
 }
 
-func makeKeeper(t *testing.T, ak *stubAccountKeeper, mk stubMarketKeeper, ok stubOracleKeeper) (riskkeeper.Keeper, sdk.Context) {
+func (s stubMarketKeeper) GetMarkPriceAndDetails(ctx context.Context, marketIdx uint32) (uint32, markettypes.MarketDetails, error) {
+	d, err := s.GetMarketDetails(ctx, marketIdx)
+	if err != nil {
+		return 0, markettypes.MarketDetails{}, err
+	}
+	if err := s.gateMark(ctx, marketIdx, d); err != nil {
+		return 0, markettypes.MarketDetails{}, err
+	}
+	return d.MarkPrice, d, nil
+}
+
+func makeKeeper(t *testing.T, ak *stubAccountKeeper, mk stubMarketKeeper) (riskkeeper.Keeper, sdk.Context) {
 	t.Helper()
 	keys := storetypes.NewKVStoreKeys(risktypes.StoreKey)
 	cdc := moduletestutil.MakeTestEncodingConfig().Codec
@@ -101,13 +135,17 @@ func makeKeeper(t *testing.T, ak *stubAccountKeeper, mk stubMarketKeeper, ok stu
 		cdc,
 		runtime.NewKVStoreService(keys[risktypes.StoreKey]),
 		"auth",
-		ak, mk, ok,
+		ak, mk,
 	), ctx
 }
 
-// TestComputeCrossRisk_StalePriceFailsClosed ensures that non-zero positions
-// with a missing or stale oracle price surface an explicit error rather than
-// being silently skipped (audit Blocker risk-3).
+// TestComputeCrossRisk_StalePriceFailsClosed pins the invariant that
+// a non-zero position with a stale MarketDetails.MarkPrice surfaces
+// an explicit error instead of being silently skipped. The
+// authoritative mark is written every block by the funding
+// BeginBlocker; if that pipeline has not refreshed within the
+// governance-configured window we MUST fail-closed instead of pricing
+// PnL / IM / MM with a stale value.
 func TestComputeCrossRisk_StalePriceFailsClosed(t *testing.T) {
 	ak := stubAccountKeeper{
 		acc: accounttypes.Account{AccountIndex: 1, Collateral: math.NewInt(1000)},
@@ -117,12 +155,19 @@ func TestComputeCrossRisk_StalePriceFailsClosed(t *testing.T) {
 			LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 		},
 	}
-	mk := stubMarketKeeper{md: markettypes.MarketDetails{}}
-	ok := stubOracleKeeper{err: oracletypes.ErrStalePrice}
-	k, ctx := makeKeeper(t, &ak, mk, ok)
+	// Non-zero mark with a LastMarkPriceRefreshTimestamp that is "now - 1h" so
+	// the staleness gate trips against the 1-minute stub.
+	mk := stubMarketKeeper{
+		md: markettypes.MarketDetails{
+			MarkPrice:                     100,
+			LastMarkPriceRefreshTimestamp: 0, // never refreshed by funding pipeline
+		},
+		maxStaleness: 60_000, // 1m
+	}
+	k, ctx := makeKeeper(t, &ak, mk)
 
 	_, err := k.ComputeCrossRisk(ctx, 1)
-	require.ErrorIs(t, err, risktypes.ErrMissingPrice)
+	require.ErrorIs(t, err, markettypes.ErrStaleMarkPrice)
 }
 
 // TestComputeCrossRisk_ZeroMarkPriceRejected enforces the "non-zero mark"
@@ -137,16 +182,14 @@ func TestComputeCrossRisk_ZeroMarkPriceRejected(t *testing.T) {
 		},
 	}
 	mk := stubMarketKeeper{md: markettypes.MarketDetails{}}
-	ok := stubOracleKeeper{price: oracletypes.OraclePrice{MarkPrice: 0, IndexPrice: 100}}
-	k, ctx := makeKeeper(t, &ak, mk, ok)
+	k, ctx := makeKeeper(t, &ak, mk)
 
 	_, err := k.ComputeCrossRisk(ctx, 1)
-	require.ErrorIs(t, err, risktypes.ErrZeroMarkPrice)
+	require.ErrorIs(t, err, markettypes.ErrZeroMarkPrice)
 }
 
 // TestIsValidRiskChangeFrom_NoPreStateFailClosed verifies that an
-// unhealthy post state without a pre-state snapshot fails closed
-// (audit Blocker risk-3).
+// unhealthy post state without a pre-state snapshot fails closed.
 func TestIsValidRiskChangeFrom_NoPreStateFailClosed(t *testing.T) {
 	// Position bought at 100_000 but mark is 10_000, so the account is
 	// deeply under water → BANKRUPTCY in the post-state.
@@ -162,8 +205,8 @@ func TestIsValidRiskChangeFrom_NoPreStateFailClosed(t *testing.T) {
 		DefaultInitialMarginFraction: 1000, MaintenanceMarginFraction: 500,
 		CloseOutMarginFraction: 250,
 	}}
-	ok := stubOracleKeeper{price: oracletypes.OraclePrice{MarkPrice: 10_000}}
-	k, ctx := makeKeeper(t, &ak, mk, ok)
+	mk.md.MarkPrice = 10_000
+	k, ctx := makeKeeper(t, &ak, mk)
 
 	ok2, err := k.IsValidRiskChangeFrom(ctx, 1, risktypes.PreRiskSnapshot{})
 	require.NoError(t, err)
@@ -207,8 +250,8 @@ func TestGetPositionZeroPrice_LongMarkBased(t *testing.T) {
 		MaintenanceMarginFraction:    100, // 1%
 		CloseOutMarginFraction:       50,  // 0.5%
 	}}
-	ok := stubOracleKeeper{price: oracletypes.OraclePrice{MarkPrice: 1000}}
-	k, ctx := makeKeeper(t, &ak, mk, ok)
+	mk.md.MarkPrice = 1000
+	k, ctx := makeKeeper(t, &ak, mk)
 
 	zp, err := k.GetPositionZeroPrice(ctx, 1, 0)
 	require.NoError(t, err)
@@ -238,8 +281,8 @@ func TestGetPositionZeroPrice_ShortMarkBased(t *testing.T) {
 		MaintenanceMarginFraction:    100,
 		CloseOutMarginFraction:       50,
 	}}
-	ok := stubOracleKeeper{price: oracletypes.OraclePrice{MarkPrice: 1000}}
-	k, ctx := makeKeeper(t, &ak, mk, ok)
+	mk.md.MarkPrice = 1000
+	k, ctx := makeKeeper(t, &ak, mk)
 
 	zp, err := k.GetPositionZeroPrice(ctx, 1, 0)
 	require.NoError(t, err)
@@ -271,8 +314,8 @@ func TestGetPositionZeroPrice_IsolatedUsesIsolatedTAV(t *testing.T) {
 		MaintenanceMarginFraction:    100,
 		CloseOutMarginFraction:       50,
 	}}
-	ok := stubOracleKeeper{price: oracletypes.OraclePrice{MarkPrice: 1000}}
-	k, ctx := makeKeeper(t, &ak, mk, ok)
+	mk.md.MarkPrice = 1000
+	k, ctx := makeKeeper(t, &ak, mk)
 
 	zp, err := k.GetPositionZeroPrice(ctx, 1, 0)
 	require.NoError(t, err)
@@ -282,11 +325,11 @@ func TestGetPositionZeroPrice_IsolatedUsesIsolatedTAV(t *testing.T) {
 		"isolated zero price must use AllocatedMargin + uPnL, NOT cross collateral")
 }
 
-// TestComputeCrossRisk_IsolatedDoesNotPolluteCross ensures isolated
-// positions are excluded from the cross aggregate. The previous
-// implementation included isolated AllocatedMargin + uPnL in cross TAV
-// without also accumulating IM/MM/CM, which let isolated profit
-// silently inflate cross health.
+// TestComputeCrossRisk_IsolatedDoesNotPolluteCross pins the invariant
+// that isolated positions are excluded from the cross aggregate: an
+// isolated position's AllocatedMargin / uPnL MUST NOT contribute to
+// cross TAV, IM, MM or CM, otherwise isolated profit could silently
+// inflate cross health.
 func TestComputeCrossRisk_IsolatedDoesNotPolluteCross(t *testing.T) {
 	ak := stubAccountKeeper{
 		acc: accounttypes.Account{AccountIndex: 1, Collateral: math.NewInt(100)},
@@ -304,8 +347,8 @@ func TestComputeCrossRisk_IsolatedDoesNotPolluteCross(t *testing.T) {
 		MaintenanceMarginFraction:    100,
 		CloseOutMarginFraction:       50,
 	}}
-	ok := stubOracleKeeper{price: oracletypes.OraclePrice{MarkPrice: 1000}}
-	k, ctx := makeKeeper(t, &ak, mk, ok)
+	mk.md.MarkPrice = 1000
+	k, ctx := makeKeeper(t, &ak, mk)
 
 	rp, err := k.ComputeCrossRisk(ctx, 1)
 	require.NoError(t, err)
@@ -334,8 +377,8 @@ func TestGetIsolatedHealthStatus_PerMarket(t *testing.T) {
 		MaintenanceMarginFraction:    500,  // 5%
 		CloseOutMarginFraction:       250,  // 2.5%
 	}}
-	ok := stubOracleKeeper{price: oracletypes.OraclePrice{MarkPrice: 1000}}
-	k, ctx := makeKeeper(t, &ak, mk, ok)
+	mk.md.MarkPrice = 1000
+	k, ctx := makeKeeper(t, &ak, mk)
 
 	// Cross is healthy (collateral plenty), but isolated has TAV =
 	// AllocatedMargin + uPnL = 500 - 1000 = -500 → BANKRUPTCY.
@@ -384,8 +427,8 @@ func TestIsValidRiskChangeFrom_PreLiquidationRejectsMMRGrowth(t *testing.T) {
 	// Use entry sign as +: EntryQuote = 19_500 ⇒ uPnL = 20_000 -
 	// 19_500 = 500. TAV = 1_000 + 500 = 1_500 (PRE).
 	ak.pos.EntryQuote = math.NewInt(19_500)
-	ok := stubOracleKeeper{price: oracletypes.OraclePrice{MarkPrice: 1000}}
-	k, ctx := makeKeeper(t, &ak, mk, ok)
+	mk.md.MarkPrice = 1000
+	k, ctx := makeKeeper(t, &ak, mk)
 
 	// Snapshot pre-state: PRE class.
 	pre, err := k.SnapshotRisk(ctx, 1)
@@ -430,8 +473,8 @@ func TestIsValidRiskChangeFrom_PreLiquidationAllowsReduceOnly(t *testing.T) {
 		MaintenanceMarginFraction:    500,
 		CloseOutMarginFraction:       250,
 	}}
-	ok := stubOracleKeeper{price: oracletypes.OraclePrice{MarkPrice: 1000}}
-	k, ctx := makeKeeper(t, &ak, mk, ok)
+	mk.md.MarkPrice = 1000
+	k, ctx := makeKeeper(t, &ak, mk)
 
 	pre, err := k.SnapshotRisk(ctx, 1)
 	require.NoError(t, err)
@@ -445,38 +488,32 @@ func TestIsValidRiskChangeFrom_PreLiquidationAllowsReduceOnly(t *testing.T) {
 	require.True(t, ok2, "shrinking position in PRE must be allowed")
 }
 
-// TestGetLiquidationRiskSnapshot_EmptyPositionShortCircuitsOracle
-// pins the invariant that a snapshot for an empty position must not
-// depend on oracle health: callers (gRPC GetPositionZeroPrice,
-// Liquidate, Deleverage) only want the "no position" short-circuit
-// and must not surface oracle errors. We intentionally configure the
-// oracle to error so a leak would surface as a non-nil error.
-func TestGetLiquidationRiskSnapshot_EmptyPositionShortCircuitsOracle(t *testing.T) {
-	// Account holds NO position in market 0; stub returns the
-	// zero-valued AccountPosition for that lookup.
+// TestGetLiquidationRiskSnapshot_EmptyPosition pins the invariant
+// that a snapshot for an empty position short-circuits to a zero
+// snapshot without reading mark price — so a missing or zero mark
+// for an account with no exposure cannot surface as an error to
+// callers (gRPC GetPositionZeroPrice, Liquidate, Deleverage).
+func TestGetLiquidationRiskSnapshot_EmptyPosition(t *testing.T) {
 	ak := stubAccountKeeper{
 		acc: accounttypes.Account{AccountIndex: 1, Collateral: math.NewInt(1_000)},
 		pos: accounttypes.AccountPosition{
-			AccountIndex: 1, MarketIndex: 99, /* a different market */
+			AccountIndex: 1, MarketIndex: 99, // a different market
 			BaseSize: math.ZeroInt(), EntryQuote: math.ZeroInt(),
 			LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 		},
 	}
+	// mk.md.MarkPrice == 0: the mark gate would fail; the short-circuit
+	// must run before that.
 	mk := stubMarketKeeper{md: markettypes.MarketDetails{}}
-	// Oracle would fail if asked. The snapshot must not ask.
-	ok := stubOracleKeeper{err: oracletypes.ErrStalePrice}
-	k, ctx := makeKeeper(t, &ak, mk, ok)
+	k, ctx := makeKeeper(t, &ak, mk)
 
 	snap, err := k.GetLiquidationRiskSnapshot(ctx, 1, 0)
-	require.NoError(t, err,
-		"empty position must short-circuit before any oracle read")
+	require.NoError(t, err, "empty position must short-circuit before any mark read")
 	require.True(t, snap.Position.BaseSize.IsZero())
 	require.Equal(t, uint32(0), snap.MarkPrice)
 	require.Equal(t, uint32(0), snap.ZeroPrice)
 
-	// gRPC entry point must mirror the snapshot's short-circuit.
 	zp, err := k.GetPositionZeroPrice(ctx, 1, 0)
-	require.NoError(t, err,
-		"GetPositionZeroPrice must keep the empty-position semantics: 0 regardless of oracle health")
+	require.NoError(t, err, "GetPositionZeroPrice must short-circuit on empty position")
 	require.Equal(t, uint32(0), zp)
 }

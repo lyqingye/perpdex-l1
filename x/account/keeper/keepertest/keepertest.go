@@ -26,8 +26,8 @@ import (
 
 // SetAccountForTest writes `a` directly to the Accounts collection
 // and (when applicable) maintains the OwnerToIndex pointer +
-// MasterSubAccounts index, mirroring the legacy `SetAccount` semantics
-// that x/account no longer exposes.
+// MasterSubAccounts index. Test-only helper: the production code path
+// goes through CreateAccount / dedicated keeper APIs.
 func SetAccountForTest(ctx context.Context, k accountkeeper.Keeper, a types.Account) error {
 	if err := k.Accounts.Set(ctx, a.AccountIndex, a); err != nil {
 		return err

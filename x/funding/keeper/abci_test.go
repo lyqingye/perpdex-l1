@@ -66,24 +66,20 @@ func (s *stubMarket) IterateMarkets(_ context.Context, cb func(markettypes.Marke
 	return nil
 }
 
-// stubBook fakes the orderbook for funding sampler tests. We expose separate
-// "ok" flags per side so a test can simulate one-sided depth.
+// stubBook fakes the orderbook for funding sampler tests. A zero bid /
+// ask value represents insufficient depth on that side.
 type stubBook struct {
-	bid, ask     uint32
-	bidOk, askOk bool
+	bid, ask uint32
 }
 
 func (s stubBook) BestBidAsk(_ context.Context, _ uint32) (uint32, uint32, error) {
 	return s.bid, s.ask, nil
 }
-func (s stubBook) ComputeImpactPrice(_ context.Context, _ uint32, isAsk bool, _ uint64) (uint32, bool, error) {
+func (s stubBook) ComputeImpactPrice(_ context.Context, _ uint32, isAsk bool) (uint32, error) {
 	if isAsk {
-		return s.ask, s.askOk, nil
+		return s.ask, nil
 	}
-	return s.bid, s.bidOk, nil
-}
-func (stubBook) ImpactUsdcAmount(_ context.Context) (uint64, error) {
-	return perptypes.ImpactUSDCAmount, nil
+	return s.bid, nil
 }
 
 type stubOracle struct {
@@ -159,9 +155,9 @@ func (s *statefulAccount) GetPosition(_ context.Context, acc uint64, mkt uint32)
 	}, nil
 }
 
-// SetPosition is the stub-only fixture helper used by the suite to
-// preload positions. The production AccountKeeper interface no longer
-// surfaces a generic position setter.
+// SetPosition is a stub-only fixture helper used by this suite to
+// preload positions. The production AccountKeeper interface does not
+// expose a generic position setter.
 func (s *statefulAccount) SetPosition(_ context.Context, p accounttypes.AccountPosition) error {
 	key := [2]uint64{p.AccountIndex, uint64(p.MarketIndex)}
 	s.positions[key] = p
@@ -241,9 +237,10 @@ func newFundingKeeperWithAccount(
 	return k, ctx
 }
 
-// TestSettlePositionFunding_ZeroPositionSnapshotsCurrentPrefix ensures a fresh
-// or fully closed position starts from the current funding prefix instead of
-// inheriting all historical funding accumulated before it opened.
+// TestSettlePositionFunding_ZeroPositionSnapshotsCurrentPrefix ensures
+// a fresh or fully closed position snapshots the current funding
+// prefix so it does not inherit any prefix accumulated before it
+// opened.
 func TestSettlePositionFunding_ZeroPositionSnapshotsCurrentPrefix(t *testing.T) {
 	const (
 		accountIndex = uint64(7)
@@ -267,7 +264,7 @@ func TestSettlePositionFunding_ZeroPositionSnapshotsCurrentPrefix(t *testing.T) 
 		t,
 		mk,
 		stubOracle{price: oracletypes.OraclePrice{IndexPrice: 49_500, MarkPrice: 50_000}},
-		stubBook{bidOk: true, askOk: true},
+		stubBook{},
 		ak,
 	)
 
@@ -277,10 +274,10 @@ func TestSettlePositionFunding_ZeroPositionSnapshotsCurrentPrefix(t *testing.T) 
 	require.True(t, snapshotted.BaseSize.IsZero())
 	require.EqualValues(t, 100_000_000, snapshotted.LastFundingRatePrefixSum.Int64())
 
-	// Simulate ApplyPerpsMatching opening a new position after the zero-size
-	// settle above, then advance the market prefix by only 20_000_000. The next
-	// funding settlement must charge that new delta, not the full historical
-	// 120_000_000 prefix.
+	// Simulate ApplyPerpsMatching opening a new position after the
+	// zero-size settle above, then advance the market prefix by only
+	// 20_000_000. The next funding settlement must charge that new
+	// delta only, not the full 120_000_000 prefix.
 	snapshotted.BaseSize = math.NewInt(1_000_000)
 	snapshotted.EntryQuote = math.ZeroInt()
 	ak.positions[key] = snapshotted
@@ -313,14 +310,14 @@ func TestProcessMarketSample_StaleOracleSkipsSample(t *testing.T) {
 		t,
 		mk,
 		stubOracle{err: oracletypes.ErrStalePrice.Wrap("stale fixture")},
-		stubBook{bid: 49_999, ask: 50_001, bidOk: true, askOk: true},
+		stubBook{bid: 49_999, ask: 50_001},
 	)
 
 	require.NoError(t, k.BeginBlocker(ctx))
 	got := mk.details[1]
 	require.EqualValues(t, 0, got.TotalPremiumSamples)
 	require.True(t, got.AggregatePremiumSum.IsZero())
-	require.EqualValues(t, 0, got.LastUpdatedTimestamp, "stale oracle must not throttle retries")
+	require.EqualValues(t, 0, got.LastPremiumSampleTimestamp, "stale oracle must not throttle retries")
 }
 
 // TestSettleMarket_UsesCachedMarkAndIgnoresOracleStaleness verifies that
@@ -352,7 +349,7 @@ func TestSettleMarket_UsesCachedMarkAndIgnoresOracleStaleness(t *testing.T) {
 		t,
 		mk,
 		stubOracle{err: oracletypes.ErrStalePrice.Wrap("stale fixture")},
-		stubBook{bidOk: false, askOk: false},
+		stubBook{},
 	)
 	require.NoError(t, k.Metadata.Set(ctx, fundingtypes.FundingMetadata{
 		LastFundingRoundTimestamp: oldRoundTs,
@@ -414,7 +411,7 @@ func TestSettleAllMarkets_AllMarketsSettleIndependentlyOfOracle(t *testing.T) {
 				2: oracletypes.ErrStalePrice.Wrap("stale fixture"),
 			},
 		},
-		stubBook{bidOk: false, askOk: false},
+		stubBook{},
 	)
 	require.NoError(t, k.Metadata.Set(ctx, fundingtypes.FundingMetadata{
 		LastFundingRoundTimestamp: oldRoundTs,
@@ -422,9 +419,13 @@ func TestSettleAllMarkets_AllMarketsSettleIndependentlyOfOracle(t *testing.T) {
 
 	require.NoError(t, k.BeginBlocker(ctx))
 
-	// Market 1: oracle fresh, settle as usual.
+	// Market 1: oracle fresh. refreshMarkPrice runs before settle and
+	// re-derives MarkPrice. impact=0 freezes premium_raw to 0; the
+	// first refresh reseeds EMA to 0; price_1 = idx = 49_500. impact=0
+	// triggers the mean fallback ⇒ mean(price_1, price_2) =
+	// mean(49500, 50000) = 49_750. inc = 49_750 * 1200 = 59_700_000.
 	settled := mk.details[1]
-	require.EqualValues(t, 60_000_000, settled.FundingRatePrefixSum.Int64())
+	require.EqualValues(t, 59_700_000, settled.FundingRatePrefixSum.Int64())
 	require.True(t, settled.AggregatePremiumSum.IsZero())
 	require.EqualValues(t, 0, settled.TotalPremiumSamples)
 
@@ -452,10 +453,10 @@ func TestMarketFundingRateQuery_ReturnsGlobalFundingRoundTimestamp(t *testing.T)
 		},
 		details: map[uint32]markettypes.MarketDetails{
 			1: {
-				MarketIndex:          1,
-				FundingRatePrefixSum: math.NewInt(123),
-				AggregatePremiumSum:  math.ZeroInt(),
-				LastUpdatedTimestamp: 456,
+				MarketIndex:                1,
+				FundingRatePrefixSum:       math.NewInt(123),
+				AggregatePremiumSum:        math.ZeroInt(),
+				LastPremiumSampleTimestamp: 456,
 			},
 		},
 	}
@@ -495,7 +496,7 @@ func TestProcessMarketSample_OneSidedSkipsSample(t *testing.T) {
 		},
 	}
 	ok := stubOracle{price: oracletypes.OraclePrice{IndexPrice: 100, MarkPrice: 100}}
-	bk := stubBook{bid: 0, ask: 110, bidOk: false, askOk: true} // ask depth only
+	bk := stubBook{ask: 110} // ask depth only
 
 	k, ctx := newFundingKeeper(t, mk, ok, bk)
 	require.NoError(t, k.BeginBlocker(ctx))
@@ -523,7 +524,7 @@ func TestProcessMarketSample_Premium(t *testing.T) {
 		},
 	}
 	ok := stubOracle{price: oracletypes.OraclePrice{IndexPrice: 49_500, MarkPrice: 50_000}}
-	bk := stubBook{bid: 49_999, ask: 50_001, bidOk: true, askOk: true}
+	bk := stubBook{bid: 49_999, ask: 50_001}
 
 	k, ctx := newFundingKeeper(t, mk, ok, bk)
 	require.NoError(t, k.BeginBlocker(ctx))
@@ -548,11 +549,11 @@ func TestProcessMarketSample_PerMinuteThrottle(t *testing.T) {
 		},
 	}
 	ok := stubOracle{price: oracletypes.OraclePrice{IndexPrice: 49_500, MarkPrice: 50_000}}
-	bk := stubBook{bid: 49_999, ask: 50_001, bidOk: true, askOk: true}
+	bk := stubBook{bid: 49_999, ask: 50_001}
 
 	k, ctx := newFundingKeeper(t, mk, ok, bk)
 
-	// First sample admitted (LastUpdatedTimestamp == 0 on details).
+	// First sample admitted (LastPremiumSampleTimestamp == 0 on details).
 	require.NoError(t, k.BeginBlocker(ctx))
 	require.EqualValues(t, 1, mk.details[1].TotalPremiumSamples)
 	premiumAfter1 := mk.details[1].AggregatePremiumSum
@@ -577,7 +578,7 @@ func TestProcessMarketSample_PerMinuteThrottle(t *testing.T) {
 
 // TestProcessMarketSample_MaxPremiumSampleCount stops accumulating once the
 // configured cap is reached. The 1-minute throttle is bypassed by setting
-// LastUpdatedTimestamp far enough in the past.
+// LastPremiumSampleTimestamp far enough in the past.
 func TestProcessMarketSample_MaxPremiumSampleCount(t *testing.T) {
 	mk := &stubMarket{
 		markets: map[uint32]markettypes.Market{
@@ -593,12 +594,12 @@ func TestProcessMarketSample_MaxPremiumSampleCount(t *testing.T) {
 		},
 	}
 	ok := stubOracle{price: oracletypes.OraclePrice{IndexPrice: 49_500, MarkPrice: 50_000}}
-	bk := stubBook{bid: 49_999, ask: 50_001, bidOk: true, askOk: true}
+	bk := stubBook{bid: 49_999, ask: 50_001}
 
 	k, ctx := newFundingKeeper(t, mk, ok, bk)
 	mk.details[1] = func() markettypes.MarketDetails {
 		d := mk.details[1]
-		d.LastUpdatedTimestamp = ctx.BlockTime().UnixMilli() - 2*perptypes.MinuteInMs
+		d.LastPremiumSampleTimestamp = ctx.BlockTime().UnixMilli() - 2*perptypes.MinuteInMs
 		return d
 	}()
 
@@ -618,12 +619,26 @@ func TestProcessMarketSample_MaxPremiumSampleCount(t *testing.T) {
 // TestSettleMarket_Formula pins down the clamp/divisor logic and the
 // mark*rate prefix-sum convention.
 //
-//	premium=10101, ir=0, SmallClamp=500, BigClamp=40000, divisor=8, mark=50000
+// BeginBlocker now runs `refreshMarkPrice` BEFORE settling, recomputing
+// `MarkPrice` as median(impact_price, index + ema(clamp(impact-idx,
+// ±idx/200)), oracle_mark). In this fixture the orderbook stub reports
+// both sides ok=false so d.ImpactPrice stays at 0; impact=0 freezes
+// premium_raw=0 and the medianer falls back to mean(price_1, price_2):
+//
+//	premium_raw = 0  (impact=0)
+//	premium_ema = 0  (first call reseeds to raw)
+//	price_1 = clampUint32(49500 + 0) = 49500
+//	price_2 = oracle_mark = 50000
+//	mark    = mean(price_1, price_2) = 49750  (impact=0 ⇒ mean fallback)
+//
+// Settle then runs with:
+//
+//	premium=10101, ir=0, SmallClamp=500, BigClamp=40000, divisor=8, mark=49750
 //	correction = clamp(0 - 10101, -500, +500) = -500
 //	smallClamped = 10101 + (-500) = 9601
 //	bigClamped = clamp(9601, -40000, +40000) = 9601
 //	rate = 9601 / 8 = 1200 (truncated)
-//	prefix increment = mark * rate = 50_000 * 1200 = 60_000_000
+//	prefix increment = mark * rate = 49_750 * 1200 = 59_700_000
 func TestSettleMarket_Formula(t *testing.T) {
 	mk := &stubMarket{
 		markets: map[uint32]markettypes.Market{
@@ -646,7 +661,7 @@ func TestSettleMarket_Formula(t *testing.T) {
 	ok := stubOracle{price: oracletypes.OraclePrice{IndexPrice: 49_500, MarkPrice: 50_000}}
 	// Make ComputeImpactPrice return false so the begin-blocker pre-settle
 	// sample step does not mutate the aggregate we just primed.
-	bk := stubBook{bid: 0, ask: 0, bidOk: false, askOk: false}
+	bk := stubBook{}
 
 	k, ctx := newFundingKeeper(t, mk, ok, bk)
 	// Force the settle branch by stepping past `FundingPeriodMs`.
@@ -656,7 +671,14 @@ func TestSettleMarket_Formula(t *testing.T) {
 	require.NoError(t, k.BeginBlocker(ctx))
 
 	got := mk.details[1]
-	require.EqualValues(t, 60_000_000, got.FundingRatePrefixSum.Int64(),
+	// Pin the refreshMarkPrice path: refreshMarkPrice must have
+	// rewritten MarkPrice 50_000 → 49_750 BEFORE settleMarket
+	// consumed it. If a future refactor accidentally moves the
+	// refresh after settle (or skips it entirely), this assertion
+	// catches the regression before the prefix-sum check fires below.
+	require.EqualValues(t, 49_750, got.MarkPrice,
+		"refreshMarkPrice must have re-derived MarkPrice from the median pipeline before settle")
+	require.EqualValues(t, 59_700_000, got.FundingRatePrefixSum.Int64(),
 		"prefix sum must grow by mark * rate (with rate = clamped/divisor)")
 	require.True(t, got.AggregatePremiumSum.IsZero(), "settle must reset aggregate")
 	require.EqualValues(t, 0, got.TotalPremiumSamples, "settle must reset sample count")
@@ -680,7 +702,7 @@ func TestSettleMarket_NoSamples(t *testing.T) {
 		},
 	}
 	ok := stubOracle{price: oracletypes.OraclePrice{IndexPrice: 49_500, MarkPrice: 50_000}}
-	bk := stubBook{bidOk: false, askOk: false}
+	bk := stubBook{}
 
 	k, ctx := newFundingKeeper(t, mk, ok, bk)
 	// Force the settle branch by stepping past `FundingPeriodMs`.
@@ -713,10 +735,17 @@ func (s *spyOracle) GetPrice(_ context.Context, marketIdx uint32) (oracletypes.O
 //
 //  1. Pre-prime the market with TotalPremiumSamples=60 + cached MarkPrice so
 //     the settle path has everything it needs.
-//  2. Set `d.LastUpdatedTimestamp = now` so the per-minute throttle drops
+//  2. Set `d.LastPremiumSampleTimestamp = now` so the per-minute throttle drops
 //     `processMarketSample` before it can touch the oracle.
 //  3. Step past `FundingPeriodMs` so the settle branch fires.
-//  4. Run BeginBlocker with a spying oracle and assert it was NOT called.
+//  4. Run BeginBlocker with a spying oracle that always errors out.
+//
+// Note: `refreshMarkPrice` (which runs every block before settle) DOES
+// call the oracle. So the spy will see exactly one call — from
+// refreshMarkPrice — and zero calls from settleMarket. Because the spy
+// returns an error, refreshMarkPrice bails out early without mutating
+// d.MarkPrice, so the cached `50_000` survives into settleMarket and
+// the prefix increment matches the expected value.
 func TestSettleMarket_NoOracleCallInSettlePath(t *testing.T) {
 	mk := &stubMarket{
 		markets: map[uint32]markettypes.Market{
@@ -736,14 +765,14 @@ func TestSettleMarket_NoOracleCallInSettlePath(t *testing.T) {
 		},
 	}
 	spy := &spyOracle{}
-	bk := stubBook{bid: 0, ask: 0, bidOk: false, askOk: false}
+	bk := stubBook{}
 
 	k, ctx := newFundingKeeper(t, mk, spy, bk)
 	mk.details[1] = func() markettypes.MarketDetails {
 		d := mk.details[1]
-		// Pin LastUpdatedTimestamp to now so the 1-minute throttle drops
+		// Pin LastPremiumSampleTimestamp to now so the 1-minute throttle drops
 		// processMarketSample before it reaches GetPrice.
-		d.LastUpdatedTimestamp = ctx.BlockTime().UnixMilli()
+		d.LastPremiumSampleTimestamp = ctx.BlockTime().UnixMilli()
 		return d
 	}()
 	require.NoError(t, k.Metadata.Set(ctx, fundingtypes.FundingMetadata{
@@ -751,7 +780,11 @@ func TestSettleMarket_NoOracleCallInSettlePath(t *testing.T) {
 	}))
 
 	require.NoError(t, k.BeginBlocker(ctx))
-	require.Equal(t, 0, spy.calls[1], "settleMarket must not query the oracle")
+	// Exactly one oracle call: refreshMarkPrice. processMarketSample
+	// was throttled out and settleMarket reads only the cached
+	// MarkPrice -- no oracle call from the settle path itself.
+	require.Equal(t, 1, spy.calls[1],
+		"only refreshMarkPrice may query oracle (1 call); settleMarket itself must read only cached state")
 
 	got := mk.details[1]
 	require.EqualValues(t, 60_000_000, got.FundingRatePrefixSum.Int64())
@@ -759,13 +792,11 @@ func TestSettleMarket_NoOracleCallInSettlePath(t *testing.T) {
 	require.EqualValues(t, 0, got.TotalPremiumSamples)
 }
 
-// TestProcessMarketSample_LargePriceDoesNotOverflow exercises the math.Int
-// upgrade by feeding an impact price near uint32-max so the
-// `(IB - idx) * FundingRateTick` intermediate would overflow int64
-// (~ 4.29e9 * 1e6 = 4.29e15 -- still within int64, but multiplied by 60
-// samples and other intermediates the legacy path was uncomfortably close).
-// The test simply asserts the post-sample state is sane (no panic, premium
-// in the expected ballpark).
+// TestProcessMarketSample_LargePriceDoesNotOverflow feeds an impact
+// price near uint32-max so the `(IB - idx) * FundingRateTick`
+// intermediate (~ 4.29e9 * 1e6 = 4.29e15) plus accumulation across 60
+// samples stays inside math.Int. The test asserts the post-sample
+// state is sane (no panic, premium in the expected ballpark).
 func TestProcessMarketSample_LargePriceDoesNotOverflow(t *testing.T) {
 	const ib = uint32(4_000_000_000)
 	const ia = uint32(4_000_000_002)
@@ -783,7 +814,7 @@ func TestProcessMarketSample_LargePriceDoesNotOverflow(t *testing.T) {
 		},
 	}
 	ok := stubOracle{price: oracletypes.OraclePrice{IndexPrice: idx, MarkPrice: idx}}
-	bk := stubBook{bid: ib, ask: ia, bidOk: true, askOk: true}
+	bk := stubBook{bid: ib, ask: ia}
 
 	k, ctx := newFundingKeeper(t, mk, ok, bk)
 	require.NoError(t, k.BeginBlocker(ctx))

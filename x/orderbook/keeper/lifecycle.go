@@ -205,9 +205,7 @@ func (k Keeper) FillMakerOrder(ctx context.Context, makerIndex uint64, filledBas
 // reduce-only invariant broken) and marks the underlying Order with
 // `terminalStatus` (typically OrderStatusCancelled). It also clears the
 // client-id and account-open indexes so the now-gone resting order does
-// not survive as a stale "open" entry — fixing the historical leak where
-// only the orderbook entry was removed but the Order record stayed Open
-// with live indexes.
+// not survive as a stale "open" entry.
 func (k Keeper) EvictMakerOrder(ctx context.Context, makerIndex uint64, terminalStatus uint32) (types.Order, error) {
 	maker, err := k.GetOrder(ctx, makerIndex)
 	if err != nil {

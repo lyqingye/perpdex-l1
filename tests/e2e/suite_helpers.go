@@ -108,7 +108,40 @@ func (s *PerpdexTestSuite) CancelOrder(user TestUser, marketIndex uint32, orderI
 // equivalent path is the dydx/Connect-style ABCI++ pipeline where
 // PrepareProposal injects the prior block's ExtendedCommitInfo bytes as
 // Txs[0] and PreBlock decodes/aggregates them into per-market prices.
+//
+// As of the median-mark migration the authoritative mark used by x/risk
+// and x/matching lives on `MarketDetails.MarkPrice`, written every block
+// by the funding BeginBlocker. e2e tests that bypass the funding
+// BeginBlocker (most of them) need the mark mirrored into
+// MarketDetails immediately, so this helper also pushes `markPrice`
+// into `MarketDetails.MarkPrice` + bumps `LastMarkPriceRefreshTimestamp` to
+// `now`. Tests that want to exercise stale-mark semantics can call
+// `SetOraclePriceOnly` instead.
 func (s *PerpdexTestSuite) SetOraclePrice(marketIndex uint32, indexPrice, markPrice uint32) {
+	now := s.Ctx.BlockTime().UnixMilli()
+	height := s.Ctx.BlockHeight()
+	err := s.App.OracleKeeper.SetPrice(s.Ctx, oracletypes.OraclePrice{
+		MarketIndex:          marketIndex,
+		IndexPrice:           indexPrice,
+		MarkPrice:            markPrice,
+		LastUpdatedTimestamp: now,
+		LastUpdatedHeight:    height,
+	})
+	s.Require().NoError(err)
+	// Mirror into MarketDetails so risk/matching see a fresh mark
+	// without needing a BeginBlocker tick.
+	d, err := s.App.MarketKeeper.GetMarketDetails(s.Ctx, marketIndex)
+	s.Require().NoError(err)
+	d.MarkPrice = markPrice
+	d.IndexPrice = indexPrice
+	d.LastMarkPriceRefreshTimestamp = now
+	s.Require().NoError(s.App.MarketKeeper.SetMarketDetails(s.Ctx, d))
+}
+
+// SetOraclePriceOnly writes the oracle price without mirroring it into
+// MarketDetails. Use this in tests that intentionally need to exercise
+// the staleness gate on MarketDetails.MarkPrice.
+func (s *PerpdexTestSuite) SetOraclePriceOnly(marketIndex uint32, indexPrice, markPrice uint32) {
 	now := s.Ctx.BlockTime().UnixMilli()
 	height := s.Ctx.BlockHeight()
 	err := s.App.OracleKeeper.SetPrice(s.Ctx, oracletypes.OraclePrice{

@@ -7,11 +7,11 @@ import (
 	"github.com/cosmos/cosmos-sdk/types/msgservice"
 )
 
-// RegisterLegacyAminoCodec registers the oracle module's only SDK message
-// (MsgUpdateParams) with the legacy amino codec. Price aggregation is now
-// driven entirely by the ABCI++ vote-extension pipeline (PreBlocker reads
-// the proposer-injected ExtendedCommitInfo) so there is no aggregator-side
-// SDK message to register here.
+// RegisterLegacyAminoCodec registers the oracle module's only SDK
+// message (MsgUpdateParams) with the legacy amino codec. Price
+// aggregation is driven entirely by the ABCI++ vote-extension pipeline
+// (PreBlocker reads the proposer-injected ExtendedCommitInfo) so no
+// aggregator-side SDK message is registered here.
 func RegisterLegacyAminoCodec(cdc *codec.LegacyAmino) {
 	cdc.RegisterConcrete(&MsgUpdateParams{}, "perpdex/oracle/MsgUpdateParams", nil)
 }

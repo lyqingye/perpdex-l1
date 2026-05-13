@@ -14,11 +14,11 @@ import (
 // HandlerOptions extends the SDK's ante handler options with the IBC keeper
 // (for the redundant-relay decorator).
 //
-// The oracle module no longer needs an injection-tx ante decorator because
-// price updates land on chain via the proposer-injected ExtendedCommitInfo
-// at `Txs[0]` which is stripped by ProcessProposal before the SDK Tx
-// pipeline runs. There is therefore no SDK Tx for oracle aggregation that
-// would need its signature bypassed.
+// The oracle module does not register an injection-tx ante decorator:
+// price updates land on chain via the proposer-injected
+// ExtendedCommitInfo at `Txs[0]`, which is stripped by ProcessProposal
+// before the SDK Tx pipeline runs, so there is no SDK Tx for oracle
+// aggregation whose signature would need to be bypassed.
 type HandlerOptions struct {
 	ante.HandlerOptions
 

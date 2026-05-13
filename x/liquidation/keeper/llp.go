@@ -137,10 +137,10 @@ type rankedPosition struct {
 // sorted by ascending unrealized PnL (worst first), as the spec
 // requires for LLP takeover. Mark prices are fetched once per distinct
 // MarketIndex encountered and reused; uPnL is derived directly from
-// the iterated position via `pos.UnrealizedPnL(mark)`.
+// the iterated position via `pos.UnrealizedPnL(markPrice)`.
 //
 // Ranking does NOT materialise a full risk snapshot per position —
-// only the mark is needed to score uPnL, and a snapshot's extra cross
+// only the markPrice is needed to score uPnL, and a snapshot's extra cross
 // aggregation would be O(positions^2) for the same victim.
 func (k Keeper) rankVictimPositionsByUPnL(ctx context.Context, victim uint64) ([]rankedPosition, error) {
 	out := []rankedPosition{}
@@ -149,21 +149,21 @@ func (k Keeper) rankVictimPositionsByUPnL(ctx context.Context, victim uint64) ([
 		if pos.BaseSize.IsZero() {
 			return false
 		}
-		mark, ok := marks[pos.MarketIndex]
+		markPrice, ok := marks[pos.MarketIndex]
 		if !ok {
-			m, _, err := k.riskKeeper.GetMarkAndMarketDetails(ctx, pos.MarketIndex)
+			m, _, err := k.marketKeeper.GetMarkPriceAndDetails(ctx, pos.MarketIndex)
 			if err != nil {
-				// Stale oracle: skip this market in the ranking,
+				// Stale markPrice: skip this market in the ranking,
 				// the outer EndBlocker will surface the error
 				// separately.
 				return false
 			}
-			mark = m
-			marks[pos.MarketIndex] = mark
+			markPrice = m
+			marks[pos.MarketIndex] = markPrice
 		}
 		out = append(out, rankedPosition{
 			MarketIndex:   pos.MarketIndex,
-			UnrealizedPnL: pos.UnrealizedPnL(mark),
+			UnrealizedPnL: pos.UnrealizedPnL(markPrice),
 		})
 		return false
 	}); err != nil {

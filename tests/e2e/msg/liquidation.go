@@ -4,9 +4,9 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	perp "github.com/perpdex/perpdex-l1/app"
+	"github.com/perpdex/perpdex-l1/tests/e2e/common"
 	liquidationkeeper "github.com/perpdex/perpdex-l1/x/liquidation/keeper"
 	liquidationtypes "github.com/perpdex/perpdex-l1/x/liquidation/types"
-	"github.com/perpdex/perpdex-l1/tests/e2e/common"
 )
 
 // Liquidate is the keeper-bot path: any signer can attempt to

@@ -90,16 +90,16 @@ func validUpdateMarketMsg() *types.MsgUpdateMarket {
 
 func validUpdateMarketDetailsMsg() *types.MsgUpdateMarketDetails {
 	return &types.MsgUpdateMarketDetails{
-		Authority:             testAuthority,
-		MarketIndex:           1,
-		NewDefaultImf:         1_000,
-		NewMinImf:             500,
-		NewMaintenanceMf:      250,
-		NewCloseOutMf:         125,
-		NewFundingClampSmall:  uint32(perptypes.FundingSmallClamp),
-		NewFundingClampBig:    uint32(perptypes.FundingBigClamp),
-		NewInterestRate:       0,
-		NewOpenInterestLimit:  1_000_000,
+		Authority:            testAuthority,
+		MarketIndex:          1,
+		NewDefaultImf:        1_000,
+		NewMinImf:            500,
+		NewMaintenanceMf:     250,
+		NewCloseOutMf:        125,
+		NewFundingClampSmall: uint32(perptypes.FundingSmallClamp),
+		NewFundingClampBig:   uint32(perptypes.FundingBigClamp),
+		NewInterestRate:      0,
+		NewOpenInterestLimit: 1_000_000,
 	}
 }
 

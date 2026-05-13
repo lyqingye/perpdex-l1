@@ -7,6 +7,6 @@ const (
 )
 
 var (
-	ParamsKey         = []byte{0x00}
+	ParamsKey          = []byte{0x00}
 	LiquidationFlagKey = []byte{0x01}
 )

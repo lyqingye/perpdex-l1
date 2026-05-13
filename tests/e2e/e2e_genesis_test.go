@@ -3,8 +3,8 @@ package e2e_test
 import (
 	"testing"
 
-	perptypes "github.com/perpdex/perpdex-l1/types"
 	"github.com/perpdex/perpdex-l1/tests/e2e"
+	perptypes "github.com/perpdex/perpdex-l1/types"
 )
 
 // GenesisSuite runs the smallest set of assertions that proves the wiring
@@ -51,4 +51,3 @@ func (s *GenesisSuite) TestOracleParamsDefault() {
 	s.Require().Greater(params.MaxAgeMs, int64(0),
 		"max_age_ms must be positive so freshness checks can refuse stale prices")
 }
-

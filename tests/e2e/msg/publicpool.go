@@ -45,11 +45,11 @@ func UpdatePublicPool(
 ) (*accounttypes.MsgUpdatePublicPoolResponse, error) {
 	srv := accountkeeper.NewMsgServerImpl(app.PerpAccountKeeper)
 	return srv.UpdatePublicPool(ctx, &accounttypes.MsgUpdatePublicPool{
-		Sender:                   sender,
-		PoolAccountIndex:         poolIdx,
-		NewStatus:                newStatus,
-		NewOperatorFee:           newFee,
-		NewMinOperatorShareRate:  newMinRate,
+		Sender:                  sender,
+		PoolAccountIndex:        poolIdx,
+		NewStatus:               newStatus,
+		NewOperatorFee:          newFee,
+		NewMinOperatorShareRate: newMinRate,
 	})
 }
 

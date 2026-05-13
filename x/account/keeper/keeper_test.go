@@ -204,8 +204,8 @@ func TestCheckMinOperatorShareRate_Violated(t *testing.T) {
 	require.False(t, accountkeeper.CheckMinOperatorShareRate(info))
 }
 
-// TestWithdraw_RejectsPoolAccount ensures the generic Withdraw Msg refuses
-// to touch PUBLIC_POOL / INSURANCE_FUND accounts (audit Blocker account-1).
+// TestWithdraw_RejectsPoolAccount pins the invariant that the generic
+// Withdraw Msg refuses to touch PUBLIC_POOL / INSURANCE_FUND accounts.
 func TestWithdraw_RejectsPoolAccount(t *testing.T) {
 	env := initTestEnv(t)
 	srv := accountkeeper.NewMsgServerImpl(env.ak)
@@ -586,12 +586,10 @@ func TestStateChangeEvents_AccountCreate(t *testing.T) {
 	require.Equal(t, master.AccountIndex, sub.MasterAccountIndex)
 }
 
-// TestStateChangeEvents_AccountAsset_LockPath proves that the orderbook
-// path (IncreaseLockedBalance) — which is called by x/orderbook on
-// every spot order placement — produces an EventAccountAssetUpdated.
-// This is the failure mode the old msg_server-only event design had:
-// resting orders mutated AccountAsset state without ever surfacing an
-// event for indexers.
+// TestStateChangeEvents_AccountAsset_LockPath pins the invariant that
+// the orderbook lock path (IncreaseLockedBalance, called by x/orderbook
+// on every spot order placement) emits an EventAccountAssetUpdated, so
+// indexers see every AccountAsset mutation triggered by resting orders.
 func TestStateChangeEvents_AccountAsset_LockPath(t *testing.T) {
 	env := initTestEnv(t)
 

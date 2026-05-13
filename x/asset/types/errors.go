@@ -2,8 +2,8 @@ package types
 
 import "cosmossdk.io/errors"
 
-// Module error codes. Codes are stable on-chain identifiers; do not
-// renumber or reuse retired codes.
+// Module error codes. Codes are stable on-chain identifiers and MUST
+// NOT be renumbered or reused.
 var (
 	ErrInvalidAuthority     = errors.Register(ModuleName, 2, "invalid authority")
 	ErrAssetNotFound        = errors.Register(ModuleName, 3, "asset not found")

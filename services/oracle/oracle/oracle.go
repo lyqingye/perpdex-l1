@@ -23,9 +23,9 @@ type Orchestrator struct {
 	cfg       AggregateConfig
 
 	mu        sync.RWMutex
-	latest    map[string]types.Price            // latest sample per (pair, provider)
-	pairIndex map[string]types.CurrencyPair     // pair-string -> CurrencyPair
-	snapshot  map[string]*big.Int               // latest aggregated snapshot
+	latest    map[string]types.Price        // latest sample per (pair, provider)
+	pairIndex map[string]types.CurrencyPair // pair-string -> CurrencyPair
+	snapshot  map[string]*big.Int           // latest aggregated snapshot
 	updatedAt time.Time
 }
 

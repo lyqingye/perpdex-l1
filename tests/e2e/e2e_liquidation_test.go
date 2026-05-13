@@ -62,8 +62,8 @@ func (s *LiquidationSuite) SetupTest() {
 //
 // Returns (entryPrice, qty) so callers can compute liquidation thresholds.
 func (s *LiquidationSuite) openHurtablePosition() (entryPrice uint32, qty uint64) {
-	const victimDeposit = uint64(10_000_000)        // 10 USDC external
-	const counterDeposit = uint64(1_000_000_000)    // 1000 USDC external
+	const victimDeposit = uint64(10_000_000)     // 10 USDC external
+	const counterDeposit = uint64(1_000_000_000) // 1000 USDC external
 	entryPrice = 50_000
 	qty = 1_000_000_000 // 10 BTC at 8 decimals
 
@@ -126,14 +126,12 @@ func (s *LiquidationSuite) TestRejectsHealthyVictim() {
 }
 
 // TestPartialLiquidation drops the oracle far enough to put the victim
-// into PARTIAL_LIQUIDATION (TAV < MM, but TAV >= CM). MsgLiquidate must
-// then synthesise a victim-owned `LIQUIDATION_ORDER + IOC + reduce_only`
-// at the zero price and consume opposing makers from the public book.
-//
-// The previous semantics (1:1 transfer of the victim's exposure to a
-// caller-supplied "liquidator account") are gone — this test now
-// asserts the orderbook flow that mirrors the
-// `InternalLiquidatePositionTx` semantics.
+// into PARTIAL_LIQUIDATION (TAV < MM, but TAV >= CM). MsgLiquidate
+// must then synthesise a victim-owned
+// `LIQUIDATION_ORDER + IOC + reduce_only` at the zero price and
+// consume opposing makers from the public book. There is no 1:1
+// transfer of exposure to a caller-supplied "liquidator account":
+// liquidation routes exclusively through the orderbook.
 func (s *LiquidationSuite) TestPartialLiquidation() {
 	entry, qty := s.openHurtablePosition()
 	// Anchor oracle at entry first so the trade keeper risk-check during
@@ -220,8 +218,8 @@ func (s *LiquidationSuite) TestBankruptcyDeleverage() {
 
 	// MsgDeleverage with user1 as the deleverager — they took the
 	// counter short during the open so they're well capitalised.
-	// The audit fix requires the sender to own the deleverager account,
-	// so user1 drives the ADL themselves.
+	// The MsgDeleverage sender MUST own the deleverager account, so
+	// user1 drives the ADL themselves.
 	prePosVictim := s.QueryPositionSize(s.Users[0].AccountIndex, s.MarketIndex)
 	s.Require().Equal(math.NewInt(int64(qty)), prePosVictim)
 
@@ -370,7 +368,7 @@ func (s *LiquidationSuite) TestADLAcceptsOppositeProfitable() {
 	prePosVictim := s.QueryPositionSize(s.Users[0].AccountIndex, s.MarketIndex)
 	s.Require().Equal(math.NewInt(int64(qty)), prePosVictim)
 
-	// Audit fix: sender must own the deleverager account.
+	// MsgDeleverage sender MUST own the deleverager account.
 	s.Deleverage(s.Users[1], s.Users[0].AccountIndex, s.Users[1].AccountIndex, s.MarketIndex, qty)
 
 	postPosVictim := s.QueryPositionSize(s.Users[0].AccountIndex, s.MarketIndex)
@@ -437,13 +435,14 @@ func (s *LiquidationSuite) TestADLRespectsPerBlockCap() {
 
 	// Deposit modest collateral to victims and a fat buffer to user1
 	// (counterparty for both victims). user3 is the oracle provider.
-	s.DepositUSDC(&s.Users[0], 10_000_000)        // victim A: 10 USDC
-	s.DepositUSDC(&s.Users[2], 10_000_000)        // victim B: 10 USDC
+	s.DepositUSDC(&s.Users[0], 10_000_000) // victim A: 10 USDC
+	s.DepositUSDC(&s.Users[2], 10_000_000) // victim B: 10 USDC
 	s.DepositUSDC(&s.Users[1], counterDeposit)
 	s.DepositUSDC(&s.Users[3], counterDeposit)
 
 	// Seed the oracle so the risk keeper can classify these fresh
-	// crossing fills (audit fix: missing prices now fail closed).
+	// crossing fills — missing prices on non-zero positions
+	// fail closed.
 	s.SetOraclePrice(s.MarketIndex, entry, entry)
 
 	// user1 rests a short of 2*qty; victims A & B each cross half.

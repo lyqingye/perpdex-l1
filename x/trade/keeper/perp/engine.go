@@ -285,7 +285,7 @@ func (e Engine) Apply(ctx context.Context, f Fill) error {
 	// Per-side suppression:
 	//
 	//   - SkipMakerRiskCheck: the maker is being mechanically closed
-	//     (legacy "victim is maker" pattern) and validation would
+	//     ("victim is maker" liquidation pattern) and validation would
 	//     spuriously reject any non-HEALTHY post-state.
 	//   - SkipTakerRiskCheck: the taker is an explicit absorber
 	//     (LLP / Insurance Fund deleverager) — the Deleverage path
@@ -377,11 +377,9 @@ func (e Engine) applyAccount(ctx context.Context, res *positionChangeResult, fee
 // keeper-driven IoC close-out path that fills exactly at the zero
 // price.
 //
-// Note: the previous `min(rawFee, notional/100)` 1% notional cap that
-// existed here has been removed. The spec does not enforce a
-// hardcoded 1% cap; the upper bound comes from
-// `market.LiquidationFee` (already configured to a tick-fraction by
-// governance) AND from `price_diff_rate`. Both are now respected
+// No hard-coded notional cap is applied: the spec leaves the upper
+// bound to `market.LiquidationFee` (a governance-configured
+// tick-fraction) and to `price_diff_rate`, both of which are honoured
 // directly.
 func liquidationImprovementFee(f Fill, notional math.Int) math.Int {
 	if f.LiquidationFeeBps == 0 || f.BaseAmount == 0 || f.Price == 0 {

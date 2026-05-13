@@ -96,7 +96,7 @@ func (m *MsgCreateOrder) ValidateBasic() error {
 	}
 	return nil
 }
-func (m *MsgCancelOrder) ValidateBasic() error     { return validAddr(m.Sender) }
+func (m *MsgCancelOrder) ValidateBasic() error { return validAddr(m.Sender) }
 func (m *MsgCancelAllOrders) ValidateBasic() error {
 	if err := validAddr(m.Sender); err != nil {
 		return err

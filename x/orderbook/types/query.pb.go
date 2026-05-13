@@ -570,6 +570,10 @@ func (m *QueryImpactPriceRequest) GetMarketIndex() uint32 {
 	return 0
 }
 
+// QueryImpactPriceResponse reports the per-side VWAP and the mid.
+// `impact_bid` / `impact_ask` are 0 when the corresponding side has
+// insufficient depth to absorb the impact notional; the mid is 0
+// unless both sides resolve.
 type QueryImpactPriceResponse struct {
 	ImpactBid   uint32 `protobuf:"varint,1,opt,name=impact_bid,json=impactBid,proto3" json:"impact_bid,omitempty"`
 	ImpactAsk   uint32 `protobuf:"varint,2,opt,name=impact_ask,json=impactAsk,proto3" json:"impact_ask,omitempty"`

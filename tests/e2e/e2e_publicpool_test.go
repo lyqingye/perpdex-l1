@@ -43,9 +43,9 @@ func (s *PublicPoolSuite) SetupTest() {
 		MarginMode:          perptypes.MarginModeDisabled,
 	})
 	s.MarketIndex = s.CreatePerpMarket(msg.DefaultPerpMarketOpts(1, s.BTCAssetIndex))
-	// Risk keeper now requires a non-zero mark price on any non-zero
-	// position; seed a default so crossing orders in the IF-first
-	// scenario don't fail before we explicitly push the price down.
+	// Risk fails closed on any non-zero position without a mark price;
+	// seed a default so crossing orders in the IF-first scenario do
+	// not fail before we explicitly push the price down.
 	s.SetOraclePrice(s.MarketIndex, 50_000, 50_000)
 }
 

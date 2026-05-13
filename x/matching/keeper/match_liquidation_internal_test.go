@@ -204,7 +204,7 @@ func TestMatchLiquidation_PriceUnreachableBreaksImmediately(t *testing.T) {
 	}
 	e.rest(t, bid, false)
 
-	filled, err := e.k.MatchLiquidationOrder(e.ctx, 100, 1, /*zeroPrice=*/ 100, 10, 10_000, perptypes.InsuranceFundOperatorAccountIdx)
+	filled, err := e.k.MatchLiquidationOrder(e.ctx, 100, 1 /*zeroPrice=*/, 100, 10, 10_000, perptypes.InsuranceFundOperatorAccountIdx)
 	require.NoError(t, err)
 	require.Zero(t, filled,
 		"IOC must not fill below the zero-price floor")

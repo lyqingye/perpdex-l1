@@ -67,6 +67,10 @@ message QueryBestBidAskResponse {
 }
 
 message QueryImpactPriceRequest { uint32 market_index = 1; }
+// QueryImpactPriceResponse reports the per-side VWAP and the mid.
+// `impact_bid` / `impact_ask` are 0 when the corresponding side has
+// insufficient depth to absorb the impact notional; the mid is 0
+// unless both sides resolve.
 message QueryImpactPriceResponse {
   uint32 impact_bid = 1;
   uint32 impact_ask = 2;

@@ -60,7 +60,20 @@ message MarketDetails {
   int64 bid_nonce = 20;
   int64 total_order_count = 21;
   uint32 total_premium_samples = 22;
-  int64 last_updated_timestamp = 23;
+  // Millisecond timestamp of the last per-market premium-sample
+  // heartbeat (x/funding processMarketSample). Used purely as a
+  // 1-minute throttle for premium sampling; not a mark-price
+  // freshness signal — that lives on last_mark_price_refresh_timestamp.
+  int64 last_premium_sample_timestamp = 23;
+  // Millisecond timestamp of the last successful refreshMarkPrice
+  // run (median(impact, idx + ema, oracle_mark) produced a valid
+  // mark). Downstream readers gate on this via
+  // market.Params.max_mark_price_staleness_ms.
+  int64 last_mark_price_refresh_timestamp = 24;
+  // Signed EMA of clamp(impact_price - index_price, ±index/200) in
+  // price units. Updated every block by refreshMarkPrice and read as
+  // price_1 = index + mark_premium_ema. Persisted across blocks.
+  int64 mark_premium_ema = 25;
 }
 
 message Params {
@@ -76,4 +89,8 @@ message Params {
   // get picked up by the next block. 0 disables auto-expiry entirely
   // (governance-only delisting).
   uint32 max_markets_expired_per_block = 4;
+  // Upper bound (ms) on MarketDetails.MarkPrice age before consumers
+  // (x/risk, x/trade, x/matching, x/liquidation) MUST treat it as
+  // missing. Zero disables the staleness gate (tests only).
+  int64 max_mark_price_staleness_ms = 5;
 }

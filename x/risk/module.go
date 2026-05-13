@@ -28,8 +28,8 @@ var (
 
 type AppModuleBasic struct{ cdc codec.Codec }
 
-func (AppModuleBasic) Name() string { return types.ModuleName }
-func (AppModuleBasic) RegisterLegacyAminoCodec(_ *codec.LegacyAmino) {}
+func (AppModuleBasic) Name() string                                    { return types.ModuleName }
+func (AppModuleBasic) RegisterLegacyAminoCodec(_ *codec.LegacyAmino)   {}
 func (AppModuleBasic) RegisterInterfaces(_ cdctypes.InterfaceRegistry) {}
 func (b AppModuleBasic) DefaultGenesis(cdc codec.JSONCodec) json.RawMessage {
 	return cdc.MustMarshalJSON(types.DefaultGenesis())

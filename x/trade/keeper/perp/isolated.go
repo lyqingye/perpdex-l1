@@ -193,22 +193,22 @@ func (e Engine) calculateIsolatedMarginDelta(ctx context.Context, res *positionC
 		return math.ZeroInt(), nil
 	}
 
-	mark, md, err := e.riskKeeper.GetMarkAndMarketDetails(ctx, res.MarketIdx)
+	markPrice, md, err := e.marketKeeper.GetMarkPriceAndDetails(ctx, res.MarketIdx)
 	if err != nil {
 		return math.ZeroInt(), err
 	}
-	posReq := md.InitialMargin(newPos.BaseSize.Abs(), mark)
+	posReq := md.InitialMargin(newPos.BaseSize.Abs(), markPrice)
 
 	// case 2: side flipped → re-margin to position_requirement at the
 	// new uPnL-adjusted account state.
 	if res.SideFlipped {
-		return posReq.Sub(allocated.Add(newPos.UnrealizedPnL(mark))), nil
+		return posReq.Sub(allocated.Add(newPos.UnrealizedPnL(markPrice))), nil
 	}
 
 	if res.OIDelta < 0 {
 		// case 4: same side, OI shrank → proportional release.
-		oldMV := oldPos.MarketValue(mark)
-		newMV := newPos.MarketValue(mark)
+		oldMV := oldPos.MarketValue(markPrice)
+		newMV := newPos.MarketValue(markPrice)
 
 		var targetValue math.Int
 		oldAbs := oldPos.BaseSize.Abs()
@@ -250,8 +250,8 @@ func (e Engine) calculateIsolatedMarginDelta(ctx context.Context, res *positionC
 	if oiAbs.IsZero() {
 		return math.ZeroInt(), nil
 	}
-	oiReq := md.InitialMargin(oiAbs, mark)
-	tradePnL := newPos.UnrealizedPnL(mark).Sub(oldPos.UnrealizedPnL(mark)).Sub(fee)
+	oiReq := md.InitialMargin(oiAbs, markPrice)
+	tradePnL := newPos.UnrealizedPnL(markPrice).Sub(oldPos.UnrealizedPnL(markPrice)).Sub(fee)
 	delta := oiReq.Sub(tradePnL)
 	if delta.IsNegative() {
 		return math.ZeroInt(), nil

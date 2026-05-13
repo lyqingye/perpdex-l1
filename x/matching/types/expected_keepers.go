@@ -7,7 +7,6 @@ import (
 
 	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
 	markettypes "github.com/perpdex/perpdex-l1/x/market/types"
-	oracletypes "github.com/perpdex/perpdex-l1/x/oracle/types"
 	orderbooktypes "github.com/perpdex/perpdex-l1/x/orderbook/types"
 	tradekeeper "github.com/perpdex/perpdex-l1/x/trade/keeper"
 )
@@ -26,6 +25,10 @@ type MarketKeeper interface {
 	GetMarket(ctx context.Context, idx uint32) (markettypes.Market, error)
 	GetMarketDetails(ctx context.Context, idx uint32) (markettypes.MarketDetails, error)
 	AllocateNonce(ctx context.Context, marketIdx uint32, isAsk bool) (int64, error)
+	// GetMarkPriceAndDetails returns the gated (zero + staleness) mark and
+	// MarketDetails. Used by the trigger-activation EndBlocker so a
+	// stop-loss / take-profit cannot fire on a stale or missing mark.
+	GetMarkPriceAndDetails(ctx context.Context, marketIdx uint32) (uint32, markettypes.MarketDetails, error)
 }
 
 // OrderbookKeeper is the surface x/matching uses to read and mutate
@@ -99,14 +102,8 @@ type TradeKeeper interface {
 	ApplySpotMatching(ctx context.Context, f tradekeeper.SpotFill, baseAssetID, quoteAssetID uint32) error
 }
 
-// OracleKeeper provides the mark price used by the matching EndBlocker to
-// resolve trigger orders.
-type OracleKeeper interface {
-	GetPrice(ctx context.Context, marketIdx uint32) (oracletypes.OraclePrice, error)
-}
-
 // RiskKeeper exposes the post-state health classification used by the
-// pre-liquidation order placement gate. Accounts in PRE may only
+// pre-liquidation order placement gate: accounts in PRE may only
 // submit orders that strictly reduce exposure (reduce-only); accounts
 // in PARTIAL/FULL/BANKRUPTCY may not submit any user-initiated order
 // until liquidation completes.

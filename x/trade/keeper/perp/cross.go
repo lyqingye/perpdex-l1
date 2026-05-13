@@ -41,9 +41,9 @@ func (e Engine) crossDebit(ctx context.Context, accountIdx uint64, amount math.I
 // rebalance, so the function is intentionally short — `applyAccount`
 // dispatches here from `engine.go` when `res.Old.MarginMode != IsolatedMargin`.
 //
-// Behaviour matches the prior two-stage pipeline exactly:
-//   - cash flow: PnL.Sub(fee) → cross collateral (via crossAddCollateral)
-//   - improvement fee: liqFee debited from cross collateral (via crossDebit)
+// Two-stage cash flow:
+//   - PnL.Sub(fee) → cross collateral (via crossAddCollateral)
+//   - liqFee debited from cross collateral (via crossDebit)
 //
 // Caller guarantees liqFee is non-negative and only non-zero on the
 // maker side (the trade improvement fee victim).

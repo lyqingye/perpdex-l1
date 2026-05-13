@@ -288,12 +288,10 @@ func TestCreateMarket_SpotChecksBaseAsset(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// TestCreateMarket_RejectsIndexOutsideShrunkParams locks down that
-// CreateMarket reads the current Params for the perps/spot range, not
-// the compile-time constants. Governance can legitimately tighten the
-// upper bound after launch; without this stateful check a freshly
-// narrowed range would only be enforced for future MsgUpdateParams
-// calls while still admitting MsgCreateMarket up to the old constant.
+// TestCreateMarket_RejectsIndexOutsideShrunkParams locks in that
+// CreateMarket reads the live Params for the perps / spot range, not
+// the compile-time constants, so a governance-tightened upper bound
+// rejects MsgCreateMarket on indices outside the new range immediately.
 func TestCreateMarket_RejectsIndexOutsideShrunkParams(t *testing.T) {
 	env := newTestEnv(t)
 

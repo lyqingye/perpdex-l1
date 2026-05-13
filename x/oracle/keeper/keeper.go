@@ -87,9 +87,10 @@ func (k Keeper) StakingKeeper() types.StakingKeeper { return *k.stakingKeeperHol
 // PriceFetcher returns the wired price fetcher (never nil after NewKeeper).
 func (k Keeper) PriceFetcher() PriceFetcher { return *k.priceFetcherHolder }
 
-// GetStoredPrice returns the last oracle price stored for a market, regardless
-// of freshness. Business logic should call GetPrice unless it explicitly needs
-// historical/stale state for query or smoothing purposes.
+// GetStoredPrice returns the last oracle price stored for a market,
+// regardless of freshness. Business logic should call GetPrice;
+// callers that explicitly need a stale value (queries, smoothing)
+// use this method.
 func (k Keeper) GetStoredPrice(ctx context.Context, marketIdx uint32) (types.OraclePrice, error) {
 	p, err := k.Prices.Get(ctx, marketIdx)
 	if err != nil {

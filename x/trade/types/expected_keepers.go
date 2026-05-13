@@ -43,6 +43,11 @@ type MarketKeeper interface {
 	GetMarket(ctx context.Context, idx uint32) (markettypes.Market, error)
 	GetMarketDetails(ctx context.Context, idx uint32) (markettypes.MarketDetails, error)
 	UpdateOpenInterest(ctx context.Context, marketIdx uint32, delta int64) error
+	// GetMarkPriceAndDetails returns the gated mark and MarketDetails for
+	// `marketIdx`. Used by the isolated-margin auto-allocation path
+	// (see perp.engine.allocateIsolatedMargin) so the engine can refuse
+	// to seed margin against a stale or missing mark.
+	GetMarkPriceAndDetails(ctx context.Context, marketIdx uint32) (uint32, markettypes.MarketDetails, error)
 }
 
 type FundingKeeper interface {
@@ -66,7 +71,4 @@ type RiskKeeper interface {
 	// auto-allocated `margin_delta` would push the cross account out
 	// of HEALTHY.
 	GetAvailableUsdcCollateral(ctx context.Context, accountIndex uint64) (math.Int, error)
-	// GetMarkAndMarketDetails returns the live mark price and
-	// `MarketDetails` row for `marketIdx` in a single round-trip.
-	GetMarkAndMarketDetails(ctx context.Context, marketIdx uint32) (uint32, markettypes.MarketDetails, error)
 }

@@ -54,9 +54,9 @@ func classifyChange(pre, post types.RiskParameters, missingPre bool) bool {
 		rhs := pre.TotalAccountValue.Mul(post.MaintenanceMarginRequirement)
 		return !lhs.LT(rhs)
 	default:
-		// PARTIAL / FULL / BANKRUPTCY pre-state: keep the historical
-		// TAV/IM ratio safety net so liquidation fills can never
-		// worsen efficiency.
+		// PARTIAL / FULL / BANKRUPTCY pre-state: enforce the TAV/IM
+		// ratio safety net so liquidation fills can never worsen
+		// capital efficiency.
 		if post.InitialMarginRequirement.IsZero() ||
 			pre.InitialMarginRequirement.IsZero() {
 			return true

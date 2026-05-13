@@ -3,15 +3,15 @@
 //
 // Two distinct shapes are encoded:
 //
-//   1. VoteExtension: emitted by every validator on ExtendVote and consumed
-//      by the proposer on PrepareProposal. Concretely a marshalled
-//      `oracletypes.OracleVote`.
+//  1. VoteExtension: emitted by every validator on ExtendVote and consumed
+//     by the proposer on PrepareProposal. Concretely a marshalled
+//     `oracletypes.OracleVote`.
 //
-//   2. ExtendedCommitInfo: produced by the proposer on PrepareProposal and
-//      consumed by every validator on ProcessProposal + the chain itself
-//      on PreBlock. It is a `cometabci.ExtendedCommitInfo` value (from
-//      cometbft) that wraps every committed validator's vote extension
-//      from the previous block.
+//  2. ExtendedCommitInfo: produced by the proposer on PrepareProposal and
+//     consumed by every validator on ProcessProposal + the chain itself
+//     on PreBlock. It is a `cometabci.ExtendedCommitInfo` value (from
+//     cometbft) that wraps every committed validator's vote extension
+//     from the previous block.
 //
 // Both encoders ship in two flavours:
 //

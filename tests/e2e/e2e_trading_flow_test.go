@@ -48,9 +48,8 @@ func (s *TradingFlowSuite) SetupTest() {
 	s.MarketIndex = s.CreatePerpMarket(msg.DefaultPerpMarketOpts(1, s.BTCAssetIndex))
 
 	// Seed a live oracle price so the risk keeper can classify
-	// non-zero positions. Prior to the audit fixes the risk module
-	// silently skipped missing prices; it now fails closed, so
-	// tests that open perp positions must provide a mark price.
+	// non-zero positions. Risk fails closed on missing prices, so any
+	// test that opens a perp position must seed a mark price first.
 	s.SetOraclePrice(s.MarketIndex, 50_000, 50_000)
 }
 
@@ -166,4 +165,82 @@ func (s *TradingFlowSuite) TestCrossingFillRoundTrip() {
 	const withdrawUSDC = uint64(90_000_000_000) // 90k USDC
 	s.WithdrawUSDC(s.Users[0], withdrawUSDC)
 	s.WithdrawUSDC(s.Users[1], withdrawUSDC)
+}
+
+// TestStaleMarkPriceBlocksRiskChange exercises the wiring of the
+// median-mark staleness gate end-to-end. The gate lives on
+// `x/market.Keeper.gateMarkPrice` (driven by
+// `market.Params.MaxMarkPriceStalenessMs`), and every downstream consumer
+// (x/trade.Engine.Apply via IsValidRiskChangeFrom → ComputeCrossRisk
+// → MarketKeeper.GetMarkPriceAndDetails, x/matching trigger activation
+// also via MarketKeeper.GetMarkPriceAndDetails, x/liquidation ADL ranking)
+// MUST observe the same gate. Concretely:
+//
+//  1. Seed a fresh mark + open a small position so the risk pipeline
+//     is exercised on a non-empty book.
+//  2. Manually expire `LastMarkPriceRefreshTimestamp` on MarketDetails — this
+//     mimics the funding BeginBlocker falling silent for longer than
+//     `MaxMarkPriceStalenessMs`.
+//  3. Attempt another order. The trade engine routes through
+//     `IsValidRiskChangeFrom → ComputeCrossRisk →
+//     MarketKeeper.GetMarkPriceAndDetails`, which must fail-closed with
+//     `markettypes.ErrStaleMarkPrice`.
+//
+// Retained as a regression guard against an earlier wiring bug where
+// the gate lived on x/risk with a late-bound funding keeper: the risk
+// keeper was copied by value into x/trade / x/liquidation / x/matching
+// BEFORE the funding keeper was injected, so consumers silently
+// bypassed the gate. Owning the gate on market keeper eliminates the
+// late-binding hazard entirely (no setter, no mutable field), but the
+// e2e assertion still pins the end-to-end fail-closed contract.
+func (s *TradingFlowSuite) TestStaleMarkPriceBlocksRiskChange() {
+	const depositUSDC = uint64(100_000_000_000)
+	const orderQty = uint64(100)
+	const orderPrice = uint32(50_000)
+
+	s.DepositUSDC(&s.Users[0], depositUSDC)
+	s.DepositUSDC(&s.Users[1], depositUSDC)
+
+	// Open a small cross position so the risk pipeline has something
+	// to classify on the next change attempt.
+	askResp := s.PlaceLimitOrder(s.Users[0], msg.OrderOpts{
+		MarketIndex:      s.MarketIndex,
+		IsAsk:            true,
+		Price:            orderPrice,
+		BaseAmount:       orderQty,
+		ClientOrderIndex: 1,
+	})
+	s.Require().Equal(perptypes.OrderStatusOpen, askResp.Status)
+	bidResp := s.PlaceLimitOrder(s.Users[1], msg.OrderOpts{
+		MarketIndex:      s.MarketIndex,
+		IsAsk:            false,
+		Price:            orderPrice,
+		BaseAmount:       orderQty,
+		ClientOrderIndex: 2,
+	})
+	s.Require().Equal(perptypes.OrderStatusFilled, bidResp.Status)
+
+	// Manually expire LastMarkPriceRefreshTimestamp so the staleness gate
+	// trips. We deliberately bypass the funding BeginBlocker (which
+	// would otherwise refresh it every block) to isolate the gate.
+	d, err := s.App.MarketKeeper.GetMarketDetails(s.Ctx, s.MarketIndex)
+	s.Require().NoError(err)
+	d.LastMarkPriceRefreshTimestamp = 0
+	s.Require().NoError(s.App.MarketKeeper.SetMarketDetails(s.Ctx, d))
+
+	// Any further user-initiated order on this market MUST be rejected
+	// because the trade engine consults the risk keeper, which now
+	// fails-closed on the stale mark. PlaceLimitOrderExpectErr asserts
+	// the matching msg server returns a non-nil error so the test
+	// fails immediately if the consumers ever go back to bypassing
+	// the gate.
+	_, err = msg.PlaceLimitOrder(s.App, s.Ctx, s.Users[0], msg.OrderOpts{
+		MarketIndex:      s.MarketIndex,
+		IsAsk:            false,
+		Price:            orderPrice,
+		BaseAmount:       orderQty,
+		ClientOrderIndex: 3,
+	})
+	s.Require().Error(err,
+		"stale mark must propagate to x/trade via the market staleness gate (MarketKeeper.GetMarkPriceAndDetails); if this passes the consumer call sites are bypassing the gate")
 }

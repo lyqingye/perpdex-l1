@@ -196,8 +196,8 @@ func validateMarketDetailsInit(d MarketDetails) error {
 	if d.TotalPremiumSamples != 0 {
 		return ErrInvalidParams.Wrap("total_premium_samples must be 0 at creation")
 	}
-	if d.LastUpdatedTimestamp != 0 {
-		return ErrInvalidParams.Wrap("last_updated_timestamp must be 0 at creation")
+	if d.LastPremiumSampleTimestamp != 0 {
+		return ErrInvalidParams.Wrap("last_premium_sample_timestamp must be 0 at creation")
 	}
 	if d.MarkPrice != 0 || d.IndexPrice != 0 ||
 		d.ImpactBidPrice != 0 || d.ImpactAskPrice != 0 || d.ImpactPrice != 0 {

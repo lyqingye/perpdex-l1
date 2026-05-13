@@ -36,11 +36,11 @@ func (s stubPreLiqRisk) GetIsolatedHealthStatus(_ context.Context, _ uint64, _ u
 //	HEALTHY / BANKRUPTCY   either         reject
 func TestCheckPreLiquidationGate(t *testing.T) {
 	cases := []struct {
-		name      string
-		cross     uint32
-		iso       uint32
+		name       string
+		cross      uint32
+		iso        uint32
 		reduceOnly bool
-		wantErr   bool
+		wantErr    bool
 	}{
 		{"healthy_anything_ok", perptypes.HealthHealthy, perptypes.HealthHealthy, false, false},
 		{"pre_cross_blocks_increase", perptypes.HealthPreLiquidation, perptypes.HealthHealthy, false, true},

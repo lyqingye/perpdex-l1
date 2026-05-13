@@ -41,7 +41,7 @@ func resetRuntimeDetails(d *types.MarketDetails) {
 	d.AggregatePremiumSum = math.ZeroInt()
 	d.TotalOrderCount = 0
 	d.TotalPremiumSamples = 0
-	d.LastUpdatedTimestamp = 0
+	d.LastPremiumSampleTimestamp = 0
 	d.FundingRatePrefixSum = math.ZeroInt()
 	// QuoteMultiplier is derived by funding/risk on the fly; force 0
 	// at create so the derivation runs from a clean slate.

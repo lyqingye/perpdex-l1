@@ -23,16 +23,18 @@ import (
 const ConsensusVersion = 1
 
 var (
-	_ module.AppModuleBasic = AppModuleBasic{}
-	_ module.HasGenesis     = AppModule{}
-	_ module.HasServices    = AppModule{}
+	_ module.AppModuleBasic  = AppModuleBasic{}
+	_ module.HasGenesis      = AppModule{}
+	_ module.HasServices     = AppModule{}
 	_ module.HasABCIEndBlock = AppModule{}
 )
 
 type AppModuleBasic struct{ cdc codec.Codec }
 
-func (AppModuleBasic) Name() string                                    { return types.ModuleName }
-func (AppModuleBasic) RegisterLegacyAminoCodec(cdc *codec.LegacyAmino) { types.RegisterLegacyAminoCodec(cdc) }
+func (AppModuleBasic) Name() string { return types.ModuleName }
+func (AppModuleBasic) RegisterLegacyAminoCodec(cdc *codec.LegacyAmino) {
+	types.RegisterLegacyAminoCodec(cdc)
+}
 func (AppModuleBasic) RegisterInterfaces(reg cdctypes.InterfaceRegistry) {
 	types.RegisterInterfaces(reg)
 }

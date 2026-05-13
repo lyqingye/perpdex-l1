@@ -92,15 +92,21 @@ func (s *FundingSuite) TestPremiumAccumulatesAndSettles() {
 	const tradePrice = uint32(50_000)
 	const restingBidPrice = uint32(49_999)
 	const restingAskPrice = uint32(50_001)
-	const restingQty = uint64(12_000) // 12_000 * 50_000 = 6e8 quote-ticks ≥ ImpactUsdcAmount=5e8
+	// Resting depth must cover the per-market impact notional:
+	//   impact_notional = IMPACT_USDC_AMOUNT * MARGIN_TICK / MinIMF
+	//                   = 500_000_000 * 10_000 / 500
+	//                   = 10_000_000_000 quote-ticks (10 billion).
+	// restingQty * 50_001 ≈ 1.25e10 ≥ 1e10 so both impact_bid and
+	// impact_ask resolve to the single resting level.
+	const restingQty = uint64(250_000)
 
 	for i := 0; i < 4; i++ {
 		s.DepositUSDC(&s.Users[i], depositUSDC)
 	}
 
 	// Seed the oracle up front so the risk keeper can classify the
-	// fresh positions created by the crossing fill below (audit fix:
-	// missing prices on non-zero positions now fail closed).
+	// fresh positions created by the crossing fill below — risk fails
+	// closed when a non-zero position has no mark price.
 	s.SetOraclePrice(s.MarketIndex, tradePrice, tradePrice)
 
 	// 1. Open opposite positions: user0 short 1M @ 50000, user1 long 1M.
@@ -129,8 +135,9 @@ func (s *FundingSuite) TestPremiumAccumulatesAndSettles() {
 	s.Require().Equal(math.NewInt(int64(orderQty)), user1Pos)
 
 	// 2. Lay down impact-defining resting orders that won't cross. The
-	// resting depth must cover the orderbook's `ImpactUsdcAmount`
-	// notional on each side or the funding sampler skips the sample.
+	// resting depth must cover the per-market impact notional on each
+	// side (derived as IMPACT_USDC_AMOUNT * MARGIN_TICK / MinIMF) or
+	// the funding sampler skips the sample.
 	_ = s.PlaceLimitOrder(s.Users[2], msg.OrderOpts{
 		MarketIndex:      s.MarketIndex,
 		IsAsk:            false,
@@ -175,7 +182,7 @@ func (s *FundingSuite) TestPremiumAccumulatesAndSettles() {
 
 	// 4. Advance one full funding period plus a minute of slack so the
 	// next BeginBlocker:
-	//   - clears the per-market 1-minute throttle (LastUpdatedTimestamp
+	//   - clears the per-market 1-minute throttle (LastPremiumSampleTimestamp
 	//     was last bumped during DepositUSDC / PlaceLimitOrder blocks),
 	//     allowing one fresh premium sample;
 	//   - crosses the hour-boundary

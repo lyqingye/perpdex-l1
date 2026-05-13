@@ -61,7 +61,7 @@ func New(cfg Config) *Provider {
 	}
 }
 
-func (p *Provider) Name() string                 { return "okx" }
+func (p *Provider) Name() string                { return "okx" }
 func (p *Provider) Pairs() []types.CurrencyPair { return p.cfg.Pairs }
 
 func (p *Provider) Start(ctx context.Context, out chan<- []types.Price) error {

@@ -279,14 +279,28 @@ func checkedQuote(base, price uint64) (uint64, error) {
 	return product.Uint64(), nil
 }
 
-// ComputeImpactPrice walks price levels on the requested side accumulating up
-// to `usdc_amount` of quote depth, then returns the volume-weighted average
-// price across that depth. Returns (0, false) if depth is insufficient.
-func (k Keeper) ComputeImpactPrice(ctx context.Context, market uint32, isAsk bool, usdcAmount uint64) (uint32, bool, error) {
+// ComputeImpactPrice walks price levels on the requested side until it
+// absorbs `MarketImpactNotional`, then returns the VWAP across that depth.
+// Returns 0 when depth is insufficient or the market has not been
+// initialised; callers treat a zero VWAP as "side unavailable".
+//
+// Walk: bid side from highest price down, ask side from lowest up. The
+// last partial level uses `ceil_div(needQuote, price)` so the notional is
+// never under-filled. The final VWAP rounds UP for asks and DOWN for bids
+// so that `max(0, idx - ask)` cannot round in the trader's favour.
+func (k Keeper) ComputeImpactPrice(ctx context.Context, market uint32, isAsk bool) (uint32, error) {
+	notional, err := k.MarketImpactNotional(ctx, market)
+	if err != nil {
+		return 0, err
+	}
+	if notional == 0 {
+		return 0, nil
+	}
+
 	rng := collections.NewPrefixedPairRange[uint32, uint32](market)
 	iter, err := k.PriceLevels.Iterate(ctx, rng)
 	if err != nil {
-		return 0, false, err
+		return 0, err
 	}
 	defer iter.Close()
 
@@ -299,7 +313,7 @@ func (k Keeper) ComputeImpactPrice(ctx context.Context, market uint32, isAsk boo
 	for ; iter.Valid(); iter.Next() {
 		v, err := iter.Value()
 		if err != nil {
-			return 0, false, err
+			return 0, err
 		}
 		if isAsk {
 			if v.AskBaseSum > 0 {
@@ -312,7 +326,7 @@ func (k Keeper) ComputeImpactPrice(ctx context.Context, market uint32, isAsk boo
 		}
 	}
 	if len(levels) == 0 {
-		return 0, false, nil
+		return 0, nil
 	}
 	if !isAsk {
 		// Bid side: walk highest price first (reverse iterator order).
@@ -323,19 +337,17 @@ func (k Keeper) ComputeImpactPrice(ctx context.Context, market uint32, isAsk boo
 
 	var accBase, accQuote uint64
 	for _, lv := range levels {
-		// quote precision uses USDC_TO_COLLATERAL_MULTIPLIER scaling but we keep
-		// the raw price * base aggregate which is "quote ticks". We compare
-		// against `usdcAmount * 1e6 / quote_extension_multiplier` upstream.
-		if accQuote+lv.quote >= usdcAmount {
-			needQuote := usdcAmount - accQuote
-			// Ceiling division: when `needQuote` is not an exact
-			// multiple of `lv.price`, taking floor(needQuote/price)
-			// would leave us a fraction short of `usdcAmount` and
-			// the function would (incorrectly) report insufficient
-			// depth even though the level had headroom. We always
-			// have `lv.base * price >= needQuote` here (the partial
-			// branch is gated on it) so ceil never overshoots
-			// `lv.base`.
+		// `accQuote` and `notional` must share the same quote-scale
+		// convention. Today `{Ask,Bid}QuoteSum` is raw `base*price`
+		// and `notional` is computed with QuoteMultiplier=1 in
+		// MarketImpactNotional, so the comparison is direct.
+		// See the INVARIANT note on MarketImpactNotional.
+		if accQuote+lv.quote >= notional {
+			needQuote := notional - accQuote
+			// Ceiling: floor would leave us short of `notional` on a
+			// fractional level and (incorrectly) report insufficient
+			// depth. Gated on `lv.base * price >= needQuote`, so it
+			// never overshoots `lv.base`.
 			needBase := (needQuote + uint64(lv.price) - 1) / uint64(lv.price)
 			if needBase == 0 {
 				needBase = 1
@@ -347,22 +359,67 @@ func (k Keeper) ComputeImpactPrice(ctx context.Context, market uint32, isAsk boo
 		accBase += lv.base
 		accQuote += lv.quote
 	}
-	if accQuote < usdcAmount || accBase == 0 {
-		return 0, false, nil
+	if accQuote < notional || accBase == 0 {
+		return 0, nil
 	}
-	return uint32(accQuote / accBase), true, nil
+	if isAsk {
+		return uint32((accQuote + accBase - 1) / accBase), nil
+	}
+	return uint32(accQuote / accBase), nil
 }
 
-// ImpactUsdcAmount returns the governance-tunable impact notional consumed
-// by `ComputeImpactPrice`. Exposed so other modules (notably x/funding) can
-// derive their per-minute impact-VWAP samples without duplicating the
-// orderbook params getter.
-func (k Keeper) ImpactUsdcAmount(ctx context.Context) (uint64, error) {
-	p, err := k.Params.Get(ctx)
+// MarketImpactNotional returns the per-market impact notional used by
+// ComputeImpactPrice:
+//
+//	impactNotional = floor(ImpactUSDCAmount * MarginTick
+//	                       / (MinInitialMarginFraction * QuoteMultiplier))
+//
+// `QuoteMultiplier` is a per-market quote-scale tick on MarketDetails.
+// perpdex-l1 currently leaves it unset (resetRuntimeDetails zeros it on
+// CreateMarket and no module writes it back), and `adjustPriceLevel`
+// stores `{Ask,Bid}QuoteSum` as raw `base*price` without scaling by it.
+// The divisor is kept in the formula to preserve the canonical shape so
+// activating QuoteMultiplier later is a localised change; a zero value
+// falls back to 1 so today's behaviour is bit-for-bit identical to the
+// pre-formula version.
+//
+// INVARIANT: if `QuoteMultiplier` is ever made non-trivial here,
+// `adjustPriceLevel` must start multiplying the price-level quote
+// aggregate by the same factor — otherwise the two sides of the
+// `accQuote >= notional` comparison in ComputeImpactPrice end up in
+// different units.
+//
+// Returns 0 when `MinInitialMarginFraction == 0` (uninitialised market),
+// which ComputeImpactPrice treats as insufficient depth.
+func (k Keeper) MarketImpactNotional(ctx context.Context, market uint32) (uint64, error) {
+	d, err := k.marketKeeper.GetMarketDetails(ctx, market)
 	if err != nil {
 		return 0, err
 	}
-	return p.ImpactUsdcAmount, nil
+	if d.MinInitialMarginFraction == 0 {
+		return 0, nil
+	}
+	qm := uint64(d.QuoteMultiplier)
+	if qm == 0 {
+		qm = 1
+	}
+	num := new(big.Int).Mul(
+		new(big.Int).SetUint64(perptypes.ImpactUSDCAmount),
+		new(big.Int).SetUint64(uint64(perptypes.MarginTick)),
+	)
+	den := new(big.Int).Mul(
+		new(big.Int).SetUint64(uint64(d.MinInitialMarginFraction)),
+		new(big.Int).SetUint64(qm),
+	)
+	out := new(big.Int).Quo(num, den)
+	if !out.IsUint64() {
+		// Refuse rather than silently truncate into the orderbook walker.
+		return 0, types.ErrInvariantViolated.Wrapf(
+			"impact_notional overflow: market=%d min_imf=%d quote_multiplier=%d",
+			market, d.MinInitialMarginFraction, d.QuoteMultiplier,
+		)
+	}
+	return out.Uint64(), nil
 }
 
 // BestBidAsk returns the best bid and best ask prices.

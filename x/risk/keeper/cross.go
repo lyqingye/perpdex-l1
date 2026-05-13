@@ -62,25 +62,19 @@ func (k Keeper) ComputeCrossRisk(ctx context.Context, accountIdx uint64) (types.
 		if pos.MarginMode == perptypes.IsolatedMargin {
 			return false
 		}
-		// For any NON-ZERO position the oracle must return a fresh,
-		// non-zero mark. Silently skipping a missing price previously
-		// made bankrupt accounts look healthy whenever the oracle
-		// hiccupped. Fail-closed keeps the invariant "risk regression
-		// cannot be hidden by an oracle outage".
-		mark, err := k.resolveMarkPrice(ctx, pos.MarketIndex)
+		// For any NON-ZERO position the gated markPrice read must succeed.
+		// Fail-closed: a missing or stale price MUST surface as an
+		// error, not silently zero the contribution, otherwise an
+		// oracle outage could hide risk regressions.
+		markPrice, md, err := k.marketKeeper.GetMarkPriceAndDetails(ctx, pos.MarketIndex)
 		if err != nil {
 			iterErr = errorsmod.Wrapf(err, "account=%d", accountIdx)
 			return true
 		}
-		md, err := k.marketKeeper.GetMarketDetails(ctx, pos.MarketIndex)
-		if err != nil {
-			iterErr = err
-			return true
-		}
-		imSum = imSum.Add(pos.InitialMargin(mark, md))
-		mmSum = mmSum.Add(pos.MaintenanceMargin(mark, md))
-		cmSum = cmSum.Add(pos.CloseOutMargin(mark, md))
-		totalCross = totalCross.Add(pos.UnrealizedPnL(mark))
+		imSum = imSum.Add(pos.InitialMargin(markPrice, md))
+		mmSum = mmSum.Add(pos.MaintenanceMargin(markPrice, md))
+		cmSum = cmSum.Add(pos.CloseOutMargin(markPrice, md))
+		totalCross = totalCross.Add(pos.UnrealizedPnL(markPrice))
 		return false
 	}); err != nil {
 		return types.RiskParameters{}, err

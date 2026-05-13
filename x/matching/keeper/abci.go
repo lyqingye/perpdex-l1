@@ -25,7 +25,12 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 	}
 	var due []triggered
 	if err := k.bookKeeper.IterateTriggers(ctx, func(market uint32, triggerPrice uint32, orderIndex uint64) bool {
-		px, err := k.oracleKeeper.GetPrice(ctx, market)
+		// Route the markPrice read through MarketKeeper so trigger
+		// activation shares the fail-closed zero/staleness gate.
+		// Failures emit TriggerOracleError and skip the trigger;
+		// stop-loss / take-profit must never fire on a stale or
+		// missing markPrice.
+		markPrice, _, err := k.marketKeeper.GetMarkPriceAndDetails(ctx, market)
 		if err != nil {
 			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
 				types.EventTypeTriggerOracleError,
@@ -34,7 +39,9 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 			))
 			return false
 		}
-		if px.MarkPrice == 0 {
+		if markPrice == 0 {
+			// Defensive: GetMarkPriceAndDetails should already reject a
+			// zero markPrice; guard the comparison anyway.
 			return false
 		}
 		o, err := k.bookKeeper.GetOrder(ctx, orderIndex)
@@ -42,23 +49,23 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 			return false
 		}
 		// Activation semantics, mirroring the spec docs:
-		//   stop-loss long (isAsk=true, protect long): trigger when mark <= trigger
-		//   stop-loss short (isAsk=false):              trigger when mark >= trigger
-		//   take-profit long:                           trigger when mark >= trigger
-		//   take-profit short:                          trigger when mark <= trigger
+		//   stop-loss long (isAsk=true, protect long): trigger when markPrice <= trigger
+		//   stop-loss short (isAsk=false):              trigger when markPrice >= trigger
+		//   take-profit long:                           trigger when markPrice >= trigger
+		//   take-profit short:                          trigger when markPrice <= trigger
 		active := false
 		switch o.OrderType {
 		case perptypes.StopLossOrder, perptypes.StopLossLimitOrder:
 			if o.IsAsk {
-				active = px.MarkPrice <= triggerPrice
+				active = markPrice <= triggerPrice
 			} else {
-				active = px.MarkPrice >= triggerPrice
+				active = markPrice >= triggerPrice
 			}
 		case perptypes.TakeProfitOrder, perptypes.TakeProfitLimitOrder:
 			if o.IsAsk {
-				active = px.MarkPrice >= triggerPrice
+				active = markPrice >= triggerPrice
 			} else {
-				active = px.MarkPrice <= triggerPrice
+				active = markPrice <= triggerPrice
 			}
 		}
 		if active {
