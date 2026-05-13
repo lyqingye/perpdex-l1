@@ -19,35 +19,19 @@ import (
 // per-market basis using `MarketDetails.LastUpdatedTimestamp`.
 const premiumSampleIntervalMs = perptypes.MinuteInMs
 
-// BeginBlocker drives the per-market funding pipeline. Each block runs two
-// concentric loops over the active perp markets:
+// BeginBlocker runs the per-market funding pipeline:
 //
-//  1. Mark-price refresh (every block): combine the cached impact mid, the
-//     index price + running premium average, and the oracle weighted-median
-//     mark into a 3-input median and write the result back to
-//     `MarketDetails.MarkPrice`. This is the chain's authoritative mark
-//     price: x/risk, x/trade and x/matching read from here, not from oracle.
-//     See `refreshMarkPrice` for the derivation.
-//
-//  2. Premium sample (1-minute throttle): refresh `ImpactBidPrice` /
-//     `ImpactAskPrice` / `ImpactPrice` from the live orderbook and push a
-//     premium sample into `AggregatePremiumSum`, following the official
-//     formula
+//  1. processMarketSample (1-minute throttle): refresh impact prices and
+//     push a premium sample
 //     premium_t = (max(0, IB-idx) - max(0, idx-IA)) * FundingRateTick / idx.
+//  2. refreshMarkPrice (every block): write the authoritative
+//     `MarketDetails.MarkPrice` consumed by x/risk, x/trade and x/matching.
+//  3. SettleAllMarkets (every `FundingPeriodMs`, default 1 hour): close
+//     the round and bump `FundingRatePrefixSum`.
 //
-//  3. Funding settlement (every `FundingPeriodMs`, default 1 hour): close
-//     the round, average the samples, apply the double clamp, divide by
-//     `FundingPeriodDivisor` to obtain the per-round rate, and bump
-//     `FundingRatePrefixSum` by `mark_price * rate`. The settlement uses
-//     the freshly-refreshed `MarkPrice` from step (1).
-//
-// Per-market business errors (oracle stale, single-sided depth, etc.) are
-// expected steady-state events and are swallowed silently so a transient
-// pricing hiccup on one market does not abort the whole begin-block.
-// Persistence failures from `SetMarketDetails` are treated as fatal:
-// `MarketKeeper` writes the runtime store and is not allowed to fail under
-// normal operation, so we panic to surface state-machine corruption rather
-// than continue with inconsistent in-memory data.
+// Per-market business errors (stale oracle, one-sided depth, etc.) are
+// silently swallowed so one bad market cannot abort the whole block.
+// `SetMarketDetails` failures panic — the runtime store must never fail.
 func (k Keeper) BeginBlocker(ctx context.Context) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	now := sdkCtx.BlockTime().UnixMilli()
@@ -88,43 +72,28 @@ func (k Keeper) BeginBlocker(ctx context.Context) error {
 	return nil
 }
 
-// processMarketSample updates the running aggregate_premium_sum for a market
-// using the premium formula:
+// processMarketSample refreshes impact prices and (every
+// `premiumSampleIntervalMs`) appends one premium sample to
+// `AggregatePremiumSum`:
 //
-//	premium_t = ( max(0, ImpactBid - index) - max(0, index - ImpactAsk) )
-//	            * FundingRateTick / index
+//	premium_t = (max(0, ImpactBid - idx) - max(0, idx - ImpactAsk))
+//	            * FundingRateTick / idx
 //
-// Sampling is throttled to once every `premiumSampleIntervalMs` per market
-// (see `MarketDetails.LastUpdatedTimestamp`). When either side of the book
-// has insufficient depth to absorb the per-market impact notional we skip
-// the sample entirely instead of feeding a degenerate `ImpactBid=0` /
-// `ImpactAsk=0` into the formula (which would otherwise drive the premium
-// to roughly -100%).
-//
-// Mark price is NOT written here; the per-block `refreshMarkPrice` runs
-// after this and consumes the (possibly stale-by-up-to-one-minute) impact
-// cache plus the live oracle reading.
-//
-// Returns nothing: oracle / orderbook errors are silently absorbed (they are
-// expected steady-state events), while `SetMarketDetails` failures panic
-// because the runtime store is not allowed to fail.
+// The sample is skipped when either side of the book lacks the per-market
+// impact notional (a missing impact_bid/ask would otherwise pin the premium
+// near -100%). Mark price is not written here; `refreshMarkPrice` runs
+// after this and consumes the refreshed impact cache.
 func (k Keeper) processMarketSample(ctx context.Context, marketIdx uint32, now int64, params types.ParamsAlias) {
 	d, err := k.marketKeeper.GetMarketDetails(ctx, marketIdx)
 	if err != nil {
 		return
 	}
-	// Per-market 1-minute throttle. `LastUpdatedTimestamp == 0` means we
-	// have not sampled yet (fresh market or post-genesis), so always
-	// admit the first sample.
+	// Per-market 1-minute throttle; `LastUpdatedTimestamp == 0` admits
+	// the first sample on a fresh market.
 	if d.LastUpdatedTimestamp != 0 && now-d.LastUpdatedTimestamp < premiumSampleIntervalMs {
 		return
 	}
 
-	// Refresh impact prices using the per-market impact notional
-	// derived from MinInitialMarginFraction (see
-	// x/orderbook keeper.MarketImpactNotional). The orderbook keeper
-	// loads the market details internally; we no longer thread a
-	// global impact_usdc_amount param through this path.
 	bidImp, bidOk, err := k.bookKeeper.ComputeImpactPrice(ctx, marketIdx, false)
 	if err != nil {
 		return
@@ -136,22 +105,19 @@ func (k Keeper) processMarketSample(ctx context.Context, marketIdx uint32, now i
 	d.ImpactBidPrice = bidImp
 	d.ImpactAskPrice = askImp
 	if bidOk && askOk {
-		// Floor of the mean: impact_bid is floor-divided while
-		// impact_ask is ceil-divided in ComputeImpactPrice, so the
-		// floor of the sum/2 keeps the mid conservative.
+		// Floor of the mean. impact_bid floors, impact_ask ceils in
+		// ComputeImpactPrice, so flooring the sum keeps the mid
+		// conservative.
 		d.ImpactPrice = uint32((uint64(bidImp) + uint64(askImp)) / 2)
 	} else {
-		// One side drained: mid is undefined. Clear the cache so
-		// neither the gRPC consumer nor the per-block median pipeline
-		// pick up a half-zero value.
+		// One side drained: clear so consumers don't pick up a
+		// half-zero value.
 		d.ImpactPrice = 0
 	}
 
-	// Funding must only sample against a fresh oracle price. If oracle
-	// aggregation missed this market for long enough to go stale, persist
-	// the refreshed impact info (for observability) but skip the sample.
-	// LastUpdatedTimestamp is intentionally NOT advanced so the next block
-	// retries the oracle fetch immediately on recovery.
+	// On oracle failure persist the refreshed impact cache (for
+	// observability) but do not advance LastUpdatedTimestamp, so the
+	// next block retries immediately.
 	px, err := k.oracleKeeper.GetPrice(ctx, marketIdx)
 	if err != nil {
 		k.mustSetMarketDetails(ctx, d)
@@ -159,9 +125,6 @@ func (k Keeper) processMarketSample(ctx context.Context, marketIdx uint32, now i
 	}
 	d.IndexPrice = px.IndexPrice
 
-	// Skip the premium sample when either side cannot absorb the
-	// impact notional. Otherwise `max(0, idx - 0) = idx` would peg
-	// the premium at roughly -100% and corrupt the running average.
 	if !bidOk || !askOk || d.IndexPrice == 0 {
 		d.LastUpdatedTimestamp = now
 		k.mustSetMarketDetails(ctx, d)
@@ -177,17 +140,15 @@ func (k Keeper) processMarketSample(ctx context.Context, marketIdx uint32, now i
 	if idx > int64(askImp) {
 		negPart = idx - int64(askImp)
 	}
-	// premium_t = ((max(0, IB-idx) - max(0, idx-IA)) * TICK) / idx
-	// Use math.Int for the intermediate product so impact prices near the
-	// uint32 ceiling cannot overflow int64 in the (posPart-negPart)*TICK
-	// step.
+	// premium_t = ((max(0, IB-idx) - max(0, idx-IA)) * TICK) / idx.
+	// math.Int is used so impact prices near uint32 max cannot overflow
+	// int64 in the (posPart-negPart)*TICK step.
 	premium := math.NewInt(posPart - negPart).
 		Mul(math.NewInt(perptypes.FundingRateTick)).
 		Quo(math.NewInt(idx))
 
-	// Defense-in-depth: cap the per-window sample count so a runaway tick
-	// rate cannot destabilize the clamp. With 1-minute sampling and a
-	// 1-hour window we expect ~60 samples; the cap (default 60) matches.
+	// Cap samples per window so a runaway tick rate cannot destabilize
+	// the clamp (default cap matches the expected ~60 samples/hour).
 	if params.MaxPremiumSampleCount == 0 ||
 		d.TotalPremiumSamples < params.MaxPremiumSampleCount {
 		d.AggregatePremiumSum = d.AggregatePremiumSum.Add(premium)
@@ -197,40 +158,28 @@ func (k Keeper) processMarketSample(ctx context.Context, marketIdx uint32, now i
 	k.mustSetMarketDetails(ctx, d)
 }
 
-// refreshMarkPrice recomputes `MarketDetails.MarkPrice` once per block
-// as the median of three sources:
+// refreshMarkPrice rewrites `MarketDetails.MarkPrice` once per block as
 //
-//	price_1 = index_price + premium_ema * index_price / FundingRateTick
-//	          (where premium_ema = AggregatePremiumSum / TotalPremiumSamples
-//	           is the running 1-hour average; equivalent to the
-//	           time-weighted average of the per-minute premium samples)
-//	price_2 = oracle weighted-median mark (the chain's external reference)
+//	price_1 = index + premium_ema * index / FundingRateTick
+//	          (premium_ema = AggregatePremiumSum / TotalPremiumSamples)
+//	price_2 = oracle weighted-median mark
 //	mark    = median3(impact_price, price_1, price_2)
 //
-// Degenerate inputs:
-//   - `oracle.GetPrice` errors: leave d.MarkPrice untouched and let the
-//     staleness gate in x/risk reject the read.
-//   - `d.ImpactPrice == 0` (either side of the book drained): fall back to
-//     `floor((price_1 + price_2) / 2)`.
-//   - `d.TotalPremiumSamples == 0` (fresh market / new round just opened):
-//     treat premium_ema as 0, so `price_1 = index_price`.
+// Fallbacks: oracle failure leaves MarkPrice untouched (letting x/risk's
+// staleness gate eventually fire); zero impact_price degrades to the mean
+// of the two non-zero inputs; zero TotalPremiumSamples sets price_1 = index.
 //
-// On any successful update `MarketDetails.LastMarkPriceTimestamp` is bumped
-// to `now` so the x/risk staleness gate sees a fresh mark. Note: this is a
-// distinct field from `LastUpdatedTimestamp`, which is the per-minute
-// premium-sampling throttle owned by `processMarketSample`.
+// On success `LastMarkPriceTimestamp` is bumped to `now` (distinct from
+// `LastUpdatedTimestamp`, which throttles `processMarketSample`).
 func (k Keeper) refreshMarkPrice(ctx context.Context, marketIdx uint32, now int64) {
 	d, err := k.marketKeeper.GetMarketDetails(ctx, marketIdx)
 	if err != nil {
 		return
 	}
-	// Oracle fetch failure is treated as "no fresh sample this block":
-	// leave d.MarkPrice + d.LastMarkPriceTimestamp untouched so x/risk's
-	// staleness gate eventually trips if the outage drags on.
-	// Note: a degenerate oracle reading (IndexPrice == 0 OR MarkPrice
-	// == 0) is NOT short-circuited — the fallbacks in the switch below
-	// can still produce a valid mark from the remaining inputs (e.g.
-	// impact_mid + price_1 even when oracle's MarkPrice is missing).
+	// Oracle failure leaves MarkPrice/LastMarkPriceTimestamp untouched so
+	// x/risk's staleness gate eventually trips. A zero IndexPrice or
+	// MarkPrice from the oracle is NOT short-circuited — the switch
+	// below can still derive a mark from the remaining inputs.
 	px, err := k.oracleKeeper.GetPrice(ctx, marketIdx)
 	if err != nil {
 		return
@@ -259,8 +208,7 @@ func (k Keeper) refreshMarkPrice(ctx context.Context, marketIdx uint32, now int6
 	case price2 != 0:
 		mark = price2
 	default:
-		// All three inputs zero is a pathological state; leave the
-		// previous mark in place rather than zeroing it out.
+		// All three inputs zero: keep the previous mark.
 		return
 	}
 	d.MarkPrice = mark
@@ -268,27 +216,18 @@ func (k Keeper) refreshMarkPrice(ctx context.Context, marketIdx uint32, now int6
 	k.mustSetMarketDetails(ctx, d)
 }
 
-// computePrice1 returns `index * (1 + avgPremium / FundingRateTick)`.
+// computePrice1 returns `index + index * avgPremium / FundingRateTick`,
+// where `avgPremium = aggregatePremiumSum / sampleCount` (already scaled
+// by FundingRateTick — see processMarketSample). The two divisions are
+// collapsed into one to avoid losing precision from the intermediate
+// average:
 //
-// `avgPremium = aggregatePremiumSum / sampleCount` is itself already scaled
-// by `FundingRateTick` (see processMarketSample). For numerical stability
-// and to avoid an extra rounding step in `avgPremium`, we collapse the math
-// into a single division:
+//	price_1 = index + index * aggregatePremiumSum
+//	                  / (sampleCount * FundingRateTick)
 //
-//	delta   = index * aggregatePremiumSum / (sampleCount * FundingRateTick)
-//	price_1 = index + delta
-//
-// This is algebraically equivalent to `index + index * avgPremium / TICK`
-// (associativity of integer multiply with one final truncating divide), but
-// avoids the loss-of-precision a separate `avgPremium := aggSum/samples`
-// step would introduce when `samples` does not divide `aggSum` exactly.
-//
-// Returns 0 when `index == 0`. When `sampleCount == 0` (no samples in the
-// current window) the premium component is taken as 0, yielding price_1
-// = index ("no samples → no premium").
-// Results are clamped into uint32; a wildly large premium that would
-// otherwise overflow the price domain returns the relevant extreme so the
-// caller's median still operates on a well-defined value.
+// Returns 0 when index == 0; returns index when there are no samples in
+// the window. The result is clamped into uint32 so an overflowing premium
+// still yields a well-defined median input.
 func computePrice1(index uint32, aggregatePremiumSum math.Int, sampleCount uint32) uint32 {
 	if index == 0 {
 		return 0
@@ -304,9 +243,8 @@ func computePrice1(index uint32, aggregatePremiumSum math.Int, sampleCount uint3
 		return index
 	}
 	priced := math.NewInt(int64(index)).Add(delta)
-	// Negative premium can push price_1 below zero (e.g. perpetual
-	// trading at a steep discount); clamp to 0 so the median input is
-	// always uint32-representable.
+	// A deep discount can push price_1 below 0; clamp so the median
+	// input is always uint32-representable.
 	if priced.IsNegative() {
 		return 0
 	}

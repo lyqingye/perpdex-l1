@@ -25,19 +25,11 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 	}
 	var due []triggered
 	if err := k.bookKeeper.IterateTriggers(ctx, func(market uint32, triggerPrice uint32, orderIndex uint64) bool {
-		// Read the authoritative mark via RiskKeeper.GetMarkAndMarketDetails
-		// so trigger activation goes through the SAME fail-closed
-		// staleness gate as risk classification. The gate covers three
-		// cases:
-		//   1) market details fetch fails (ErrMissingPrice)
-		//   2) MarkPrice == 0 (ErrZeroMarkPrice)
-		//   3) now - LastMarkPriceTimestamp > MaxMarkStalenessMs
-		//      (funding BeginBlocker has not refreshed within the
-		//      governance-configured window)
-		// Any of these emit a TriggerOracleError event and skip the
-		// trigger -- stop-loss / take-profit cannot fire against a
-		// stale or missing mark, matching the conservative semantics
-		// applied elsewhere in the risk pipeline.
+		// Route the mark read through RiskKeeper so trigger activation
+		// shares the fail-closed zero/staleness gate used by risk
+		// classification. Failures emit TriggerOracleError and skip
+		// the trigger; stop-loss / take-profit must never fire on a
+		// stale or missing mark.
 		mark, _, err := k.riskKeeper.GetMarkAndMarketDetails(ctx, market)
 		if err != nil {
 			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
@@ -48,9 +40,8 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 			return false
 		}
 		if mark == 0 {
-			// Defensive: GetMarkAndMarketDetails should already have
-			// returned ErrZeroMarkPrice, but guard the activation
-			// comparison in case the interface contract ever loosens.
+			// Defensive: GetMarkAndMarketDetails should already reject
+			// a zero mark; guard the comparison anyway.
 			return false
 		}
 		o, err := k.bookKeeper.GetOrder(ctx, orderIndex)

@@ -402,18 +402,13 @@ func (m *PriceLevelAggregate) GetBidCount() uint32 {
 	return 0
 }
 
-// Params is reserved for future orderbook-only governance knobs. All
-// historical fields (max_fills_per_msg, max_cancels_per_msg,
-// impact_usdc_amount) have been retired:
-//
-//   - max_fills_per_msg / max_cancels_per_msg: never read by x/orderbook;
-//     the live limits live on x/matching.Params.
-//   - impact_usdc_amount: replaced by a per-market derivation in
-//     ComputeImpactPrice based on MarketDetails.MinInitialMarginFraction
-//     and the global perptypes.ImpactUSDCAmount constant
-//     (`impact_notional = IMPACT_USDC * MARGIN_TICK /
-//     min_initial_margin_fraction`). Governance no longer needs to tune
-//     this knob; risk parameters drive the depth.
+// Params is reserved for future orderbook-only governance knobs. The
+// historical fields have all been retired:
+//   - max_fills_per_msg / max_cancels_per_msg: live limits now on
+//     x/matching.Params.
+//   - impact_usdc_amount: replaced by the per-market derivation
+//     `IMPACT_USDC * MARGIN_TICK / min_initial_margin_fraction` in
+//     ComputeImpactPrice.
 type Params struct {
 }
 

@@ -60,34 +60,21 @@ func NewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, authori
 
 func (k Keeper) Authority() string { return k.authority }
 
-// SetFundingKeeper wires the funding keeper after construction. Required
-// so `resolveMarkPrice` can gate on `Funding.Params.MaxMarkStalenessMs`.
-// Late binding avoids the import cycle that would otherwise arise from
-// x/funding depending on x/risk for the liquidation gate (cancel-all in
-// risk transitions) and x/risk depending on x/funding for the staleness
-// param.
+// SetFundingKeeper wires the funding keeper after construction so
+// `gateMarkPrice` can read `Funding.Params.MaxMarkStalenessMs`. Late
+// binding breaks the x/funding ↔ x/risk import cycle.
 func (k *Keeper) SetFundingKeeper(f types.FundingKeeper) { k.fundingKeeper = f }
 
-// gateMarkPrice validates that `d.MarkPrice` is fresh and non-zero.
-// Returns an explicit error in three cases (fail-closed):
+// gateMarkPrice fails closed when `d.MarkPrice` is zero or stale.
+// Returns ErrZeroMarkPrice for a zero mark (would silently zero out
+// IM/MM/CM/uPnL) and ErrMissingPrice when the mark has not been
+// refreshed within `Funding.Params.MaxMarkStalenessMs` or that param
+// cannot be read.
 //
-//   - `d.MarkPrice == 0`: rejected with ErrZeroMarkPrice. A zero mark
-//     would silently zero out IM/MM/CM/uPnL and let bankrupt accounts
-//     look healthy.
-//   - mark price is stale relative to `Funding.Params.MaxMarkStalenessMs`
-//     (the funding BeginBlocker has not refreshed it within the
-//     governance-configured window): wrapped as ErrMissingPrice. A
-//     stale-but-non-zero mark could cause a risk read to honour a
-//     price that no longer reflects reality.
-//   - the funding keeper read for `MaxMarkStalenessMs` fails: wrapped
-//     as ErrMissingPrice.
-//
-// When the funding keeper has not been wired (legacy callers, tests
-// that forgot SetFundingKeeper) the staleness gate is bypassed —
-// behaviour matches the pre-median-mark codepath. App wiring at
-// app/keepers/keepers.go MUST call SetFundingKeeper before handing
-// the risk keeper to Trade/Matching/Liquidation so every consumer
-// observes the gate.
+// When the funding keeper is unwired (legacy callers / tests) the
+// staleness gate is skipped. App wiring MUST call SetFundingKeeper
+// before handing this keeper to Trade/Matching/Liquidation so every
+// consumer observes the gate.
 func (k Keeper) gateMarkPrice(ctx context.Context, marketIdx uint32, d markettypes.MarketDetails) error {
 	if d.MarkPrice == 0 {
 		return types.ErrZeroMarkPrice.Wrapf("market=%d", marketIdx)
