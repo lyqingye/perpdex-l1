@@ -11,12 +11,21 @@ import perptypes "github.com/perpdex/perpdex-l1/types"
 // MsgUpdateParams once they have measured production EndBlocker cost.
 const DefaultMaxMarketsExpiredPerBlock = uint32(32)
 
+// DefaultMaxMarkPriceStalenessMs caps how stale `MarketDetails.MarkPrice`
+// may be (in milliseconds) before downstream consumers (x/risk,
+// x/trade, x/matching, x/liquidation) MUST treat it as missing. The
+// mark price is refreshed every block by the funding BeginBlocker
+// median pipeline, so 5 minutes is a generous safety margin that
+// still catches a halted funding loop or stalled oracle pipeline.
+const DefaultMaxMarkPriceStalenessMs = int64(5 * 60 * 1000)
+
 func DefaultParams() Params {
 	return Params{
-		MaxPerpsMarketIndex:        perptypes.MaxPerpsMarketIndex,
-		MinSpotMarketIndex:         perptypes.MinSpotMarketIndex,
-		MaxSpotMarketIndex:         perptypes.MaxSpotMarketIndex,
-		MaxMarketsExpiredPerBlock:  DefaultMaxMarketsExpiredPerBlock,
+		MaxPerpsMarketIndex:       perptypes.MaxPerpsMarketIndex,
+		MinSpotMarketIndex:        perptypes.MinSpotMarketIndex,
+		MaxSpotMarketIndex:        perptypes.MaxSpotMarketIndex,
+		MaxMarketsExpiredPerBlock: DefaultMaxMarketsExpiredPerBlock,
+		MaxMarkPriceStalenessMs:   DefaultMaxMarkPriceStalenessMs,
 	}
 }
 
@@ -49,6 +58,15 @@ func (p Params) Validate() error {
 	// auto-expiry path (governance must then call MsgUpdateMarket
 	// explicitly to delist). No upper bound check: the param is
 	// bounded by what each block can complete in practice.
+
+	// 0 disables the staleness gate (only useful in tests / genesis
+	// bootstrapping). Negative is meaningless.
+	if p.MaxMarkPriceStalenessMs < 0 {
+		return ErrInvalidParams.Wrapf(
+			"max_mark_price_staleness_ms=%d must be >= 0",
+			p.MaxMarkPriceStalenessMs,
+		)
+	}
 	return nil
 }
 

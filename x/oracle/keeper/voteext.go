@@ -30,20 +30,20 @@ const OracleInfoIndex = 0
 //
 // Lifecycle of one block (height H, vote extensions enabled):
 //
-//   ┌───────────────────────────────────────────────────────────────────┐
-//   │ T0  ExtendVote (every validator, off-consensus goroutine)        │
-//   │       reads daemon.Cache → marshals OracleVote → veCodec.Encode   │
-//   │ T1  VerifyVoteExtension (every validator on each peer's VE)       │
-//   │       veCodec.Decode + per-VE schema check                        │
-//   │ T2  CometBFT ships LocalLastCommit (height H-1) to proposer of H  │
-//   │ T3  PrepareProposal (proposer of H)                               │
-//   │       ecCodec.Encode(req.LocalLastCommit) → Txs[0]                │
-//   │ T4  ProcessProposal (every other validator on the proposed block) │
-//   │       ecCodec.Decode(Txs[0]) → ValidateExtendedCommit (2/3+)      │
-//   │ T5  PreBlock (every validator on the proposed block, in finalize) │
-//   │       ecCodec.Decode(Txs[0]) → weighted median per market →       │
-//   │       Keeper.SetPrice(...) writes through to IAVL                 │
-//   └───────────────────────────────────────────────────────────────────┘
+//	┌───────────────────────────────────────────────────────────────────┐
+//	│ T0  ExtendVote (every validator, off-consensus goroutine)        │
+//	│       reads daemon.Cache → marshals OracleVote → veCodec.Encode   │
+//	│ T1  VerifyVoteExtension (every validator on each peer's VE)       │
+//	│       veCodec.Decode + per-VE schema check                        │
+//	│ T2  CometBFT ships LocalLastCommit (height H-1) to proposer of H  │
+//	│ T3  PrepareProposal (proposer of H)                               │
+//	│       ecCodec.Encode(req.LocalLastCommit) → Txs[0]                │
+//	│ T4  ProcessProposal (every other validator on the proposed block) │
+//	│       ecCodec.Decode(Txs[0]) → ValidateExtendedCommit (2/3+)      │
+//	│ T5  PreBlock (every validator on the proposed block, in finalize) │
+//	│       ecCodec.Decode(Txs[0]) → weighted median per market →       │
+//	│       Keeper.SetPrice(...) writes through to IAVL                 │
+//	└───────────────────────────────────────────────────────────────────┘
 //
 // The pipeline mirrors what dydx v4 does with skip-mev/connect (see
 // `abci/proposals` and `abci/preblock/oracle` upstream); the byte
@@ -286,4 +286,3 @@ func CountCommittedVotes(ext abci.ExtendedCommitInfo) (committedPower, totalPowe
 // ErrInvalidExtendedCommit is the error type returned by validate-only
 // helpers that need a sentinel for ProcessProposal callers.
 var ErrInvalidExtendedCommit = errors.New("oracle: invalid extended commit")
-

@@ -182,7 +182,7 @@ func (s *FundingSuite) TestPremiumAccumulatesAndSettles() {
 
 	// 4. Advance one full funding period plus a minute of slack so the
 	// next BeginBlocker:
-	//   - clears the per-market 1-minute throttle (LastUpdatedTimestamp
+	//   - clears the per-market 1-minute throttle (LastPremiumSampleTimestamp
 	//     was last bumped during DepositUSDC / PlaceLimitOrder blocks),
 	//     allowing one fresh premium sample;
 	//   - crosses the hour-boundary

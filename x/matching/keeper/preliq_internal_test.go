@@ -7,7 +7,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
-	markettypes "github.com/perpdex/perpdex-l1/x/market/types"
 	"github.com/perpdex/perpdex-l1/x/matching/types"
 )
 
@@ -22,13 +21,6 @@ func (s stubPreLiqRisk) GetHealthStatus(_ context.Context, _ uint64) (uint32, er
 }
 func (s stubPreLiqRisk) GetIsolatedHealthStatus(_ context.Context, _ uint64, _ uint32) (uint32, error) {
 	return s.iso, nil
-}
-
-// GetMarkAndMarketDetails is unused by checkPreLiquidationGate; the
-// stub returns a benign fresh mark so the matching RiskKeeper
-// interface is satisfied.
-func (stubPreLiqRisk) GetMarkAndMarketDetails(_ context.Context, mkt uint32) (uint32, markettypes.MarketDetails, error) {
-	return 1, markettypes.MarketDetails{MarketIndex: mkt, MarkPrice: 1, LastMarkPriceTimestamp: 1}, nil
 }
 
 // TestCheckPreLiquidationGate exercises the matching-side pre-liquidation

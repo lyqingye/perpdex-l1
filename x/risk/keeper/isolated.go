@@ -26,22 +26,18 @@ func (k Keeper) ComputeIsolatedRisk(ctx context.Context, accountIdx uint64, mark
 	if pos.MarginMode != perptypes.IsolatedMargin {
 		return types.RiskParameters{}, accounttypes.ErrPositionNotIsolated
 	}
-	mark, err := k.resolveMarkPrice(ctx, marketIdx)
+	markPrice, md, err := k.marketKeeper.GetMarkPriceAndDetails(ctx, marketIdx)
 	if err != nil {
 		return types.RiskParameters{}, err
 	}
-	md, err := k.marketKeeper.GetMarketDetails(ctx, marketIdx)
-	if err != nil {
-		return types.RiskParameters{}, err
-	}
-	uPnL := pos.UnrealizedPnL(mark)
+	uPnL := pos.UnrealizedPnL(markPrice)
 	return types.RiskParameters{
 		Collateral:                   pos.AllocatedMargin,
 		CollateralWithFunding:        pos.AllocatedMargin,
 		TotalAccountValue:            pos.AllocatedMargin.Add(uPnL),
-		InitialMarginRequirement:     pos.InitialMargin(mark, md),
-		MaintenanceMarginRequirement: pos.MaintenanceMargin(mark, md),
-		CloseOutMarginRequirement:    pos.CloseOutMargin(mark, md),
+		InitialMarginRequirement:     pos.InitialMargin(markPrice, md),
+		MaintenanceMarginRequirement: pos.MaintenanceMargin(markPrice, md),
+		CloseOutMarginRequirement:    pos.CloseOutMargin(markPrice, md),
 	}, nil
 }
 

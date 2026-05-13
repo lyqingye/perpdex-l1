@@ -30,8 +30,10 @@ var (
 
 type AppModuleBasic struct{ cdc codec.Codec }
 
-func (AppModuleBasic) Name() string                                    { return types.ModuleName }
-func (AppModuleBasic) RegisterLegacyAminoCodec(cdc *codec.LegacyAmino) { types.RegisterLegacyAminoCodec(cdc) }
+func (AppModuleBasic) Name() string { return types.ModuleName }
+func (AppModuleBasic) RegisterLegacyAminoCodec(cdc *codec.LegacyAmino) {
+	types.RegisterLegacyAminoCodec(cdc)
+}
 func (AppModuleBasic) RegisterInterfaces(reg cdctypes.InterfaceRegistry) {
 	types.RegisterInterfaces(reg)
 }

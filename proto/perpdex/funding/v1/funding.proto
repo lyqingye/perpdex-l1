@@ -11,10 +11,8 @@ message Params {
   int64 funding_period_ms = 1;
   int64 funding_period_divisor = 2;
   uint32 max_premium_sample_count = 3;
-  // max_mark_staleness_ms bounds how old MarketDetails.MarkPrice
-  // (written by the funding BeginBlocker via median(impact, idx+EMA,
-  // oracle_mark)) is allowed to be before downstream consumers
-  // (x/risk, x/trade) MUST treat it as missing. Zero disables the
-  // freshness gate entirely (only recommended for tests).
-  int64 max_mark_staleness_ms = 4;
+  // Field 4 retired; mark-price staleness moved to
+  // market.Params.max_mark_price_staleness_ms.
+  reserved 4;
+  reserved "max_mark_staleness_ms";
 }

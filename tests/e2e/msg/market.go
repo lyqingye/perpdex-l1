@@ -15,24 +15,24 @@ import (
 // tweaked numeric knobs. All other fields use sensible defaults derived
 // from the chain-wide perptypes constants.
 type MarketOpts struct {
-	MarketIndex      uint32
-	MarketType       uint32 // perptypes.MarketTypePerps / Spot
-	BaseAssetID      uint32
-	QuoteAssetID     uint32
-	TakerFee         uint32 // fee_tick units (1_000_000 = 100%)
-	MakerFee         uint32
-	LiquidationFee   uint32
-	OpenInterestCap  uint64
-	DefaultIMF       uint32 // margin_tick units (10_000 = 100%)
-	MinIMF           uint32
-	MaintenanceMF    uint32
-	CloseOutMF       uint32
-	FundingClampSm   uint32
-	FundingClampBig  uint32
-	MinBaseAmount    uint64
-	MinQuoteAmount   uint64
-	OrderQuoteLimit  int64
-	ExpiryTimestamp  int64
+	MarketIndex     uint32
+	MarketType      uint32 // perptypes.MarketTypePerps / Spot
+	BaseAssetID     uint32
+	QuoteAssetID    uint32
+	TakerFee        uint32 // fee_tick units (1_000_000 = 100%)
+	MakerFee        uint32
+	LiquidationFee  uint32
+	OpenInterestCap uint64
+	DefaultIMF      uint32 // margin_tick units (10_000 = 100%)
+	MinIMF          uint32
+	MaintenanceMF   uint32
+	CloseOutMF      uint32
+	FundingClampSm  uint32
+	FundingClampBig uint32
+	MinBaseAmount   uint64
+	MinQuoteAmount  uint64
+	OrderQuoteLimit int64
+	ExpiryTimestamp int64
 }
 
 // DefaultPerpMarketOpts returns a MarketOpts good for most happy-path
@@ -44,14 +44,14 @@ func DefaultPerpMarketOpts(marketIndex uint32, baseAssetID uint32) MarketOpts {
 		MarketType:      perptypes.MarketTypePerps,
 		BaseAssetID:     baseAssetID,
 		QuoteAssetID:    perptypes.USDCAssetIndex,
-		TakerFee:        1_000,                                       // 0.10%
-		MakerFee:        500,                                         // 0.05%
-		LiquidationFee:  2_000,                                       // 0.20%
-		OpenInterestCap: 1_000_000_000_000,                           // very large cap
-		DefaultIMF:      500,                                         // 5.0%
-		MinIMF:          500,                                         // 5.0%
-		MaintenanceMF:   250,                                         // 2.5%
-		CloseOutMF:      125,                                         // 1.25%
+		TakerFee:        1_000,             // 0.10%
+		MakerFee:        500,               // 0.05%
+		LiquidationFee:  2_000,             // 0.20%
+		OpenInterestCap: 1_000_000_000_000, // very large cap
+		DefaultIMF:      500,               // 5.0%
+		MinIMF:          500,               // 5.0%
+		MaintenanceMF:   250,               // 2.5%
+		CloseOutMF:      125,               // 1.25%
 		FundingClampSm:  uint32(perptypes.FundingSmallClamp),
 		FundingClampBig: uint32(perptypes.FundingBigClamp),
 		MinBaseAmount:   1,

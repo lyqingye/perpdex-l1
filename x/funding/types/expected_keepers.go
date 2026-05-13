@@ -22,11 +22,10 @@ type OracleKeeper interface {
 type OrderbookKeeper interface {
 	BestBidAsk(ctx context.Context, market uint32) (uint32, uint32, error)
 	// ComputeImpactPrice walks the requested side's resting depth using
-	// the per-market impact notional derived from
-	// MarketDetails.MinInitialMarginFraction (see x/orderbook
-	// keeper.MarketImpactNotional) and returns the VWAP. The boolean is
-	// false when the side has insufficient depth.
-	ComputeImpactPrice(ctx context.Context, market uint32, isAsk bool) (uint32, bool, error)
+	// the per-market impact notional (see
+	// x/orderbook keeper.MarketImpactNotional) and returns the VWAP.
+	// Returns 0 when the side has insufficient depth.
+	ComputeImpactPrice(ctx context.Context, market uint32, isAsk bool) (uint32, error)
 }
 
 type AccountKeeper interface {

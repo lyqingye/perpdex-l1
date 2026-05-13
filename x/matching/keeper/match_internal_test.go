@@ -120,6 +120,13 @@ func (s *stubMarket) AllocateNonce(_ context.Context, _ uint32, isAsk bool) (int
 	return s.nextNonceBid, nil
 }
 
+// GetMarkPriceAndDetails returns a benign fresh mark; matching tests that
+// exercise the trigger-activation path live in their own files and
+// override the keeper directly.
+func (*stubMarket) GetMarkPriceAndDetails(_ context.Context, mkt uint32) (uint32, markettypes.MarketDetails, error) {
+	return 1, markettypes.MarketDetails{MarketIndex: mkt, MarkPrice: 1, LastMarkPriceRefreshTimestamp: 1}, nil
+}
+
 func (*stubMarket) SetMarketDetails(_ context.Context, _ markettypes.MarketDetails) error {
 	return nil
 }

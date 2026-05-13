@@ -28,6 +28,18 @@ const (
 	FundingRateTick       = int64(1_000_000)
 )
 
+// Mark-price constants.
+const (
+	// MarkPremiumEmaTauMs is the EMA time constant used by
+	// refreshMarkPrice to smooth `clamp(impact - index, ±index/200)`
+	// into the price_1 premium component (8 minutes).
+	MarkPremiumEmaTauMs = int64(8 * 60 * 1_000)
+	// MarkPremiumClampDivisor caps |premium| at `index / divisor`
+	// (i.e. ±0.5% of index for divisor=200) so a single impact-price
+	// spike cannot drag mark price arbitrarily far from index.
+	MarkPremiumClampDivisor = int64(200)
+)
+
 // Precision / tick constants. See zk-dex/l1/02-data-types.md §2.2.
 const (
 	OneUSDC                    = uint64(1_000_000)
@@ -42,19 +54,19 @@ const (
 
 // Account / market index ranges. See zk-dex/l1/02-data-types.md §2.4.
 const (
-	MaxAccountIndex                  = uint64(281_474_976_710_654)
-	NilAccountIndex                  = uint64(281_474_976_710_655)
-	MaxMasterAccountIndex            = uint64(140_737_488_355_327)
-	MinSubAccountIndex               = uint64(140_737_488_355_328)
-	NilMasterAccountIndex            = uint64(0)
-	TreasuryAccountIndex             = uint64(0)
-	InsuranceFundOperatorAccountIdx  = uint64(1)
-	MaxPerpsMarketIndex              = uint32(254)
-	MinSpotMarketIndex               = uint32(2048)
-	MaxSpotMarketIndex               = uint32(4094)
-	NilMarketIndex                   = uint32(255)
-	PositionListSize                 = uint32(255)
-	FirstUserMasterAccountIndex      = uint64(2)
+	MaxAccountIndex                 = uint64(281_474_976_710_654)
+	NilAccountIndex                 = uint64(281_474_976_710_655)
+	MaxMasterAccountIndex           = uint64(140_737_488_355_327)
+	MinSubAccountIndex              = uint64(140_737_488_355_328)
+	NilMasterAccountIndex           = uint64(0)
+	TreasuryAccountIndex            = uint64(0)
+	InsuranceFundOperatorAccountIdx = uint64(1)
+	MaxPerpsMarketIndex             = uint32(254)
+	MinSpotMarketIndex              = uint32(2048)
+	MaxSpotMarketIndex              = uint32(4094)
+	NilMarketIndex                  = uint32(255)
+	PositionListSize                = uint32(255)
+	FirstUserMasterAccountIndex     = uint64(2)
 )
 
 // Asset constants.
@@ -95,15 +107,15 @@ const (
 
 // Order constants.
 const (
-	MaxOrderPrice         = uint32(4_294_967_295)
-	MaxOrderBaseAmount    = uint64(281_474_976_710_655)
-	MaxOrderQuoteAmount   = uint64(281_474_976_710_655)
-	FirstAskNonce         = int64(1)
-	FirstBidNonce         = int64(281_474_976_710_655)
-	MaxNonce              = int64(281_474_976_710_655)
-	MaxSkipNonceCap       = int64(140_737_488_355_327)
-	MinClientOrderIndex   = uint64(1)
-	MaxClientOrderIndex   = uint64(281_474_976_710_655)
+	MaxOrderPrice       = uint32(4_294_967_295)
+	MaxOrderBaseAmount  = uint64(281_474_976_710_655)
+	MaxOrderQuoteAmount = uint64(281_474_976_710_655)
+	FirstAskNonce       = int64(1)
+	FirstBidNonce       = int64(281_474_976_710_655)
+	MaxNonce            = int64(281_474_976_710_655)
+	MaxSkipNonceCap     = int64(140_737_488_355_327)
+	MinClientOrderIndex = uint64(1)
+	MaxClientOrderIndex = uint64(281_474_976_710_655)
 )
 
 // Perp position bit-width bounds. The prover circuit constrains
@@ -142,18 +154,18 @@ const (
 // `INITIAL_POOL_SHARE_VALUE`, `NB_STRATEGIES`, `SHARES_LIST_SIZE` and the
 // PUBLIC_POOL status enum.
 const (
-	NbStrategies              = 8
-	SharesListSize            = 16
-	InitialPoolShareValue     = uint64(1_000) // 0.001 USDC
-	PublicPoolStatusActive    = uint32(0)
-	PublicPoolStatusFrozen    = uint32(1)
+	NbStrategies               = 8
+	SharesListSize             = 16
+	InitialPoolShareValue      = uint64(1_000) // 0.001 USDC
+	PublicPoolStatusActive     = uint32(0)
+	PublicPoolStatusFrozen     = uint32(1)
 	DefaultLLPCooldownPeriodMs = int64(7 * 24 * 60 * 60 * 1000) // 7 days
 )
 
 // Market types & status.
 const (
-	MarketTypePerps    = uint32(0)
-	MarketTypeSpot     = uint32(1)
+	MarketTypePerps     = uint32(0)
+	MarketTypeSpot      = uint32(1)
 	MarketStatusExpired = uint32(0)
 	MarketStatusActive  = uint32(1)
 )
@@ -213,18 +225,18 @@ const (
 
 // Health status.
 const (
-	HealthHealthy             = uint32(0)
-	HealthPreLiquidation      = uint32(1)
-	HealthPartialLiquidation  = uint32(2)
-	HealthFullLiquidation     = uint32(3)
-	HealthBankruptcy          = uint32(4)
+	HealthHealthy            = uint32(0)
+	HealthPreLiquidation     = uint32(1)
+	HealthPartialLiquidation = uint32(2)
+	HealthFullLiquidation    = uint32(3)
+	HealthBankruptcy         = uint32(4)
 )
 
 // Cancel-all modes.
 const (
-	ImmediateCancelAll       = uint32(0)
-	ScheduledCancelAll       = uint32(1)
-	AbortScheduledCancelAll  = uint32(2)
+	ImmediateCancelAll      = uint32(0)
+	ScheduledCancelAll      = uint32(1)
+	AbortScheduledCancelAll = uint32(2)
 )
 
 // Oracle aggregation method tag stored on every OraclePrice record. The

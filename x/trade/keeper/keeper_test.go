@@ -200,6 +200,11 @@ func (s *stubAccount) TransferAccountAssetBalance(
 
 type stubMarket struct {
 	oi map[uint32]int64
+	// markPrice + imfBps populate the MarketDetails returned by
+	// GetMarkPriceAndDetails; default 0 short-circuits the IM / uPnL math
+	// to zero so legacy test expectations stay intact.
+	markPrice uint64
+	imfBps    uint64
 }
 
 func (s *stubMarket) GetMarket(_ context.Context, idx uint32) (markettypes.Market, error) {
@@ -214,6 +219,18 @@ func (s *stubMarket) UpdateOpenInterest(_ context.Context, idx uint32, delta int
 	}
 	s.oi[idx] += delta
 	return nil
+}
+
+// GetMarkPriceAndDetails feeds the isolated-margin auto-allocation path.
+// `markPrice` + `imfBps` from the surrounding test mutate the
+// per-test return; defaults (zero) short-circuit the IM/uPnL math to
+// zero so legacy expectations hold.
+func (s *stubMarket) GetMarkPriceAndDetails(_ context.Context, idx uint32) (uint32, markettypes.MarketDetails, error) {
+	md := markettypes.MarketDetails{
+		MarketIndex:                  idx,
+		DefaultInitialMarginFraction: uint32(s.imfBps),
+	}
+	return uint32(s.markPrice), md, nil
 }
 
 type stubFunding struct{}
@@ -233,11 +250,6 @@ type stubRisk struct {
 	// reports an essentially unbounded headroom so existing tests
 	// keep passing.
 	availableCollateral map[uint64]math.Int
-	// markPrice + imfBps populate the MarketDetails returned by
-	// GetMarkAndMarketDetails; default 0 short-circuits the IM / uPnL
-	// math to zero so legacy test expectations stay intact.
-	markPrice uint64
-	imfBps    uint64
 }
 
 func (s *stubRisk) IsValidRiskChangeFrom(_ context.Context, _ uint64, _ risktypes.PreRiskSnapshot) (bool, error) {
@@ -261,13 +273,6 @@ func (s *stubRisk) GetAvailableUsdcCollateral(_ context.Context, accountIdx uint
 	// Default: large constant so non-isolated / no-margin-delta tests
 	// don't trip the cross-collateral pre-check.
 	return math.NewIntFromUint64(1<<62 - 1), nil
-}
-
-func (s *stubRisk) GetMarkAndMarketDetails(_ context.Context, _ uint32) (uint32, markettypes.MarketDetails, error) {
-	md := markettypes.MarketDetails{
-		DefaultInitialMarginFraction: uint32(s.imfBps),
-	}
-	return uint32(s.markPrice), md, nil
 }
 
 func newSdkCtx(t *testing.T) (sdk.Context, *stubAccount, *stubMarket, *stubRisk, tradekeeper.Keeper) {

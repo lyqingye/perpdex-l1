@@ -27,7 +27,7 @@ type fakeProvider struct {
 	once  sync.Once
 }
 
-func (f *fakeProvider) Name() string                 { return f.name }
+func (f *fakeProvider) Name() string                { return f.name }
 func (f *fakeProvider) Pairs() []types.CurrencyPair { return f.pairs }
 func (f *fakeProvider) Start(ctx context.Context, out chan<- []types.Price) error {
 	push := func() {

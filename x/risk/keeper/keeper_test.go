@@ -74,15 +74,15 @@ func (s *stubAccountKeeper) IterateAccountPositions(
 }
 
 // stubMarketKeeper mirrors the oracle's MarkPrice into
-// MarketDetails.MarkPrice on read. Risk now reads the authoritative mark
-// from MarketDetails (written every block by the funding BeginBlocker's
-// median pipeline); this shim lets the legacy test scaffolding that
-// configures `stubOracleKeeper{price: OraclePrice{MarkPrice: X}}`
-// continue to drive the mark used by ComputeCrossRisk / ComputeIsolatedRisk
-// without rewriting every test.
+// MarketDetails.MarkPrice on read and implements the mark gate
+// (zero + staleness) locally — risk now consumes the gated reader
+// from market keeper. `maxStaleness` defaults to 0 (gate disabled);
+// tests that exercise the gate set it explicitly together with
+// `md.LastMarkPriceRefreshTimestamp`.
 type stubMarketKeeper struct {
-	md     markettypes.MarketDetails
-	mirror *uint32 // optional: if non-nil overrides md.MarkPrice on read
+	md           markettypes.MarketDetails
+	mirror       *uint32 // optional: if non-nil overrides md.MarkPrice on read
+	maxStaleness int64   // when > 0 enables the staleness gate
 }
 
 func (s stubMarketKeeper) GetMarket(_ context.Context, idx uint32) (markettypes.Market, error) {
@@ -96,6 +96,44 @@ func (s stubMarketKeeper) GetMarketDetails(_ context.Context, _ uint32) (markett
 	return md, nil
 }
 
+// gateMark mirrors market keeper's gateMarkPrice so risk-side tests
+// keep the legacy "zero or stale fails closed" assertions.
+func (s stubMarketKeeper) gateMark(ctx context.Context, marketIdx uint32, d markettypes.MarketDetails) error {
+	if d.MarkPrice == 0 {
+		return markettypes.ErrZeroMarkPrice.Wrapf("market=%d", marketIdx)
+	}
+	if s.maxStaleness <= 0 {
+		return nil
+	}
+	now := sdk.UnwrapSDKContext(ctx).BlockTime().UnixMilli()
+	if d.LastMarkPriceRefreshTimestamp == 0 || now-d.LastMarkPriceRefreshTimestamp > s.maxStaleness {
+		return markettypes.ErrStaleMarkPrice.Wrapf("market=%d", marketIdx)
+	}
+	return nil
+}
+
+func (s stubMarketKeeper) GetMarkPrice(ctx context.Context, marketIdx uint32) (uint32, error) {
+	d, err := s.GetMarketDetails(ctx, marketIdx)
+	if err != nil {
+		return 0, err
+	}
+	if err := s.gateMark(ctx, marketIdx, d); err != nil {
+		return 0, err
+	}
+	return d.MarkPrice, nil
+}
+
+func (s stubMarketKeeper) GetMarkPriceAndDetails(ctx context.Context, marketIdx uint32) (uint32, markettypes.MarketDetails, error) {
+	d, err := s.GetMarketDetails(ctx, marketIdx)
+	if err != nil {
+		return 0, markettypes.MarketDetails{}, err
+	}
+	if err := s.gateMark(ctx, marketIdx, d); err != nil {
+		return 0, markettypes.MarketDetails{}, err
+	}
+	return d.MarkPrice, d, nil
+}
+
 type stubOracleKeeper struct {
 	price oracletypes.OraclePrice
 	err   error
@@ -103,18 +141,6 @@ type stubOracleKeeper struct {
 
 func (s stubOracleKeeper) GetPrice(_ context.Context, _ uint32) (oracletypes.OraclePrice, error) {
 	return s.price, s.err
-}
-
-// stubFundingKeeper feeds resolveMarkPrice's staleness gate. Tests that
-// don't care about staleness can leave it un-wired (SetFundingKeeper
-// never called) which bypasses the gate.
-type stubFundingKeeper struct {
-	maxStaleness int64
-	err          error
-}
-
-func (s stubFundingKeeper) MaxMarkStalenessMs(_ context.Context) (int64, error) {
-	return s.maxStaleness, s.err
 }
 
 func makeKeeper(t *testing.T, ak *stubAccountKeeper, mk stubMarketKeeper, ok stubOracleKeeper) (riskkeeper.Keeper, sdk.Context) {
@@ -156,18 +182,20 @@ func TestComputeCrossRisk_StalePriceFailsClosed(t *testing.T) {
 			LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 		},
 	}
-	// Non-zero mark with a LastMarkPriceTimestamp that is "now - 1h" so
+	// Non-zero mark with a LastMarkPriceRefreshTimestamp that is "now - 1h" so
 	// the staleness gate trips against the 1-minute stub.
-	mk := stubMarketKeeper{md: markettypes.MarketDetails{
-		MarkPrice:              100,
-		LastMarkPriceTimestamp: 0, // never refreshed by funding pipeline
-	}}
+	mk := stubMarketKeeper{
+		md: markettypes.MarketDetails{
+			MarkPrice:                     100,
+			LastMarkPriceRefreshTimestamp: 0, // never refreshed by funding pipeline
+		},
+		maxStaleness: 60_000, // 1m
+	}
 	ok := stubOracleKeeper{}
 	k, ctx := makeKeeper(t, &ak, mk, ok)
-	k.SetFundingKeeper(stubFundingKeeper{maxStaleness: 60_000}) // 1m
 
 	_, err := k.ComputeCrossRisk(ctx, 1)
-	require.ErrorIs(t, err, risktypes.ErrMissingPrice)
+	require.ErrorIs(t, err, markettypes.ErrStaleMarkPrice)
 }
 
 // TestComputeCrossRisk_ZeroMarkPriceRejected enforces the "non-zero mark"
@@ -186,7 +214,7 @@ func TestComputeCrossRisk_ZeroMarkPriceRejected(t *testing.T) {
 	k, ctx := makeKeeper(t, &ak, mk, ok)
 
 	_, err := k.ComputeCrossRisk(ctx, 1)
-	require.ErrorIs(t, err, risktypes.ErrZeroMarkPrice)
+	require.ErrorIs(t, err, markettypes.ErrZeroMarkPrice)
 }
 
 // TestIsValidRiskChangeFrom_NoPreStateFailClosed verifies that an

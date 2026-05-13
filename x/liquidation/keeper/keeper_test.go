@@ -159,7 +159,13 @@ func (s *stubAccount) IsAuthorized(_ context.Context, signer string, idx uint64)
 	return false, nil
 }
 
-type stubMarket struct{}
+// stubMarket implements types.MarketKeeper for liquidation tests.
+// When wired with a *stubRisk it delegates markPrice / MarketDetails reads
+// to the risk stub's seeded tables so ADL ranking tests pick up the
+// same per-market values they configured on `rk.marks`/`rk.mds`.
+type stubMarket struct {
+	rk *stubRisk
+}
 
 func (stubMarket) GetMarket(_ context.Context, idx uint32) (markettypes.Market, error) {
 	return markettypes.Market{
@@ -168,8 +174,29 @@ func (stubMarket) GetMarket(_ context.Context, idx uint32) (markettypes.Market, 
 		LiquidationFee: 5_000, // 0.5% in fee tick units
 	}, nil
 }
-func (stubMarket) GetMarketDetails(_ context.Context, idx uint32) (markettypes.MarketDetails, error) {
+func (s stubMarket) GetMarketDetails(_ context.Context, idx uint32) (markettypes.MarketDetails, error) {
+	if s.rk != nil {
+		return s.rk.mdFor(idx), nil
+	}
 	return markettypes.MarketDetails{MarketIndex: idx}, nil
+}
+
+// GetMarkPriceAndDetails delegates to the wired risk stub so ADL ranking
+// tests share the per-market markPrice seeds; absent a wiring it returns a
+// benign fresh fixture.
+func (s stubMarket) GetMarkPriceAndDetails(_ context.Context, mkt uint32) (uint32, markettypes.MarketDetails, error) {
+	if s.rk != nil {
+		md := s.rk.mdFor(mkt)
+		markPrice := s.rk.markFor(mkt)
+		if md.LastMarkPriceRefreshTimestamp == 0 {
+			md.LastMarkPriceRefreshTimestamp = 1
+		}
+		if md.MarkPrice == 0 {
+			md.MarkPrice = markPrice
+		}
+		return markPrice, md, nil
+	}
+	return 1, markettypes.MarketDetails{MarketIndex: mkt, MarkPrice: 1, LastMarkPriceRefreshTimestamp: 1}, nil
 }
 
 // stubRisk implements types.RiskKeeper for liquidation tests.
@@ -192,7 +219,7 @@ type stubRisk struct {
 	statuses   map[uint64]uint32                    // per-account override (falls back to `status`)
 	isoStat    map[[2]uint64]uint32                 // (acc, market) -> isolated status
 	zero       map[[2]uint64]uint32                 // (acc, market) -> zero price override
-	marks      map[uint32]uint32                    // market -> mark price (default 100)
+	marks      map[uint32]uint32                    // market -> markPrice price (default 100)
 	mds        map[uint32]markettypes.MarketDetails // market -> details
 	cross      map[uint64]risktypes.RiskParameters  // account -> cross aggregate (overrides status projection)
 	iso        map[[2]uint64]risktypes.RiskParameters
@@ -230,13 +257,10 @@ func (s *stubRisk) GetHealthStatus(_ context.Context, acc uint64) (uint32, error
 func (s *stubRisk) GetIsolatedHealthStatus(_ context.Context, acc uint64, mkt uint32) (uint32, error) {
 	return s.isoStatusFor(acc, mkt), nil
 }
-func (s *stubRisk) GetMarkAndMarketDetails(_ context.Context, mkt uint32) (uint32, markettypes.MarketDetails, error) {
-	return s.markFor(mkt), s.mdFor(mkt), nil
-}
 
 // GetZeroPriceSnapshot mirrors the production lightweight snapshot:
 // reads the position, short-circuits empty positions, and otherwise
-// returns the test-seeded zero price (or `mark` as the default).
+// returns the test-seeded zero price (or `markPrice` as the default).
 func (s *stubRisk) GetZeroPriceSnapshot(
 	ctx context.Context, acc uint64, mkt uint32,
 ) (risktypes.ZeroPriceSnapshot, error) {
@@ -265,7 +289,7 @@ func (s *stubRisk) GetLiquidationRiskSnapshot(
 	if err != nil {
 		return risktypes.LiquidationRiskSnapshot{}, err
 	}
-	mark := s.markFor(mkt)
+	markPrice := s.markFor(mkt)
 	md := s.mdFor(mkt)
 	crossRP, ok := s.cross[acc]
 	if !ok {
@@ -284,12 +308,12 @@ func (s *stubRisk) GetLiquidationRiskSnapshot(
 		if pos.BaseSize.IsZero() {
 			zp = 0
 		} else {
-			zp = mark
+			zp = markPrice
 		}
 	}
 	return risktypes.LiquidationRiskSnapshot{
 		Position:      pos,
-		MarkPrice:     mark,
+		MarkPrice:     markPrice,
 		MarketDetails: md,
 		Risk:          risk,
 		CrossRisk:     crossRP,
@@ -503,7 +527,7 @@ func newKeeperWithFunding(
 		runtime.NewKVStoreService(keys[liqtypes.StoreKey]),
 		"px1qv9pzxqlyckngw6zf9g9whn9d3eh4qvgsxc8cx",
 		ak,
-		stubMarket{},
+		stubMarket{rk: rk},
 		rk,
 		tk,
 		matchk,
@@ -661,7 +685,7 @@ func TestLiquidate_DelegatesToMatchingKeeperWithLLPRecipient(t *testing.T) {
 	}
 	rk := newStubRisk()
 	rk.status = perptypes.HealthPartialLiquidation
-	rk.zero[[2]uint64{100, 0}] = 95 // mark-based zero price
+	rk.zero[[2]uint64{100, 0}] = 95 // markPrice-based zero price
 	tk := &stubTrade{}
 	matchk := newStubMatching()
 	k, ctx := newKeeper(t, ak, rk, tk, matchk)
@@ -713,9 +737,9 @@ func TestEndBlocker_FullLiquidationPrefersLLPThenADL(t *testing.T) {
 	}
 	rk := newStubRisk()
 	rk.status = perptypes.HealthFullLiquidation
-	// uPnL ordering is derived from `pos.UnrealizedPnL(mark)`; victim
+	// uPnL ordering is derived from `pos.UnrealizedPnL(markPrice)`; victim
 	// 100 holds (Position=50, EntryQuote=5000), so at the stub default
-	// mark=100 the uPnL is -4500 (loss). Single position → trivially
+	// markPrice=100 the uPnL is -4500 (loss). Single position → trivially
 	// the worst.
 	tk := &stubTrade{}
 	matchk := newStubMatching()
@@ -774,7 +798,7 @@ func TestLLPAbsorb_StopsWhenLLPWouldBreachIMR(t *testing.T) {
 	}
 	rk := newStubRisk()
 	rk.status = perptypes.HealthFullLiquidation
-	// At default mark=100: victim 100 (50, 5000) → uPnL=-4500 (worst).
+	// At default markPrice=100: victim 100 (50, 5000) → uPnL=-4500 (worst).
 	// Cand 999 (-10, -2000) → uPnL=1000 (>0, qualifies as ADL cand).
 	rk.zero[[2]uint64{100, 0}] = 100
 	rk.zero[[2]uint64{999, 0}] = 110
@@ -837,7 +861,7 @@ func TestEndBlocker_BankruptcyFallsThroughToADLWhenLLPBreachesIMR(t *testing.T) 
 	rk.status = perptypes.HealthBankruptcy
 	rk.zero[[2]uint64{100, 0}] = 100
 	rk.zero[[2]uint64{999, 0}] = 110
-	// At default mark=100, cand 999 (-10, -2000) → uPnL=1000 (>0).
+	// At default markPrice=100, cand 999 (-10, -2000) → uPnL=1000 (>0).
 	rk.postSim[perptypes.InsuranceFundOperatorAccountIdx] = risktypes.RiskParameters{
 		Collateral:                   math.NewInt(100),
 		TotalAccountValue:            math.NewInt(50),
@@ -901,7 +925,7 @@ func TestAutoADL_RequiresZeroPriceAlignment(t *testing.T) {
 	rk.zero[[2]uint64{100, 0}] = 100 // victim long ZP = 100 (need ZP_cand >= 100)
 	rk.zero[[2]uint64{201, 0}] = 90  // misaligned: ZP < victim — skip
 	rk.zero[[2]uint64{202, 0}] = 105 // aligned
-	// At default mark=100, both shorts (Position=-10, EQ=-1500) and
+	// At default markPrice=100, both shorts (Position=-10, EQ=-1500) and
 	// (Position=-20, EQ=-2500) have positive uPnL (500 each), so they
 	// both qualify as ADL candidates.
 	tk := &stubTrade{}
@@ -946,7 +970,7 @@ func TestADLQueueBuilder_LeverageAndUPnLRanking(t *testing.T) {
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	rk := newStubRisk()
-	// Set mark=110 so both candidates' positions (Pos=10, EQ=1000)
+	// Set markPrice=110 so both candidates' positions (Pos=10, EQ=1000)
 	// realise uPnL=100 (=10*110-1000), giving an equal uPnLRatio so
 	// ranking is decided purely by leverage (higher first).
 	rk.marks[0] = 110
@@ -1147,7 +1171,7 @@ func TestEndBlocker_BankruptResidueStaysWithVictim(t *testing.T) {
 	rk.status = perptypes.HealthBankruptcy
 	rk.zero[[2]uint64{100, 0}] = 100
 	// Single victim position; ranking is trivial. At default
-	// mark=100 the (50, -10000) long realises uPnL = +15000 (offset
+	// markPrice=100 the (50, -10000) long realises uPnL = +15000 (offset
 	// by entry sign convention), but only the sign matters for the
 	// "LLP first" preflight here.
 	rk.postSim[perptypes.InsuranceFundOperatorAccountIdx] = risktypes.RiskParameters{
@@ -1271,7 +1295,7 @@ func TestDeleverage_InsufficientDeleveragerCollateral_UserADL(t *testing.T) {
 	// Force a low zeroPrice (10) for the bankrupt so closing the
 	// deleverager's short at that price realises ≈ -4500 in the
 	// engine's "Collateral += PnL" frame (deleverager has 0 cushion).
-	// Without this override the stub falls through to mark=100, at
+	// Without this override the stub falls through to markPrice=100, at
 	// which point the close PnL is zero and the assert short-circuits.
 	rk.zero[[2]uint64{100, 0}] = 10
 	tk := &stubTrade{}
@@ -1309,7 +1333,7 @@ func TestEndBlocker_ADLCandidateInsufficientCollateral_AdvancesToNext(t *testing
 	// First candidate (highest profit rank) has zero cushion and
 	// will trip the deleverager-side collateral assert. Picks a
 	// slightly more negative EntryQuote (-2200) than 202 (-2000) so
-	// that at mark=100 its uPnL ratio (=1200/2200) exceeds 202's
+	// that at markPrice=100 its uPnL ratio (=1200/2200) exceeds 202's
 	// (=1000/2000) and it ranks first in BuildADLQueue.
 	ak.accounts[201] = accounttypes.Account{
 		AccountIndex: 201, AccountType: perptypes.MasterAccountType,
@@ -1390,7 +1414,7 @@ func TestEndBlocker_CrossAggregateRefreshedAcrossMarkets(t *testing.T) {
 	}
 	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.NewInt(10)}
 	// Two FULL_LIQUIDATION cross positions. Market 0 is the worst
-	// (uPnL = pos*mark - EQ = 50*100 - 10_000 = -5_000 at mark=100);
+	// (uPnL = pos*markPrice - EQ = 50*100 - 10_000 = -5_000 at markPrice=100);
 	// market 1 is less bad (uPnL = 5*100 - 1_000 = -500). The
 	// LLP-takeover ranking and the persisted-position iterator both
 	// process market 0 first, so the post-fill mutation we install

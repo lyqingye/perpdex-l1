@@ -402,13 +402,7 @@ func (m *PriceLevelAggregate) GetBidCount() uint32 {
 	return 0
 }
 
-// Params is reserved for future orderbook-only governance knobs. The
-// historical fields have all been retired:
-//   - max_fills_per_msg / max_cancels_per_msg: live limits now on
-//     x/matching.Params.
-//   - impact_usdc_amount: replaced by the per-market derivation
-//     `IMPACT_USDC * MARGIN_TICK / min_initial_margin_fraction` in
-//     ComputeImpactPrice.
+// Reserved for future orderbook-only governance knobs.
 type Params struct {
 }
 

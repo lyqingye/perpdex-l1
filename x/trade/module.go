@@ -26,8 +26,8 @@ var (
 
 type AppModuleBasic struct{ cdc codec.Codec }
 
-func (AppModuleBasic) Name() string                                   { return types.ModuleName }
-func (AppModuleBasic) RegisterLegacyAminoCodec(_ *codec.LegacyAmino) {}
+func (AppModuleBasic) Name() string                                    { return types.ModuleName }
+func (AppModuleBasic) RegisterLegacyAminoCodec(_ *codec.LegacyAmino)   {}
 func (AppModuleBasic) RegisterInterfaces(_ cdctypes.InterfaceRegistry) {}
 func (b AppModuleBasic) DefaultGenesis(cdc codec.JSONCodec) json.RawMessage {
 	return cdc.MustMarshalJSON(types.DefaultGenesis())
@@ -40,8 +40,8 @@ func (b AppModuleBasic) ValidateGenesis(cdc codec.JSONCodec, _ client.TxEncoding
 	return gs.Validate()
 }
 func (AppModuleBasic) RegisterGRPCGatewayRoutes(_ client.Context, _ *runtime.ServeMux) {}
-func (AppModuleBasic) GetTxCmd() *cobra.Command                                          { return nil }
-func (AppModuleBasic) GetQueryCmd() *cobra.Command                                       { return nil }
+func (AppModuleBasic) GetTxCmd() *cobra.Command                                        { return nil }
+func (AppModuleBasic) GetQueryCmd() *cobra.Command                                     { return nil }
 
 type AppModule struct {
 	AppModuleBasic
@@ -52,10 +52,10 @@ func NewAppModule(cdc codec.Codec, k keeper.Keeper) AppModule {
 	return AppModule{AppModuleBasic: AppModuleBasic{cdc: cdc}, keeper: k}
 }
 
-func (am AppModule) IsAppModule()                              {}
-func (am AppModule) IsOnePerModuleType()                       {}
-func (am AppModule) RegisterServices(_ module.Configurator)    {}
-func (AppModule) ConsensusVersion() uint64                     { return ConsensusVersion }
+func (am AppModule) IsAppModule()                           {}
+func (am AppModule) IsOnePerModuleType()                    {}
+func (am AppModule) RegisterServices(_ module.Configurator) {}
+func (AppModule) ConsensusVersion() uint64                  { return ConsensusVersion }
 func (am AppModule) InitGenesis(ctx sdk.Context, cdc codec.JSONCodec, data json.RawMessage) {
 	var gs types.GenesisState
 	cdc.MustUnmarshalJSON(data, &gs)

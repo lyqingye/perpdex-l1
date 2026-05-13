@@ -359,16 +359,6 @@ func NewAppKeeper(
 		appKeepers.MarketKeeper,
 		appKeepers.OracleKeeper,
 	)
-	// Wire the funding keeper into the risk keeper BEFORE handing
-	// `RiskKeeper` off to TradeKeeper / MatchingKeeper / LiquidationKeeper.
-	// These downstream constructors copy the keeper into their own
-	// fields (the interface conversion captures a value copy), so any
-	// late-bound dependency we add via a setter after they construct
-	// is invisible to them. Wiring it here means every downstream
-	// copy carries the non-nil `fundingKeeper` and exercises the
-	// staleness gate inside `resolveMarkPrice` /
-	// `GetMarkAndMarketDetails`.
-	appKeepers.RiskKeeper.SetFundingKeeper(appKeepers.FundingKeeper)
 	appKeepers.TradeKeeper = tradekeeper.NewKeeper(
 		appCodec,
 		runtime.NewKVStoreService(appKeepers.keys[tradetypes.StoreKey]),

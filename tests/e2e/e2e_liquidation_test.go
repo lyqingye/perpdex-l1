@@ -62,8 +62,8 @@ func (s *LiquidationSuite) SetupTest() {
 //
 // Returns (entryPrice, qty) so callers can compute liquidation thresholds.
 func (s *LiquidationSuite) openHurtablePosition() (entryPrice uint32, qty uint64) {
-	const victimDeposit = uint64(10_000_000)        // 10 USDC external
-	const counterDeposit = uint64(1_000_000_000)    // 1000 USDC external
+	const victimDeposit = uint64(10_000_000)     // 10 USDC external
+	const counterDeposit = uint64(1_000_000_000) // 1000 USDC external
 	entryPrice = 50_000
 	qty = 1_000_000_000 // 10 BTC at 8 decimals
 
@@ -437,8 +437,8 @@ func (s *LiquidationSuite) TestADLRespectsPerBlockCap() {
 
 	// Deposit modest collateral to victims and a fat buffer to user1
 	// (counterparty for both victims). user3 is the oracle provider.
-	s.DepositUSDC(&s.Users[0], 10_000_000)        // victim A: 10 USDC
-	s.DepositUSDC(&s.Users[2], 10_000_000)        // victim B: 10 USDC
+	s.DepositUSDC(&s.Users[0], 10_000_000) // victim A: 10 USDC
+	s.DepositUSDC(&s.Users[2], 10_000_000) // victim B: 10 USDC
 	s.DepositUSDC(&s.Users[1], counterDeposit)
 	s.DepositUSDC(&s.Users[3], counterDeposit)
 

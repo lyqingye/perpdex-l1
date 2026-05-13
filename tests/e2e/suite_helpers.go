@@ -114,7 +114,7 @@ func (s *PerpdexTestSuite) CancelOrder(user TestUser, marketIndex uint32, orderI
 // by the funding BeginBlocker. e2e tests that bypass the funding
 // BeginBlocker (most of them) need the mark mirrored into
 // MarketDetails immediately, so this helper also pushes `markPrice`
-// into `MarketDetails.MarkPrice` + bumps `LastMarkPriceTimestamp` to
+// into `MarketDetails.MarkPrice` + bumps `LastMarkPriceRefreshTimestamp` to
 // `now`. Tests that want to exercise stale-mark semantics can call
 // `SetOraclePriceOnly` instead.
 func (s *PerpdexTestSuite) SetOraclePrice(marketIndex uint32, indexPrice, markPrice uint32) {
@@ -134,7 +134,7 @@ func (s *PerpdexTestSuite) SetOraclePrice(marketIndex uint32, indexPrice, markPr
 	s.Require().NoError(err)
 	d.MarkPrice = markPrice
 	d.IndexPrice = indexPrice
-	d.LastMarkPriceTimestamp = now
+	d.LastMarkPriceRefreshTimestamp = now
 	s.Require().NoError(s.App.MarketKeeper.SetMarketDetails(s.Ctx, d))
 }
 

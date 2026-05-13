@@ -36,6 +36,11 @@ type AccountKeeper interface {
 type MarketKeeper interface {
 	GetMarket(ctx context.Context, idx uint32) (markettypes.Market, error)
 	GetMarketDetails(ctx context.Context, idx uint32) (markettypes.MarketDetails, error)
+	// GetMarkPriceAndDetails returns the gated mark and MarketDetails row
+	// for `marketIdx`. Used by ADL ranking (rankVictimPositionsByUPnL)
+	// which only needs the mark for ascending-uPnL ordering and would
+	// otherwise have to build a full risk snapshot per ranked position.
+	GetMarkPriceAndDetails(ctx context.Context, marketIdx uint32) (uint32, markettypes.MarketDetails, error)
 }
 
 type RiskKeeper interface {
@@ -81,12 +86,6 @@ type RiskKeeper interface {
 		accountIdx uint64,
 		marketIdx uint32,
 	) (risktypes.ZeroPriceSnapshot, error)
-	// GetMarkAndMarketDetails returns the live mark price and
-	// MarketDetails row for `marketIdx` in a single round-trip. Used
-	// by `rankVictimPositionsByUPnL` which only needs the mark for
-	// ascending-uPnL ordering and would otherwise have to build a full
-	// snapshot per ranked position.
-	GetMarkAndMarketDetails(ctx context.Context, marketIdx uint32) (uint32, markettypes.MarketDetails, error)
 }
 
 // FundingKeeper provides funding-settlement primitives. Used by the

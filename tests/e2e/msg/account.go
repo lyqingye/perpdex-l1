@@ -6,8 +6,8 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	perp "github.com/perpdex/perpdex-l1/app"
-	perptypes "github.com/perpdex/perpdex-l1/types"
 	"github.com/perpdex/perpdex-l1/tests/e2e/common"
+	perptypes "github.com/perpdex/perpdex-l1/types"
 	accountkeeper "github.com/perpdex/perpdex-l1/x/account/keeper"
 	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
 )

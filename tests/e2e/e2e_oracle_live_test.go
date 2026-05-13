@@ -28,9 +28,9 @@ import (
 
 // OracleLiveSuite drives the real oracle pipeline end-to-end:
 //
-//   sidecar binary  --> daemon (in-process goroutine, real gRPC) -->
-//   PriceFetcher --> ExtendVote --> PrepareProposal injection -->
-//   ProcessProposal validation --> PreBlocker weighted-median write
+//	sidecar binary  --> daemon (in-process goroutine, real gRPC) -->
+//	PriceFetcher --> ExtendVote --> PrepareProposal injection -->
+//	ProcessProposal validation --> PreBlocker weighted-median write
 //
 // Compared with the unit-style OracleSuite in `e2e_oracle_test.go`, this
 // suite removes every mock between the sidecar and the keeper. It is gated

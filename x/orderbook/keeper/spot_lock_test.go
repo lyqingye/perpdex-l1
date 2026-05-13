@@ -50,7 +50,7 @@ func (spotMarketKeeper) SetMarketDetails(_ context.Context, _ markettypes.Market
 // pulling in the real x/account keeper. Negative balances would be a
 // double-release bug.
 type recordingLocker struct {
-	balances map[lockKey]cosmosmath.Int
+	balances     map[lockKey]cosmosmath.Int
 	insufficient bool // when true, IncreaseLockedBalance always rejects
 }
 

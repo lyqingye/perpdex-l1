@@ -194,58 +194,55 @@ func TestComputeImpactPrice_AskUsesCeilingDivision(t *testing.T) {
 	require.NoError(t, openImpactOrder(ctx, k, market, false /*bid*/, 50_000, 5_000))
 	require.NoError(t, openImpactOrder(ctx, k, market, false /*bid*/, 49_900, 6_000))
 
-	askPx, ok, err := k.ComputeImpactPrice(ctx, market, true)
+	askPx, err := k.ComputeImpactPrice(ctx, market, true)
 	require.NoError(t, err)
-	require.True(t, ok, "ask side has enough depth")
 	require.Equal(t, uint32(50_050), askPx,
 		"ASK VWAP must round UP (ceil); floor=50_049, ceil=50_050")
 
-	bidPx, ok, err := k.ComputeImpactPrice(ctx, market, false)
+	bidPx, err := k.ComputeImpactPrice(ctx, market, false)
 	require.NoError(t, err)
-	require.True(t, ok, "bid side has enough depth")
 	require.Equal(t, uint32(49_949), bidPx,
 		"BID VWAP must round DOWN (floor); floor=49_949, ceil=49_950")
 }
 
-// TestComputeImpactPrice_InsufficientDepthReturnsFalse covers the gate
+// TestComputeImpactPrice_InsufficientDepthReturnsZero covers the gate
 // that prevents single-side depth from producing a degenerate VWAP. A
 // resting bid that absorbs only a fraction of impact_notional must
-// surface (0, false, nil), letting downstream callers (the funding
-// sampler and the gRPC mid) skip or clear the price.
-func TestComputeImpactPrice_InsufficientDepthReturnsFalse(t *testing.T) {
+// surface 0, letting downstream callers (the funding sampler and the
+// gRPC mid) skip or clear the price.
+func TestComputeImpactPrice_InsufficientDepthReturnsZero(t *testing.T) {
 	k, ctx := newImpactKeeper(t, 500) // impact_notional = 1e10
 	const market = uint32(1)
 
-	// 1 base @ 50_000 → quote = 50_000 (way below 1e10).
 	require.NoError(t, openImpactOrder(ctx, k, market, false, 50_000, 1))
 
-	bidPx, ok, err := k.ComputeImpactPrice(ctx, market, false)
+	bidPx, err := k.ComputeImpactPrice(ctx, market, false)
 	require.NoError(t, err)
-	require.False(t, ok, "depth below impact_notional must report ok=false")
-	require.Equal(t, uint32(0), bidPx)
+	require.Equal(t, uint32(0), bidPx,
+		"depth below impact_notional must report 0")
 }
 
-// TestComputeImpactPrice_UnconfiguredMarketReturnsFalse exercises the
+// TestComputeImpactPrice_UnconfiguredMarketReturnsZero exercises the
 // MinIMF == 0 short-circuit: a market whose details have not been
 // initialised has zero impact notional, so ComputeImpactPrice MUST
-// report ok=false (insufficient depth) instead of attempting an
-// orderbook walk against a zero target.
-func TestComputeImpactPrice_UnconfiguredMarketReturnsFalse(t *testing.T) {
+// report 0 (insufficient depth) instead of attempting an orderbook
+// walk against a zero target.
+func TestComputeImpactPrice_UnconfiguredMarketReturnsZero(t *testing.T) {
 	k, ctx := newImpactKeeper(t, 0)
 	const market = uint32(1)
 
 	require.NoError(t, openImpactOrder(ctx, k, market, false, 50_000, 1_000_000_000))
-	bidPx, ok, err := k.ComputeImpactPrice(ctx, market, false)
+	bidPx, err := k.ComputeImpactPrice(ctx, market, false)
 	require.NoError(t, err)
-	require.False(t, ok, "MinIMF=0 ⇒ impact_notional=0 ⇒ ok=false")
-	require.Equal(t, uint32(0), bidPx)
+	require.Equal(t, uint32(0), bidPx,
+		"MinIMF=0 ⇒ impact_notional=0 ⇒ 0")
 }
 
 // TestImpactPriceRPC_HalfDepthHidesMid drives the gRPC `ImpactPrice`
 // handler with a one-sided book: bid has plenty of depth, ask is
-// empty. The handler MUST surface bid_ok=true / ask_ok=false and
-// `impact_price = 0` rather than a half-zero mid (which would
-// silently halve any consumer using this as a mark proxy).
+// empty. The handler MUST surface a non-zero impact_bid, a zero
+// impact_ask, and `impact_price = 0` rather than a half-zero mid
+// (which would silently halve any consumer using this as a mark proxy).
 func TestImpactPriceRPC_HalfDepthHidesMid(t *testing.T) {
 	k, ctx := newImpactKeeper(t, 10_000) // impact_notional = 5e8
 	const market = uint32(1)
@@ -255,17 +252,15 @@ func TestImpactPriceRPC_HalfDepthHidesMid(t *testing.T) {
 	q := orderbookkeeper.NewQuerier(k)
 	resp, err := q.ImpactPrice(ctx, &types.QueryImpactPriceRequest{MarketIndex: market})
 	require.NoError(t, err)
-	require.True(t, resp.BidOk, "bid side has sufficient depth")
-	require.False(t, resp.AskOk, "ask side is empty")
 	require.NotZero(t, resp.ImpactBid, "bid VWAP must surface")
-	require.Zero(t, resp.ImpactAsk, "ask VWAP must be zero when ok=false")
+	require.Zero(t, resp.ImpactAsk, "ask side is empty ⇒ VWAP=0")
 	require.Zero(t, resp.ImpactPrice,
 		"mid must be 0 when either side is missing; never a half-zero average")
 }
 
 // TestImpactPriceRPC_BothSidesComputeMid verifies the happy-path: when
 // both sides resolve, the response carries `impact_price =
-// floor((bid+ask)/2)` and both `ok` flags are true.
+// floor((bid+ask)/2)`.
 func TestImpactPriceRPC_BothSidesComputeMid(t *testing.T) {
 	k, ctx := newImpactKeeper(t, 10_000) // impact_notional = 5e8
 	const market = uint32(1)
@@ -276,8 +271,6 @@ func TestImpactPriceRPC_BothSidesComputeMid(t *testing.T) {
 	q := orderbookkeeper.NewQuerier(k)
 	resp, err := q.ImpactPrice(ctx, &types.QueryImpactPriceRequest{MarketIndex: market})
 	require.NoError(t, err)
-	require.True(t, resp.BidOk)
-	require.True(t, resp.AskOk)
 	require.EqualValues(t, 49_999, resp.ImpactBid)
 	require.EqualValues(t, 50_001, resp.ImpactAsk)
 	require.EqualValues(t, 50_000, resp.ImpactPrice,
@@ -299,9 +292,8 @@ func TestComputeImpactPrice_WalksMultipleLevels(t *testing.T) {
 	require.NoError(t, openImpactOrder(ctx, k, market, true, 50_000, 200_000))
 	require.NoError(t, openImpactOrder(ctx, k, market, true, 50_100, 200_000))
 
-	askPx, ok, err := k.ComputeImpactPrice(ctx, market, true)
+	askPx, err := k.ComputeImpactPrice(ctx, market, true)
 	require.NoError(t, err)
-	require.True(t, ok)
 	require.Equal(t, uint32(50_000), askPx,
 		"first level absorbs the notional exactly; deeper level must be ignored")
 }

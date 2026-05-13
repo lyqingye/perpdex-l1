@@ -281,26 +281,26 @@ func checkedQuote(base, price uint64) (uint64, error) {
 
 // ComputeImpactPrice walks price levels on the requested side until it
 // absorbs `MarketImpactNotional`, then returns the VWAP across that depth.
-// Returns (0, false) when depth is insufficient or the market has not been
-// initialised.
+// Returns 0 when depth is insufficient or the market has not been
+// initialised; callers treat a zero VWAP as "side unavailable".
 //
 // Walk: bid side from highest price down, ask side from lowest up. The
 // last partial level uses `ceil_div(needQuote, price)` so the notional is
 // never under-filled. The final VWAP rounds UP for asks and DOWN for bids
 // so that `max(0, idx - ask)` cannot round in the trader's favour.
-func (k Keeper) ComputeImpactPrice(ctx context.Context, market uint32, isAsk bool) (uint32, bool, error) {
+func (k Keeper) ComputeImpactPrice(ctx context.Context, market uint32, isAsk bool) (uint32, error) {
 	notional, err := k.MarketImpactNotional(ctx, market)
 	if err != nil {
-		return 0, false, err
+		return 0, err
 	}
 	if notional == 0 {
-		return 0, false, nil
+		return 0, nil
 	}
 
 	rng := collections.NewPrefixedPairRange[uint32, uint32](market)
 	iter, err := k.PriceLevels.Iterate(ctx, rng)
 	if err != nil {
-		return 0, false, err
+		return 0, err
 	}
 	defer iter.Close()
 
@@ -313,7 +313,7 @@ func (k Keeper) ComputeImpactPrice(ctx context.Context, market uint32, isAsk boo
 	for ; iter.Valid(); iter.Next() {
 		v, err := iter.Value()
 		if err != nil {
-			return 0, false, err
+			return 0, err
 		}
 		if isAsk {
 			if v.AskBaseSum > 0 {
@@ -326,7 +326,7 @@ func (k Keeper) ComputeImpactPrice(ctx context.Context, market uint32, isAsk boo
 		}
 	}
 	if len(levels) == 0 {
-		return 0, false, nil
+		return 0, nil
 	}
 	if !isAsk {
 		// Bid side: walk highest price first (reverse iterator order).
@@ -360,12 +360,12 @@ func (k Keeper) ComputeImpactPrice(ctx context.Context, market uint32, isAsk boo
 		accQuote += lv.quote
 	}
 	if accQuote < notional || accBase == 0 {
-		return 0, false, nil
+		return 0, nil
 	}
 	if isAsk {
-		return uint32((accQuote + accBase - 1) / accBase), true, nil
+		return uint32((accQuote + accBase - 1) / accBase), nil
 	}
-	return uint32(accQuote / accBase), true, nil
+	return uint32(accQuote / accBase), nil
 }
 
 // MarketImpactNotional returns the per-market impact notional used by

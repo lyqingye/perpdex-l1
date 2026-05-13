@@ -13,4 +13,7 @@ var (
 	ErrInvalidMarginChain = errors.Register(ModuleName, 9, "invalid margin parameter chain")
 	ErrNonceExhausted     = errors.Register(ModuleName, 10, "nonce range exhausted (ask>=bid)")
 	ErrOpenInterestLimit  = errors.Register(ModuleName, 11, "open interest exceeds limit")
+	ErrZeroMarkPrice      = errors.Register(ModuleName, 12, "mark price is zero")
+	ErrStaleMarkPrice     = errors.Register(ModuleName, 13, "mark price is stale")
+	ErrMissingPrice       = errors.Register(ModuleName, 14, "mark price unavailable")
 )

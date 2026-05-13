@@ -26,6 +26,10 @@ type MarketKeeper interface {
 	GetMarket(ctx context.Context, idx uint32) (markettypes.Market, error)
 	GetMarketDetails(ctx context.Context, idx uint32) (markettypes.MarketDetails, error)
 	AllocateNonce(ctx context.Context, marketIdx uint32, isAsk bool) (int64, error)
+	// GetMarkPriceAndDetails returns the gated (zero + staleness) mark and
+	// MarketDetails. Used by the trigger-activation EndBlocker so a
+	// stop-loss / take-profit cannot fire on a stale or missing mark.
+	GetMarkPriceAndDetails(ctx context.Context, marketIdx uint32) (uint32, markettypes.MarketDetails, error)
 }
 
 // OrderbookKeeper is the surface x/matching uses to read and mutate
@@ -99,28 +103,20 @@ type TradeKeeper interface {
 	ApplySpotMatching(ctx context.Context, f tradekeeper.SpotFill, baseAssetID, quoteAssetID uint32) error
 }
 
-// OracleKeeper provides the mark price used by the matching EndBlocker to
-// resolve trigger orders.
-//
-// Deprecated: trigger activation now reads the authoritative mark from
-// MarketKeeper.GetMarketDetails().MarkPrice (gated by the
-// median-mark staleness check via RiskKeeper.GetMarkAndMarketDetails).
-// The interface and the SetOracleKeeper wiring are retained only so
-// existing tests that exercise the old code path continue to compile;
-// no production caller dereferences `oracleKeeper` after this change.
+// OracleKeeper is retained only for legacy tests; no production caller
+// dereferences `oracleKeeper` after the move to the median-mark
+// pipeline (trigger activation reads the gated mark via
+// MarketKeeper.GetMarkPriceAndDetails).
 type OracleKeeper interface {
 	GetPrice(ctx context.Context, marketIdx uint32) (oracletypes.OraclePrice, error)
 }
 
-// RiskKeeper exposes (a) the post-state health classification used by
-// the pre-liquidation order placement gate -- accounts in PRE may only
+// RiskKeeper exposes the post-state health classification used by the
+// pre-liquidation order placement gate: accounts in PRE may only
 // submit orders that strictly reduce exposure (reduce-only); accounts
 // in PARTIAL/FULL/BANKRUPTCY may not submit any user-initiated order
-// until liquidation completes -- and (b) the staleness-gated mark
-// read consumed by the trigger-activation EndBlocker so stop-loss /
-// take-profit triggers cannot fire against a stale or missing mark.
+// until liquidation completes.
 type RiskKeeper interface {
 	GetHealthStatus(ctx context.Context, accountIdx uint64) (uint32, error)
 	GetIsolatedHealthStatus(ctx context.Context, accountIdx uint64, marketIdx uint32) (uint32, error)
-	GetMarkAndMarketDetails(ctx context.Context, marketIdx uint32) (uint32, markettypes.MarketDetails, error)
 }

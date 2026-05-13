@@ -7,7 +7,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
-	markettypes "github.com/perpdex/perpdex-l1/x/market/types"
 	orderbooktypes "github.com/perpdex/perpdex-l1/x/orderbook/types"
 	tradetypes "github.com/perpdex/perpdex-l1/x/trade/types"
 )
@@ -52,15 +51,6 @@ func (s *stubRisk) GetIsolatedHealthStatus(_ context.Context, acc uint64, mkt ui
 	v := q[0]
 	s.iso[k] = q[1:]
 	return v, nil
-}
-
-// GetMarkAndMarketDetails is the staleness-gated mark accessor newly
-// required by the matching RiskKeeper interface (used by the trigger
-// EndBlocker). These tests focus on the order-flow and health-state
-// transitions; they do not exercise trigger activation, so this stub
-// returns a benign fresh mark.
-func (*stubRisk) GetMarkAndMarketDetails(_ context.Context, mkt uint32) (uint32, markettypes.MarketDetails, error) {
-	return 1, markettypes.MarketDetails{MarketIndex: mkt, MarkPrice: 1, LastMarkPriceTimestamp: 1}, nil
 }
 
 // TestMatchLiquidation_PerpFillCarriesLiquidationFields exercises the

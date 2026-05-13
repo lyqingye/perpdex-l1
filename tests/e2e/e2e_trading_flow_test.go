@@ -169,25 +169,31 @@ func (s *TradingFlowSuite) TestCrossingFillRoundTrip() {
 }
 
 // TestStaleMarkPriceBlocksRiskChange exercises the wiring of the
-// median-mark staleness gate end-to-end: x/risk owns the gate, and
-// every downstream consumer (x/trade.Engine.Apply via
-// IsValidRiskChangeFrom, x/matching trigger activation via
-// GetMarkAndMarketDetails) MUST observe the same gate. Concretely:
+// median-mark staleness gate end-to-end. The gate now lives on
+// `x/market.Keeper.gateMarkPrice` (driven by
+// `market.Params.MaxMarkPriceStalenessMs`), and every downstream consumer
+// (x/trade.Engine.Apply via IsValidRiskChangeFrom → ComputeCrossRisk
+// → MarketKeeper.GetMarkPriceAndDetails, x/matching trigger activation
+// also via MarketKeeper.GetMarkPriceAndDetails, x/liquidation ADL ranking)
+// MUST observe the same gate. Concretely:
 //
 //  1. Seed a fresh mark + open a small position so the risk pipeline
 //     is exercised on a non-empty book.
-//  2. Manually expire `LastMarkPriceTimestamp` on MarketDetails — this
+//  2. Manually expire `LastMarkPriceRefreshTimestamp` on MarketDetails — this
 //     mimics the funding BeginBlocker falling silent for longer than
-//     `MaxMarkStalenessMs`.
+//     `MaxMarkPriceStalenessMs`.
 //  3. Attempt another order. The trade engine routes through
-//     `IsValidRiskChangeFrom → ComputeCrossRisk → resolveMarkPrice`,
-//     which must fail-closed with ErrMissingPrice.
+//     `IsValidRiskChangeFrom → ComputeCrossRisk →
+//     MarketKeeper.GetMarkPriceAndDetails`, which must fail-closed with
+//     `markettypes.ErrStaleMarkPrice`.
 //
-// Regression guard for the wiring bug where x/risk's
-// `SetFundingKeeper` was applied AFTER the risk keeper had already
-// been copied (by value) into x/trade / x/liquidation / x/matching —
-// the consumers' copies carried a nil `fundingKeeper` and silently
-// bypassed the gate.
+// Retained as a regression guard against an earlier wiring bug where
+// the gate lived on x/risk with a late-bound funding keeper: the risk
+// keeper was copied by value into x/trade / x/liquidation / x/matching
+// BEFORE the funding keeper was injected, so consumers silently
+// bypassed the gate. Owning the gate on market keeper eliminates the
+// late-binding hazard entirely (no setter, no mutable field), but the
+// e2e assertion still pins the end-to-end fail-closed contract.
 func (s *TradingFlowSuite) TestStaleMarkPriceBlocksRiskChange() {
 	const depositUSDC = uint64(100_000_000_000)
 	const orderQty = uint64(100)
@@ -215,12 +221,12 @@ func (s *TradingFlowSuite) TestStaleMarkPriceBlocksRiskChange() {
 	})
 	s.Require().Equal(perptypes.OrderStatusFilled, bidResp.Status)
 
-	// Manually expire LastMarkPriceTimestamp so the staleness gate
+	// Manually expire LastMarkPriceRefreshTimestamp so the staleness gate
 	// trips. We deliberately bypass the funding BeginBlocker (which
 	// would otherwise refresh it every block) to isolate the gate.
 	d, err := s.App.MarketKeeper.GetMarketDetails(s.Ctx, s.MarketIndex)
 	s.Require().NoError(err)
-	d.LastMarkPriceTimestamp = 0
+	d.LastMarkPriceRefreshTimestamp = 0
 	s.Require().NoError(s.App.MarketKeeper.SetMarketDetails(s.Ctx, d))
 
 	// Any further user-initiated order on this market MUST be rejected
@@ -237,5 +243,5 @@ func (s *TradingFlowSuite) TestStaleMarkPriceBlocksRiskChange() {
 		ClientOrderIndex: 3,
 	})
 	s.Require().Error(err,
-		"stale mark must propagate to x/trade via the risk staleness gate; if this passes the consumers are bypassing the gate (likely the late-bound funding keeper has been lost via a value copy)")
+		"stale mark must propagate to x/trade via the market staleness gate (MarketKeeper.GetMarkPriceAndDetails); if this passes the consumer call sites are bypassing the gate")
 }

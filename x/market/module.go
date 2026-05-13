@@ -22,10 +22,10 @@ import (
 const ConsensusVersion = 1
 
 var (
-	_ module.AppModuleBasic   = AppModuleBasic{}
-	_ module.HasGenesis       = AppModule{}
-	_ module.HasServices      = AppModule{}
-	_ module.HasABCIEndBlock  = AppModule{}
+	_ module.AppModuleBasic  = AppModuleBasic{}
+	_ module.HasGenesis      = AppModule{}
+	_ module.HasServices     = AppModule{}
+	_ module.HasABCIEndBlock = AppModule{}
 )
 
 type AppModuleBasic struct{ cdc codec.Codec }

@@ -46,11 +46,11 @@ type Config struct {
 }
 
 type Provider struct {
-	cfg     Config
-	http    *http.Client
-	idToCP  map[string]types.CurrencyPair
-	idsCSV  string
-	vsCCY   string
+	cfg    Config
+	http   *http.Client
+	idToCP map[string]types.CurrencyPair
+	idsCSV string
+	vsCCY  string
 }
 
 func New(cfg Config) (*Provider, error) {
@@ -103,7 +103,7 @@ func New(cfg Config) (*Provider, error) {
 	}, nil
 }
 
-func (p *Provider) Name() string                 { return "coingecko" }
+func (p *Provider) Name() string                { return "coingecko" }
 func (p *Provider) Pairs() []types.CurrencyPair { return p.cfg.Pairs }
 
 func (p *Provider) Start(ctx context.Context, out chan<- []types.Price) error {

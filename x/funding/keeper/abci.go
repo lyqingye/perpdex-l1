@@ -16,7 +16,7 @@ import (
 
 // premiumSampleIntervalMs is the per-market spacing between two consecutive
 // premium samples. We sample once a minute (60 samples per hour) on a
-// per-market basis using `MarketDetails.LastUpdatedTimestamp`.
+// per-market basis using `MarketDetails.LastPremiumSampleTimestamp`.
 const premiumSampleIntervalMs = perptypes.MinuteInMs
 
 // BeginBlocker runs the per-market funding pipeline:
@@ -50,7 +50,7 @@ func (k Keeper) BeginBlocker(ctx context.Context) error {
 		// Per-market sampling errors (stale oracle / one-sided depth) are
 		// expected and swallowed. The next block will retry automatically.
 		k.processMarketSample(ctx, m.MarketIndex, now, params)
-		// Refresh the authoritative mark every block (cheap: it just
+		// Refresh the authoritative markPrice every block (cheap: it just
 		// medians three uint32 values plus an oracle read). Must run
 		// AFTER processMarketSample so the impact mid / premium
 		// average reflect this block's data.
@@ -88,23 +88,23 @@ func (k Keeper) processMarketSample(ctx context.Context, marketIdx uint32, now i
 	if err != nil {
 		return
 	}
-	// Per-market 1-minute throttle; `LastUpdatedTimestamp == 0` admits
+	// Per-market 1-minute throttle; `LastPremiumSampleTimestamp == 0` admits
 	// the first sample on a fresh market.
-	if d.LastUpdatedTimestamp != 0 && now-d.LastUpdatedTimestamp < premiumSampleIntervalMs {
+	if d.LastPremiumSampleTimestamp != 0 && now-d.LastPremiumSampleTimestamp < premiumSampleIntervalMs {
 		return
 	}
 
-	bidImp, bidOk, err := k.bookKeeper.ComputeImpactPrice(ctx, marketIdx, false)
+	bidImp, err := k.bookKeeper.ComputeImpactPrice(ctx, marketIdx, false)
 	if err != nil {
 		return
 	}
-	askImp, askOk, err := k.bookKeeper.ComputeImpactPrice(ctx, marketIdx, true)
+	askImp, err := k.bookKeeper.ComputeImpactPrice(ctx, marketIdx, true)
 	if err != nil {
 		return
 	}
 	d.ImpactBidPrice = bidImp
 	d.ImpactAskPrice = askImp
-	if bidOk && askOk {
+	if bidImp != 0 && askImp != 0 {
 		// Floor of the mean. impact_bid floors, impact_ask ceils in
 		// ComputeImpactPrice, so flooring the sum keeps the mid
 		// conservative.
@@ -116,7 +116,7 @@ func (k Keeper) processMarketSample(ctx context.Context, marketIdx uint32, now i
 	}
 
 	// On oracle failure persist the refreshed impact cache (for
-	// observability) but do not advance LastUpdatedTimestamp, so the
+	// observability) but do not advance LastPremiumSampleTimestamp, so the
 	// next block retries immediately.
 	px, err := k.oracleKeeper.GetPrice(ctx, marketIdx)
 	if err != nil {
@@ -125,8 +125,8 @@ func (k Keeper) processMarketSample(ctx context.Context, marketIdx uint32, now i
 	}
 	d.IndexPrice = px.IndexPrice
 
-	if !bidOk || !askOk || d.IndexPrice == 0 {
-		d.LastUpdatedTimestamp = now
+	if bidImp == 0 || askImp == 0 || d.IndexPrice == 0 {
+		d.LastPremiumSampleTimestamp = now
 		k.mustSetMarketDetails(ctx, d)
 		return
 	}
@@ -154,105 +154,171 @@ func (k Keeper) processMarketSample(ctx context.Context, marketIdx uint32, now i
 		d.AggregatePremiumSum = d.AggregatePremiumSum.Add(premium)
 		d.TotalPremiumSamples++
 	}
-	d.LastUpdatedTimestamp = now
+	d.LastPremiumSampleTimestamp = now
 	k.mustSetMarketDetails(ctx, d)
 }
 
-// refreshMarkPrice rewrites `MarketDetails.MarkPrice` once per block as
+// refreshMarkPrice rewrites `MarketDetails.MarkPrice` every block as
 //
-//	price_1 = index + premium_ema * index / FundingRateTick
-//	          (premium_ema = AggregatePremiumSum / TotalPremiumSamples)
-//	price_2 = oracle weighted-median mark
-//	mark    = median3(impact_price, price_1, price_2)
+//	premium_raw  = clamp(impact_price - index, ±index/MarkPremiumClampDivisor)
+//	premium_ema  = ema_step(prev_ema, premium_raw, dt, MarkPremiumEmaTauMs)
+//	price_1      = clampUint32(index + premium_ema)
+//	price_2      = oracle weighted-median markPrice
+//	markPrice         = median3(impact_price, price_1, price_2)
 //
-// Fallbacks: oracle failure leaves MarkPrice untouched (letting x/risk's
-// staleness gate eventually fire); zero impact_price degrades to the mean
-// of the two non-zero inputs; zero TotalPremiumSamples sets price_1 = index.
+// The EMA state is persisted on `MarketDetails.MarkPremiumEma` so it
+// survives across blocks. `dt` is derived from
+// `now - LastMarkPriceRefreshTimestamp`; on first call (timestamp 0) or after a
+// gap >= TAU the EMA is reset to `premium_raw` so a long funding stall
+// cannot leave stale momentum.
 //
-// On success `LastMarkPriceTimestamp` is bumped to `now` (distinct from
-// `LastUpdatedTimestamp`, which throttles `processMarketSample`).
+// Fallbacks: oracle failure returns early (leaves MarkPrice untouched so
+// the staleness gate eventually fires); zero impact_price / price_1 /
+// price_2 degrade to the mean of the remaining non-zero inputs; all
+// three zero keeps the previous markPrice.
+//
+// On success `LastMarkPriceRefreshTimestamp` is bumped to `now` (distinct from
+// `LastPremiumSampleTimestamp`, which throttles `processMarketSample`).
 func (k Keeper) refreshMarkPrice(ctx context.Context, marketIdx uint32, now int64) {
 	d, err := k.marketKeeper.GetMarketDetails(ctx, marketIdx)
 	if err != nil {
 		return
 	}
-	// Oracle failure leaves MarkPrice/LastMarkPriceTimestamp untouched so
-	// x/risk's staleness gate eventually trips. A zero IndexPrice or
-	// MarkPrice from the oracle is NOT short-circuited — the switch
-	// below can still derive a mark from the remaining inputs.
+	// Oracle failure leaves MarkPrice/LastMarkPriceRefreshTimestamp untouched
+	// so the downstream staleness gate eventually trips. Index/markPrice
+	// from the oracle may individually be 0 (degenerate aggregation);
+	// the median switch below handles that.
 	px, err := k.oracleKeeper.GetPrice(ctx, marketIdx)
 	if err != nil {
 		return
 	}
+	// Preserve the previous d.IndexPrice on a px.IndexPrice == 0
+	// reading so the markPrice path retains a meaningful clamp bound.
+	// Note: this only delivers across the ~11/12 blocks per minute
+	// where processMarketSample is throttled out by
+	// premiumSampleIntervalMs. When both call sites run in the same
+	// block, processMarketSample writes d.IndexPrice = px.IndexPrice
+	// unconditionally first, so a zero idx is already persisted before
+	// we get here. The asymmetry is acceptable because
+	// processMarketSample explicitly short-circuits on d.IndexPrice == 0
+	// (it would otherwise divide by zero), while refreshMarkPrice can
+	// still emit a useful markPrice via the median fallback even with a
+	// stale d.IndexPrice.
 	if px.IndexPrice != 0 {
 		d.IndexPrice = px.IndexPrice
 	}
 
-	price1 := computePrice1(px.IndexPrice, d.AggregatePremiumSum, d.TotalPremiumSamples)
+	// premium_raw = clamp(impact - index, ±index/divisor). When impact
+	// or index is 0 we cannot compute a meaningful premium, so raw is
+	// forced to 0; emaStep then decays the existing EMA toward 0
+	// (rather than freezing it). The decay rate is bounded by the
+	// usual `dt / TAU` step, so a transient one-sided drain causes at
+	// most ~`block_dt / TAU` proportional pull-back per block. This
+	// matches the spec's "neutral premium when signal is missing"
+	// semantic — freezing the last good EMA would let a stale spike
+	// dominate markPrice price indefinitely on a halted book.
+	idx := int64(d.IndexPrice)
+	var rawPremium int64
+	if d.ImpactPrice != 0 && idx > 0 {
+		bound := idx / perptypes.MarkPremiumClampDivisor
+		rawPremium = clampInt64(int64(d.ImpactPrice)-idx, -bound, bound)
+	}
+
+	dt := now - d.LastMarkPriceRefreshTimestamp
+	ema := emaStep(d.MarkPremiumEma, rawPremium, dt, perptypes.MarkPremiumEmaTauMs, d.LastMarkPriceRefreshTimestamp == 0)
+	// Re-clamp the persisted EMA against the CURRENT clamp band. Without
+	// this an idx that just collapsed by >MarkPremiumClampDivisor× would
+	// leave the stored momentum outside the new ±idx/200 band, and
+	// `clampUint32(idx + ema)` could underflow to 0 — silently degrading
+	// the median to mean(impact, oracle_mark) for many blocks because
+	// emaStep can stall at zero-step (|raw-prev|*dt/tau < 1) when raw is
+	// pinned near 0. We skip this when idx == 0; in that case rawPremium
+	// is already 0 and emaStep decays prev toward 0 proportionally.
+	if idx > 0 {
+		b := idx / perptypes.MarkPremiumClampDivisor
+		ema = clampInt64(ema, -b, b)
+	}
+
+	price1 := clampUint32(idx + ema)
 	price2 := px.MarkPrice
 
-	var mark uint32
+	var markPrice uint32
 	switch {
 	case d.ImpactPrice != 0 && price1 != 0 && price2 != 0:
-		mark = median3Uint32(d.ImpactPrice, price1, price2)
+		markPrice = median3Uint32(d.ImpactPrice, price1, price2)
 	case d.ImpactPrice != 0 && price1 != 0:
-		mark = uint32((uint64(d.ImpactPrice) + uint64(price1)) / 2)
+		markPrice = uint32((uint64(d.ImpactPrice) + uint64(price1)) / 2)
 	case d.ImpactPrice != 0 && price2 != 0:
-		mark = uint32((uint64(d.ImpactPrice) + uint64(price2)) / 2)
+		markPrice = uint32((uint64(d.ImpactPrice) + uint64(price2)) / 2)
 	case price1 != 0 && price2 != 0:
-		mark = uint32((uint64(price1) + uint64(price2)) / 2)
+		markPrice = uint32((uint64(price1) + uint64(price2)) / 2)
 	case d.ImpactPrice != 0:
-		mark = d.ImpactPrice
+		markPrice = d.ImpactPrice
 	case price1 != 0:
-		mark = price1
+		markPrice = price1
 	case price2 != 0:
-		mark = price2
+		markPrice = price2
 	default:
-		// All three inputs zero: keep the previous mark.
+		// All three inputs zero: keep the previous markPrice.
 		return
 	}
-	d.MarkPrice = mark
-	d.LastMarkPriceTimestamp = now
+	d.MarkPrice = markPrice
+	d.MarkPremiumEma = ema
+	d.LastMarkPriceRefreshTimestamp = now
 	k.mustSetMarketDetails(ctx, d)
 }
 
-// computePrice1 returns `index + index * avgPremium / FundingRateTick`,
-// where `avgPremium = aggregatePremiumSum / sampleCount` (already scaled
-// by FundingRateTick — see processMarketSample). The two divisions are
-// collapsed into one to avoid losing precision from the intermediate
-// average:
+// emaStep advances a discrete EMA with time constant `tau`:
 //
-//	price_1 = index + index * aggregatePremiumSum
-//	                  / (sampleCount * FundingRateTick)
+//	ema_new = ema_old + (raw - ema_old) * dt / tau
 //
-// Returns 0 when index == 0; returns index when there are no samples in
-// the window. The result is clamped into uint32 so an overflowing premium
-// still yields a well-defined median input.
-func computePrice1(index uint32, aggregatePremiumSum math.Int, sampleCount uint32) uint32 {
-	if index == 0 {
-		return 0
+// `reset` (true on the very first refresh) or `dt >= tau` (long outage)
+// reseeds the EMA to `raw` so stale momentum is dropped. Negative `dt`
+// (clock regression) is treated as a no-op step.
+func emaStep(prev, raw, dt, tau int64, reset bool) int64 {
+	if tau <= 0 || reset || dt >= tau {
+		return raw
 	}
-	if sampleCount == 0 || aggregatePremiumSum.IsZero() {
-		return index
+	if dt <= 0 {
+		return prev
 	}
-	// delta = index * aggregatePremiumSum / (sampleCount * FundingRateTick)
-	delta := math.NewInt(int64(index)).
-		Mul(aggregatePremiumSum).
-		Quo(math.NewInt(int64(sampleCount)).Mul(math.NewInt(perptypes.FundingRateTick)))
+	// math.Int wraps the multiplication so `(raw - prev) * dt` cannot
+	// overflow int64; the subtraction itself is bounded by
+	// `±2 * idx / MarkPremiumClampDivisor` (≤ ~4.3e7 for a uint32
+	// price) and safe in plain int64. Quo truncates toward zero, so
+	// |delta| <= |raw - prev| in both directions; once
+	// `|raw - prev| * dt / tau < 1` the step rounds to 0 and EMA
+	// stalls at price-tick precision — acceptable for uint32 marks.
+	delta := math.NewInt(raw - prev).
+		Mul(math.NewInt(dt)).
+		Quo(math.NewInt(tau))
 	if delta.IsZero() {
-		return index
+		return prev
 	}
-	priced := math.NewInt(int64(index)).Add(delta)
-	// A deep discount can push price_1 below 0; clamp so the median
-	// input is always uint32-representable.
-	if priced.IsNegative() {
+	return prev + delta.Int64()
+}
+
+// clampInt64 clamps v into [lo, hi]. Caller guarantees lo <= hi.
+func clampInt64(v, lo, hi int64) int64 {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+// clampUint32 clamps `v` into the uint32 domain.
+func clampUint32(v int64) uint32 {
+	if v < 0 {
 		return 0
 	}
 	const maxU32 = int64(1<<32 - 1)
-	if priced.GT(math.NewInt(maxU32)) {
+	if v > maxU32 {
 		return uint32(maxU32)
 	}
-	return uint32(priced.Int64())
+	return uint32(v)
 }
 
 // median3Uint32 returns the median of three uint32 inputs.
@@ -285,14 +351,15 @@ func (k Keeper) SettleAllMarkets(ctx context.Context, params types.ParamsAlias) 
 // The 1-hour rate is then folded into the cumulative prefix sum as
 // `mark_price * rate`. `SettlePositionFunding` later applies
 // `position * delta_prefix_sum / FundingRateTick`, which reduces to
-// `position * mark * rate / FundingRateTick` -- exactly the funding
-// payment definition `funding = position * mark * fundingRate`.
+// `position * markPrice * rate / FundingRateTick` -- exactly the funding
+// payment definition `funding = position * markPrice * fundingRate`.
 //
 // Note: `mark_price` is read from `MarketDetails.MarkPrice`, which the
-// per-block `refreshMarkPrice` recomputes as the median of impact mid,
-// `index + premium_ema`, and the oracle weighted-median mark. There is
-// no oracle call in this path: rate computation depends only on the
-// accumulated per-minute premiums + governance clamps + interest rate.
+// per-block `refreshMarkPrice` recomputes as median(impact_price,
+// index + ema(clamp(impact-idx, ±idx/200)), oracle_mark). The funding
+// settlement path itself does not touch the oracle: rate computation
+// depends only on the accumulated per-minute premiums + governance
+// clamps + interest rate.
 //
 // Invariant: `TotalPremiumSamples > 0` ⇒ at least one in-window
 // `processMarketSample` succeeded ⇒ `d.MarkPrice > 0`. The early-return on
@@ -323,8 +390,8 @@ func (k Keeper) settleMarket(ctx context.Context, marketIdx uint32, params types
 	// over `divisor` rounds matches the spec's full clamp magnitude.
 	rate := bigClamped.Quo(math.NewInt(divisor))
 
-	// Prefix-sum increment encodes the mark of *this* round so positions
-	// settled later see `pos * mark_t * rate_t` per round, even when mark
+	// Prefix-sum increment encodes the markPrice of *this* round so positions
+	// settled later see `pos * mark_t * rate_t` per round, even when markPrice
 	// changes between rounds.
 	inc := math.NewInt(int64(d.MarkPrice)).Mul(rate)
 	d.FundingRatePrefixSum = d.FundingRatePrefixSum.Add(inc)

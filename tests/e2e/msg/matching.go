@@ -4,10 +4,10 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	perp "github.com/perpdex/perpdex-l1/app"
+	"github.com/perpdex/perpdex-l1/tests/e2e/common"
 	perptypes "github.com/perpdex/perpdex-l1/types"
 	matchingkeeper "github.com/perpdex/perpdex-l1/x/matching/keeper"
 	matchingtypes "github.com/perpdex/perpdex-l1/x/matching/types"
-	"github.com/perpdex/perpdex-l1/tests/e2e/common"
 )
 
 // OrderOpts is the catch-all for MsgCreateOrder; the helper layer fills in
