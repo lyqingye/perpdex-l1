@@ -8,6 +8,7 @@ package tests
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -47,9 +48,6 @@ func (spotMarketKeeper) GetMarketDetails(_ context.Context, idx uint32) (markett
 func (spotMarketKeeper) AllocateNonce(_ context.Context, _ uint32, _ bool) (int64, error) {
 	return 1, nil
 }
-func (spotMarketKeeper) SetMarketDetails(_ context.Context, _ markettypes.MarketDetails) error {
-	return nil
-}
 
 // recordingLocker keeps a per-(account,asset) running balance so tests
 // can assert the lock-on-place / release-on-close arithmetic without
@@ -76,9 +74,15 @@ func (l *recordingLocker) get(acc uint64, asset uint32) cosmosmath.Int {
 	return cosmosmath.ZeroInt()
 }
 
+// errLockerInsufficient is a test-local sentinel used by the
+// recordingLocker to simulate an under-funded account. The orderbook
+// keeper does not care about the concrete error type — it only checks
+// that OpenOrder propagates the failure and skips state writes.
+var errLockerInsufficient = errors.New("spot locker: simulated under-funded account")
+
 func (l *recordingLocker) IncreaseLockedBalance(_ context.Context, acc uint64, asset uint32, amount cosmosmath.Int) error {
 	if l.insufficient {
-		return types.ErrInsufficientLiquidity.Wrapf("simulated under-funded account")
+		return errLockerInsufficient
 	}
 	cur := l.get(acc, asset)
 	l.balances[lockKey{acc, asset}] = cur.Add(amount)
@@ -131,7 +135,7 @@ func TestSpotLock_AskLocksBase(t *testing.T) {
 		RemainingBaseAmount: 5,
 		Status:              perptypes.OrderStatusOpen,
 	}
-	require.NoError(t, k.OpenOrder(ctx, o, false))
+	require.NoError(t, k.OpenOrder(ctx, o))
 	require.True(t, locker.get(42, 100).Equal(cosmosmath.NewInt(5)),
 		"ask should lock base = remaining_base")
 	require.True(t, locker.get(42, 200).IsZero(), "no quote lock for asks")
@@ -159,7 +163,7 @@ func TestSpotLock_BidLocksQuote(t *testing.T) {
 		RemainingBaseAmount: 3,
 		Status:              perptypes.OrderStatusOpen,
 	}
-	require.NoError(t, k.OpenOrder(ctx, o, false))
+	require.NoError(t, k.OpenOrder(ctx, o))
 	require.True(t, locker.get(42, 200).Equal(cosmosmath.NewInt(3000)),
 		"bid should lock quote = base * price")
 	require.True(t, locker.get(42, 100).IsZero(), "no base lock for bids")
@@ -189,7 +193,7 @@ func TestSpotLock_PartialFillReleasesResidueOnCancel(t *testing.T) {
 		RemainingBaseAmount: 10,
 		Status:              perptypes.OrderStatusOpen,
 	}
-	require.NoError(t, k.OpenOrder(ctx, o, false))
+	require.NoError(t, k.OpenOrder(ctx, o))
 	require.True(t, locker.get(42, 100).Equal(cosmosmath.NewInt(10)))
 
 	// Simulate a partial fill of 4 base. In production this is
@@ -229,7 +233,7 @@ func TestSpotLock_OpenOrderRejectsWhenLockerInsufficient(t *testing.T) {
 		RemainingBaseAmount: 1,
 		Status:              perptypes.OrderStatusOpen,
 	}
-	require.Error(t, k.OpenOrder(ctx, o, false))
+	require.Error(t, k.OpenOrder(ctx, o))
 
 	// No order record persisted, no AccountOpenOrders entry.
 	_, err := k.GetOrder(ctx, 4)
@@ -238,6 +242,80 @@ func TestSpotLock_OpenOrderRejectsWhenLockerInsufficient(t *testing.T) {
 	cnt, err := k.GetAccountOpenOrderCount(ctx, 42, 1)
 	require.NoError(t, err)
 	require.Zero(t, cnt, "rejected order must not bump the open-order counter")
+}
+
+// TestTriggerActivation_GhostOrderCleanupAfterOpenOrderFailure
+// reproduces the matching-EndBlocker scenario where ActivateTrigger
+// has flipped the order to Status=Open, but the subsequent post-match
+// OpenOrder fails because the activated variant cannot acquire its
+// spot lock (e.g. user spent the available balance between trigger
+// placement and activation). The caller must be able to CancelOrder
+// the now-half-activated order so it does not survive as a ghost:
+// indexed via AccountOpenOrders / ClientOrderIndex (installed at
+// OpenTriggerOrder) but never inserted into the book.
+//
+// This mirrors the cleanup branch added in x/matching/keeper/abci.go.
+func TestTriggerActivation_GhostOrderCleanupAfterOpenOrderFailure(t *testing.T) {
+	k, ctx, locker := newOrderbookSpot(t)
+
+	o := types.Order{
+		OrderIndex:          7,
+		ClientOrderIndex:    77,
+		OwnerAccountIndex:   42,
+		MarketIndex:         1,
+		IsAsk:               false,
+		OrderType:           perptypes.StopLossLimitOrder,
+		TimeInForce:         perptypes.GTT,
+		Price:               1000,
+		TriggerPrice:        999,
+		Nonce:               1,
+		InitialBaseAmount:   1,
+		RemainingBaseAmount: 1,
+		Status:              perptypes.OrderStatusTriggeredPending,
+		Expiry:              500,
+	}
+	require.NoError(t, k.OpenTriggerOrder(ctx, o))
+
+	// Activate exactly as matching does, then flip the variant.
+	activated, err := k.ActivateTrigger(ctx, o.OrderIndex)
+	require.NoError(t, err)
+	activated.OrderType = perptypes.LimitOrder
+
+	// Available balance is gone by the time the trigger fires.
+	locker.insufficient = true
+	require.Error(t, k.OpenOrder(ctx, activated),
+		"OpenOrder must reject when the activated variant cannot lock")
+
+	// The fix: CancelOrder must drain every index and flip Status
+	// to Cancelled even though no orderbook entry was ever inserted
+	// and no spot lock was ever acquired. x/account's lenient
+	// DecreaseLockedBalance (clamps to current LockedBalance) is
+	// what makes the cleanup safe.
+	locker.insufficient = false
+	_, err = k.CancelOrder(ctx, o.OrderIndex)
+	require.NoError(t, err)
+
+	final, err := k.GetOrder(ctx, o.OrderIndex)
+	require.NoError(t, err)
+	require.Equal(t, perptypes.OrderStatusCancelled, final.Status)
+
+	cnt, err := k.GetAccountOpenOrderCount(ctx, o.OwnerAccountIndex, o.MarketIndex)
+	require.NoError(t, err)
+	require.Zero(t, cnt, "ghost cleanup must drain the open-order counter")
+
+	found, _, err := k.HasOpenClientOrder(ctx, o.MarketIndex, o.OwnerAccountIndex, o.ClientOrderIndex)
+	require.NoError(t, err)
+	require.False(t, found, "ghost cleanup must drop the client_order_index pointer")
+
+	// ExpiryIndex was cleared by ActivateTrigger; the post-cancel
+	// removeExpiryIndex must tolerate the already-empty state and
+	// not surface an error.
+	seen := false
+	require.NoError(t, k.IterateAccountOpenOrders(ctx, o.OwnerAccountIndex, 0, func(types.Order) error {
+		seen = true
+		return types.ErrStopIteration
+	}))
+	require.False(t, seen, "no orders may survive in the per-account index")
 }
 
 // TestAccountOpenOrderCount_TracksLifecycle confirms the cap counter
@@ -262,8 +340,8 @@ func TestAccountOpenOrderCount_TracksLifecycle(t *testing.T) {
 		}
 	}
 
-	require.NoError(t, k.OpenOrder(ctx, mkOrder(1, true), false))
-	require.NoError(t, k.OpenOrder(ctx, mkOrder(2, false), false))
+	require.NoError(t, k.OpenOrder(ctx, mkOrder(1, true)))
+	require.NoError(t, k.OpenOrder(ctx, mkOrder(2, false)))
 	cnt, err := k.GetAccountOpenOrderCount(ctx, 77, 1)
 	require.NoError(t, err)
 	require.EqualValues(t, 2, cnt)

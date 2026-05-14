@@ -80,9 +80,9 @@ func (k Keeper) CancelAllOpenOrdersForAccount(ctx context.Context, accountIdx ui
 		maxCancels = 128
 	}
 	targets := make([]orderbooktypes.Order, 0, maxCancels)
-	if err := k.bookKeeper.IterateAccountOpenOrders(ctx, accountIdx, 0, func(o orderbooktypes.Order) bool {
+	if err := k.bookKeeper.IterateAccountOpenOrders(ctx, accountIdx, 0, func(o orderbooktypes.Order) error {
 		if uint32(len(targets)) >= maxCancels {
-			return true
+			return orderbooktypes.ErrStopIteration
 		}
 		switch o.Status {
 		case perptypes.OrderStatusOpen,
@@ -90,7 +90,7 @@ func (k Keeper) CancelAllOpenOrdersForAccount(ctx context.Context, accountIdx ui
 			perptypes.OrderStatusTriggeredPending:
 			targets = append(targets, o)
 		}
-		return false
+		return nil
 	}); err != nil {
 		return 0, err
 	}

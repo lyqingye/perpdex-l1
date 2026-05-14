@@ -2,51 +2,42 @@ package keeper
 
 import (
 	"context"
-	"strconv"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
-	"github.com/perpdex/perpdex-l1/x/matching/types"
+	orderbooktypes "github.com/perpdex/perpdex-l1/x/orderbook/types"
 )
 
 // EndBlocker iterates every order currently parked in the trigger index and
 // activates those whose trigger condition has been met against the latest
 // mark price. Activated triggers become resting limit orders (or IOC/market
-// fills) and go through the normal matching pipeline. Errors from a single
-// market are emitted as events but do not short-circuit the loop so a stale
-// oracle for one market cannot jam the rest.
+// fills) and go through the normal matching pipeline. Per-trigger failures
+// are logged at error level and the sweep continues with the next trigger
+// so a stale oracle / corrupt order for one market cannot jam the rest.
 func (k Keeper) EndBlocker(ctx context.Context) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
-	type triggered struct {
-		market       uint32
-		triggerPrice uint32
-		orderIndex   uint64
-	}
-	var due []triggered
-	if err := k.bookKeeper.IterateTriggers(ctx, func(market uint32, triggerPrice uint32, orderIndex uint64) bool {
+	logger := sdkCtx.Logger()
+	var due []uint64
+	err := k.bookKeeper.IterateTriggers(ctx, func(o orderbooktypes.Order) error {
 		// Route the markPrice read through MarketKeeper so trigger
 		// activation shares the fail-closed zero/staleness gate.
-		// Failures emit TriggerOracleError and skip the trigger;
-		// stop-loss / take-profit must never fire on a stale or
-		// missing markPrice.
-		markPrice, _, err := k.marketKeeper.GetMarkPriceAndDetails(ctx, market)
+		// Failures are logged and the trigger is skipped; stop-loss /
+		// take-profit must never fire on a stale or missing markPrice.
+		markPrice, _, err := k.marketKeeper.GetMarkPriceAndDetails(ctx, o.MarketIndex)
 		if err != nil {
-			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
-				types.EventTypeTriggerOracleError,
-				sdk.NewAttribute(types.AttributeKeyMarketIndex, strconv.FormatUint(uint64(market), 10)),
-				sdk.NewAttribute(types.AttributeKeyErr, err.Error()),
-			))
-			return false
+			logger.Error(
+				"matching EndBlocker: trigger oracle read failed; skipping trigger",
+				"market_index", o.MarketIndex,
+				"order_index", o.OrderIndex,
+				"err", err,
+			)
+			return nil
 		}
 		if markPrice == 0 {
 			// Defensive: GetMarkPriceAndDetails should already reject a
 			// zero markPrice; guard the comparison anyway.
-			return false
-		}
-		o, err := k.bookKeeper.GetOrder(ctx, orderIndex)
-		if err != nil {
-			return false
+			return nil
 		}
 		// Activation semantics, mirroring the spec docs:
 		//   stop-loss long (isAsk=true, protect long): trigger when markPrice <= trigger
@@ -57,33 +48,34 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 		switch o.OrderType {
 		case perptypes.StopLossOrder, perptypes.StopLossLimitOrder:
 			if o.IsAsk {
-				active = markPrice <= triggerPrice
+				active = markPrice <= o.TriggerPrice
 			} else {
-				active = markPrice >= triggerPrice
+				active = markPrice >= o.TriggerPrice
 			}
 		case perptypes.TakeProfitOrder, perptypes.TakeProfitLimitOrder:
 			if o.IsAsk {
-				active = markPrice >= triggerPrice
+				active = markPrice >= o.TriggerPrice
 			} else {
-				active = markPrice <= triggerPrice
+				active = markPrice <= o.TriggerPrice
 			}
 		}
 		if active {
-			due = append(due, triggered{market: market, triggerPrice: triggerPrice, orderIndex: orderIndex})
+			due = append(due, o.OrderIndex)
 		}
-		return false
-	}); err != nil {
+		return nil
+	})
+	if err != nil {
 		return err
 	}
 
-	for _, t := range due {
-		o, err := k.bookKeeper.ActivateTrigger(ctx, t.orderIndex)
+	for _, orderIndex := range due {
+		o, err := k.bookKeeper.ActivateTrigger(ctx, orderIndex)
 		if err != nil {
-			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
-				types.EventTypeTriggerDequeueError,
-				sdk.NewAttribute(types.AttributeKeyOrderIndex, strconv.FormatUint(t.orderIndex, 10)),
-				sdk.NewAttribute(types.AttributeKeyErr, err.Error()),
-			))
+			logger.Error(
+				"matching EndBlocker: ActivateTrigger failed; skipping trigger",
+				"order_index", orderIndex,
+				"err", err,
+			)
 			continue
 		}
 		// Convert trigger variant to its executable twin:
@@ -107,30 +99,46 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 			// Match failed mid-trigger: we already removed the
 			// trigger registration via ActivateTrigger, so cancel
 			// the order to keep state consistent. CancelOrder is
-			// idempotent for orders without a resting entry.
+			// idempotent for orders without a resting entry; an
+			// ErrOrderNotCancelable means the order was already
+			// drained (FillMakerOrder fully consumed it) and is
+			// safe to drop.
 			if _, cerr := k.bookKeeper.CancelOrder(ctx, o.OrderIndex); cerr != nil {
-				// Already-terminal orders or missing entries
-				// surface as ErrOrderNotCancelable; ignore so
-				// the original match error wins.
 				_ = cerr
 			}
-			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
-				types.EventTypeTriggerMatchError,
-				sdk.NewAttribute(types.AttributeKeyOrderIndex, strconv.FormatUint(o.OrderIndex, 10)),
-				sdk.NewAttribute(types.AttributeKeyErr, err.Error()),
-			))
+			logger.Error(
+				"matching EndBlocker: post-trigger MatchOrder failed; order cancelled",
+				"order_index", o.OrderIndex,
+				"err", err,
+			)
 			continue
 		}
 		o.Status = status
 		if o.TimeInForce == perptypes.IOC && o.RemainingBaseAmount > 0 {
 			o.Status = perptypes.OrderStatusCancelled
 		}
-		if err := k.bookKeeper.OpenOrder(ctx, o, false); err != nil {
-			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
-				types.EventTypeTriggerInsertError,
-				sdk.NewAttribute(types.AttributeKeyOrderIndex, strconv.FormatUint(o.OrderIndex, 10)),
-				sdk.NewAttribute(types.AttributeKeyErr, err.Error()),
-			))
+		if err := k.bookKeeper.OpenOrder(ctx, o); err != nil {
+			// OpenOrder failed AFTER ActivateTrigger persisted
+			// Status=Open: without cleanup the order would survive
+			// as a ghost — visible via AccountOpenOrders /
+			// ClientOrderIndex (installed at OpenTriggerOrder
+			// time) but with no orderbook entry and no spot lock,
+			// uncancelable by the user because they cannot tell
+			// it ever existed. Mirror the MatchOrder error path
+			// above and CancelOrder the activated order so every
+			// index is dropped. CancelOrder is tolerant of
+			// missing entries / locks (x/account's
+			// DecreaseLockedBalance clamps), so the cleanup
+			// succeeds even when applySpotLockOnOpen never
+			// acquired anything.
+			if _, cerr := k.bookKeeper.CancelOrder(ctx, o.OrderIndex); cerr != nil {
+				_ = cerr
+			}
+			logger.Error(
+				"matching EndBlocker: post-trigger OpenOrder failed; ghost order cancelled",
+				"order_index", o.OrderIndex,
+				"err", err,
+			)
 		}
 	}
 	return nil

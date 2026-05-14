@@ -2,7 +2,6 @@ package keeper
 
 import (
 	"context"
-	"strconv"
 
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -243,17 +242,17 @@ func (m MsgServer) CreateOrder(ctx context.Context, msg *types.MsgCreateOrder) (
 		}
 		if avail.LT(lockAmt) {
 			order.Status = perptypes.OrderStatusCancelled
-			sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
-				types.EventTypeOrderResidueUnlockable,
-				sdk.NewAttribute(types.AttributeKeyMarketIndex, strconv.FormatUint(uint64(order.MarketIndex), 10)),
-				sdk.NewAttribute(types.AttributeKeyOrderIndex, strconv.FormatUint(order.OrderIndex, 10)),
-				sdk.NewAttribute(types.AttributeKeyAssetID, strconv.FormatUint(uint64(assetID), 10)),
-				sdk.NewAttribute(types.AttributeKeyAvailable, avail.String()),
-				sdk.NewAttribute(types.AttributeKeyRequired, lockAmt.String()),
-			))
+			sdk.UnwrapSDKContext(ctx).Logger().Error(
+				"matching CreateOrder: spot residue unlockable; force-cancelled residue",
+				"market_index", order.MarketIndex,
+				"order_index", order.OrderIndex,
+				"asset_id", assetID,
+				"available", avail.String(),
+				"required", lockAmt.String(),
+			)
 		}
 	}
-	if err := m.bookKeeper.OpenOrder(ctx, order, msg.TimeInForce == perptypes.PostOnly); err != nil {
+	if err := m.bookKeeper.OpenOrder(ctx, order); err != nil {
 		return nil, err
 	}
 
@@ -383,9 +382,9 @@ func (m MsgServer) CancelAllOrders(ctx context.Context, msg *types.MsgCancelAllO
 	// regardless of client_order_index, and `MarketIndexFilter==0`
 	// means all markets per the proto contract.
 	targets := make([]orderbooktypes.Order, 0, maxCancels)
-	if err := m.bookKeeper.IterateAccountOpenOrders(ctx, msg.AccountIndex, msg.MarketIndexFilter, func(o orderbooktypes.Order) bool {
+	if err := m.bookKeeper.IterateAccountOpenOrders(ctx, msg.AccountIndex, msg.MarketIndexFilter, func(o orderbooktypes.Order) error {
 		if uint32(len(targets)) >= maxCancels {
-			return true
+			return orderbooktypes.ErrStopIteration
 		}
 		switch o.Status {
 		case perptypes.OrderStatusOpen,
@@ -393,7 +392,7 @@ func (m MsgServer) CancelAllOrders(ctx context.Context, msg *types.MsgCancelAllO
 			perptypes.OrderStatusTriggeredPending:
 			targets = append(targets, o)
 		}
-		return false
+		return nil
 	}); err != nil {
 		return nil, err
 	}

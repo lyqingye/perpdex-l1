@@ -20,15 +20,15 @@ func TestAccountOpenOrders_CoversNoClientID(t *testing.T) {
 	k, ctx := newOrderbookKeeper(t)
 
 	a := makeOrder(1, 99, 1, 10, false)
-	require.NoError(t, k.OpenOrder(ctx, a, false))
+	require.NoError(t, k.OpenOrder(ctx, a))
 
 	b := makeOrder(2, 99, 1, 0, false)
-	require.NoError(t, k.OpenOrder(ctx, b, false))
+	require.NoError(t, k.OpenOrder(ctx, b))
 
 	seen := map[uint64]bool{}
-	require.NoError(t, k.IterateAccountOpenOrders(ctx, 99, 0, func(o types.Order) bool {
+	require.NoError(t, k.IterateAccountOpenOrders(ctx, 99, 0, func(o types.Order) error {
 		seen[o.OrderIndex] = true
-		return false
+		return nil
 	}))
 	require.True(t, seen[1], "order with client_order_index missed")
 	require.True(t, seen[2], "order without client_order_index missed")
@@ -41,14 +41,14 @@ func TestAccountOpenOrders_HonorsMarketFilter(t *testing.T) {
 
 	for i, mkt := range []uint32{1, 2, 1, 3} {
 		o := makeOrder(uint64(i+1), 7, mkt, 0, false)
-		require.NoError(t, k.OpenOrder(ctx, o, false))
+		require.NoError(t, k.OpenOrder(ctx, o))
 	}
 
 	collect := func(filter uint32) []uint64 {
 		var got []uint64
-		require.NoError(t, k.IterateAccountOpenOrders(ctx, 7, filter, func(o types.Order) bool {
+		require.NoError(t, k.IterateAccountOpenOrders(ctx, 7, filter, func(o types.Order) error {
 			got = append(got, o.OrderIndex)
-			return false
+			return nil
 		}))
 		return got
 	}
@@ -65,12 +65,12 @@ func TestAccountOpenOrders_CancelRemoves(t *testing.T) {
 	k, ctx := newOrderbookKeeper(t)
 
 	o := makeOrder(5, 1, 1, 0, false)
-	require.NoError(t, k.OpenOrder(ctx, o, false))
+	require.NoError(t, k.OpenOrder(ctx, o))
 
 	var hits int
-	require.NoError(t, k.IterateAccountOpenOrders(ctx, 1, 0, func(types.Order) bool {
+	require.NoError(t, k.IterateAccountOpenOrders(ctx, 1, 0, func(types.Order) error {
 		hits++
-		return false
+		return nil
 	}))
 	require.Equal(t, 1, hits)
 
@@ -79,9 +79,9 @@ func TestAccountOpenOrders_CancelRemoves(t *testing.T) {
 	require.Equal(t, perptypes.OrderStatusCancelled, cancelled.Status)
 
 	hits = 0
-	require.NoError(t, k.IterateAccountOpenOrders(ctx, 1, 0, func(types.Order) bool {
+	require.NoError(t, k.IterateAccountOpenOrders(ctx, 1, 0, func(types.Order) error {
 		hits++
-		return false
+		return nil
 	}))
 	require.Zero(t, hits)
 }

@@ -1,90 +1,50 @@
+// lifecycle.go is the orderbook keeper's atomic state-transition
+// layer. Each lifecycle function is *self-contained*: its body shows
+// every entry, order, index, and spot-lock side effect in one place,
+// so a reviewer never has to chase the "what else changed?" question
+// across multiple files.
+//
+// The composition rule:
+//
+//   - Entry-side work goes through helpers in entries.go
+//     (insertEntry / removeEntry / shrinkEntryResidue).
+//   - Order/index/lock work goes through helpers in orders.go
+//     (indexClientOrder / indexAccountOpenOrder / addExpiryIndex /
+//      applyOrderResidue / applySpotLockOnOpen / releaseSpotLockOnClose).
+//   - The two layers NEVER call each other directly. Lifecycle
+//     functions are the only place they are composed.
+//
+// This keeps the entry-residue and order-residue invariant
+// (entry_drained iff order_drained) provable by local inspection of
+// each lifecycle function.
 package keeper
 
 import (
 	"context"
 
-	"cosmossdk.io/math"
-
 	perptypes "github.com/perpdex/perpdex-l1/types"
-	markettypes "github.com/perpdex/perpdex-l1/x/market/types"
 	"github.com/perpdex/perpdex-l1/x/orderbook/types"
 )
-
-// computeSpotLock returns (assetID, amount) the order should hold while
-// resting on the orderbook. For an ask the seller locks `remaining_base`
-// units of the base asset; for a bid the buyer locks `remaining_base *
-// price` units of the quote asset, mirroring
-// `get_locked_amount_and_ask_asset_index` in l2_create_order.rs.
-func computeSpotLock(o types.Order, market markettypes.Market) (uint32, math.Int) {
-	if o.IsAsk {
-		return market.BaseAssetId, math.NewIntFromUint64(o.RemainingBaseAmount)
-	}
-	notional := math.NewIntFromUint64(o.RemainingBaseAmount).
-		Mul(math.NewIntFromUint64(uint64(o.Price)))
-	return market.QuoteAssetId, notional
-}
-
-// applySpotLockOnOpen reserves the proportional resources for a spot
-// resting order. Perp markets are no-ops: their resource control comes
-// from the open-order count cap (and the post-trade risk check), not a
-// real balance lock.
-func (k Keeper) applySpotLockOnOpen(ctx context.Context, o types.Order) error {
-	if k.spotLocker == nil {
-		return nil
-	}
-	market, err := k.marketKeeper.GetMarket(ctx, o.MarketIndex)
-	if err != nil {
-		return err
-	}
-	if market.MarketType != perptypes.MarketTypeSpot {
-		return nil
-	}
-	assetID, amount := computeSpotLock(o, market)
-	return k.spotLocker.IncreaseLockedBalance(ctx, o.OwnerAccountIndex, assetID, amount)
-}
-
-// releaseSpotLockOnClose drops the (still-locked) portion of a resting
-// spot order's resources when it leaves the book without trading further
-// (cancel / GTT eviction / reduce-only eviction). For a partially-filled
-// order, `o.RemainingBaseAmount` already reflects the post-fill residue,
-// which equals the residual lock — partial fills consume the lock 1:1
-// inside ApplySpotMatching's spotMakerDebit, so we only release what is
-// still reserved here.
-func (k Keeper) releaseSpotLockOnClose(ctx context.Context, o types.Order) error {
-	if k.spotLocker == nil {
-		return nil
-	}
-	market, err := k.marketKeeper.GetMarket(ctx, o.MarketIndex)
-	if err != nil {
-		return err
-	}
-	if market.MarketType != perptypes.MarketTypeSpot {
-		return nil
-	}
-	assetID, amount := computeSpotLock(o, market)
-	return k.spotLocker.DecreaseLockedBalance(ctx, o.OwnerAccountIndex, assetID, amount)
-}
 
 // OpenOrder accepts a freshly-created or post-match Order and reconciles
 // every piece of orderbook state to match `o.Status` in one atomic step:
 //
-//   - Open / PartiallyFilled: build an OrderBookEntry, insert it, register
-//     the client and account-open indexes, then store the Order record.
+//   - Open / PartiallyFilled: lock spot residue (no-op for perp), insert
+//     the orderbook entry, register client + account-open + expiry
+//     indexes, then persist the Order record.
 //   - Filled / Cancelled (e.g. IOC residue, zero-fill bookkeeping, or a
-//     trigger-activated order that became terminal during match): persist
-//     the Order and clear any pre-existing client + account-open indexes.
-//     Idempotent — a brand-new terminal order with no prior indexes
-//     simply no-ops on unindex.
+//     trigger-activated order that became terminal during match): clear
+//     any pre-existing indexes from a prior lifetime (OpenTriggerOrder
+//     before activation, repeated terminal recording, etc.) and persist
+//     the Order. Idempotent — a brand-new terminal order with no prior
+//     indexes simply no-ops on every unindex call.
 //
-// `isPostOnly` is forwarded onto `OrderBookEntry.IsPostOnly` for the resting
-// path; ignored when the order is terminal.
-func (k Keeper) OpenOrder(ctx context.Context, o types.Order, isPostOnly bool) error {
+// Spot lock is acquired BEFORE the entry / index writes so that a
+// failed lock (insufficient available balance) cannot leave a partially
+// indexed order on the book.
+func (k Keeper) OpenOrder(ctx context.Context, o types.Order) error {
 	switch o.Status {
 	case perptypes.OrderStatusOpen, perptypes.OrderStatusPartiallyFilled:
-		// Lock-on-place for spot residue first: if the lock fails
-		// (insufficient available balance) the entry/index writes
-		// below never happen, so a malicious caller cannot rest an
-		// under-funded spot order. Perp markets are no-ops here.
 		if err := k.applySpotLockOnOpen(ctx, o); err != nil {
 			return err
 		}
@@ -95,11 +55,10 @@ func (k Keeper) OpenOrder(ctx context.Context, o types.Order, isPostOnly bool) e
 			Nonce:               o.Nonce,
 			RemainingBaseAmount: o.RemainingBaseAmount,
 			Expiry:              o.Expiry,
-			IsPostOnly:          isPostOnly,
 			ReduceOnly:          o.ReduceOnly,
 			OrderType:           o.OrderType,
 		}
-		if err := k.insertOrderbookEntry(ctx, o.MarketIndex, o.IsAsk, entry); err != nil {
+		if err := k.insertEntry(ctx, o.MarketIndex, o.IsAsk, entry); err != nil {
 			return err
 		}
 		if err := k.indexClientOrder(ctx, o); err != nil {
@@ -108,18 +67,22 @@ func (k Keeper) OpenOrder(ctx context.Context, o types.Order, isPostOnly bool) e
 		if err := k.indexAccountOpenOrder(ctx, o); err != nil {
 			return err
 		}
+		if err := k.addExpiryIndex(ctx, o); err != nil {
+			return err
+		}
 	default:
 		// Terminal status: clear any indexes that may have been
 		// installed earlier in this order's lifetime (e.g. by
-		// OpenTriggerOrder before activation). UnindexClientOrder
-		// is unconditional here because the Order's own client_id
-		// pair is the one we care about — UnindexClientOrderIfMatches
-		// guards against cross-order re-use, but for a single-order
-		// terminal transition the simple unindex is correct.
+		// OpenTriggerOrder before activation). The conditional
+		// unindex variant guards against cross-order client_id
+		// re-use.
 		if err := k.unindexClientOrderIfMatches(ctx, o); err != nil {
 			return err
 		}
 		if err := k.unindexAccountOpenOrder(ctx, o); err != nil {
+			return err
+		}
+		if err := k.removeExpiryIndex(ctx, o); err != nil {
 			return err
 		}
 	}
@@ -127,8 +90,15 @@ func (k Keeper) OpenOrder(ctx context.Context, o types.Order, isPostOnly bool) e
 }
 
 // OpenTriggerOrder parks a stop/take order in the trigger index until the
-// mark price activates it, while still making the order discoverable via
-// client_order_index and AccountOpenOrders so a cancel-all sweep finds it.
+// mark price activates it. The order is also indexed for client_order_id,
+// account-open reach (so cancel-all finds it), and expiry sweep (so a
+// stale GTT trigger expires on schedule even before activation).
+//
+// No spot lock is acquired here: triggers conditionally promise a future
+// trade; locking funds now would defeat their purpose for stop-market
+// orders (price unknown until activation) and surprise users for
+// stop-limit orders. The lock is taken at activation time inside the
+// post-match OpenOrder call.
 func (k Keeper) OpenTriggerOrder(ctx context.Context, o types.Order) error {
 	if err := k.addTrigger(ctx, o.MarketIndex, o.TriggerPrice, o.OrderIndex); err != nil {
 		return err
@@ -139,20 +109,35 @@ func (k Keeper) OpenTriggerOrder(ctx context.Context, o types.Order) error {
 	if err := k.indexAccountOpenOrder(ctx, o); err != nil {
 		return err
 	}
+	if err := k.addExpiryIndex(ctx, o); err != nil {
+		return err
+	}
 	return k.setOrder(ctx, o)
 }
 
-// ActivateTrigger transitions a trigger-pending order back into an executable
-// open order. It removes the trigger registration, flips Status to Open, and
-// persists the Order. The caller (matching EndBlocker) is then expected to
-// mutate OrderType / TimeInForce / Price for the activated variant, run the
-// match loop, and call OpenOrder for any residual base.
+// ActivateTrigger transitions a trigger-pending order back into an
+// executable open order. It removes the trigger registration, drops the
+// pre-activation ExpiryIndex entry, flips Status to Open, and persists
+// the Order. The caller (matching EndBlocker) is then expected to
+// mutate OrderType / TimeInForce / Price for the activated variant,
+// run the match loop, and call OpenOrder — which re-installs the
+// ExpiryIndex entry for any GTT residue and clears it again on a
+// terminal status.
+//
+// Removing the ExpiryIndex here, rather than relying on a later
+// OpenOrder to overwrite the same key, makes the post-match OpenOrder
+// the single authoritative owner of that index. Any path that does
+// NOT reach the post-match OpenOrder (matching error, EndBlocker early
+// return) therefore leaves no orphan expiry entry behind.
 func (k Keeper) ActivateTrigger(ctx context.Context, orderIndex uint64) (types.Order, error) {
 	o, err := k.GetOrder(ctx, orderIndex)
 	if err != nil {
 		return types.Order{}, err
 	}
 	if err := k.removeTrigger(ctx, o.MarketIndex, o.TriggerPrice, o.OrderIndex); err != nil {
+		return types.Order{}, err
+	}
+	if err := k.removeExpiryIndex(ctx, o); err != nil {
 		return types.Order{}, err
 	}
 	o.Status = perptypes.OrderStatusOpen
@@ -163,15 +148,24 @@ func (k Keeper) ActivateTrigger(ctx context.Context, orderIndex uint64) (types.O
 }
 
 // FillMakerOrder applies `filledBase` against the resting maker at
-// `makerIndex`. It atomically: decrements the entry's remaining_base_amount
-// (removing the entry when it reaches zero), updates the corresponding
-// Order.RemainingBaseAmount and Status (PartiallyFilled or Filled), and on
-// full fill clears both the client-id and account-open indexes so the
-// terminal order is no longer reachable as "open". Returns the updated
-// Order.
+// `makerIndex`. It atomically:
 //
-// `filledBase` is clamped to the maker's current remaining size; passing a
-// larger value just fills the remainder rather than under/overflowing.
+//   - shrinks the OrderBookEntry residue (and removes the entry on
+//     drain) via shrinkEntryResidue
+//   - shrinks the Order record residue via applyOrderResidue and
+//     flips Status to Filled / PartiallyFilled accordingly
+//   - on full fill clears the client_id, account-open, and expiry
+//     indexes so the terminal order is no longer reachable as "open"
+//
+// `filledBase` is clamped (by both shrinkers, independently) to the
+// current residue; passing a larger value just drains the maker.
+//
+// Cross-layer invariant: `entryRemoved == drained`. Both shrinkers
+// clamp their own delta against their own residue copy, but because
+// the Order and OrderBookEntry residues are kept in lock-step by every
+// other lifecycle function, the two booleans must agree. We assert the
+// invariant inline rather than trust it implicitly so any future
+// regression fails loud here instead of producing a corrupt book.
 func (k Keeper) FillMakerOrder(ctx context.Context, makerIndex uint64, filledBase uint64) (types.Order, error) {
 	maker, err := k.GetOrder(ctx, makerIndex)
 	if err != nil {
@@ -180,16 +174,28 @@ func (k Keeper) FillMakerOrder(ctx context.Context, makerIndex uint64, filledBas
 	if filledBase > maker.RemainingBaseAmount {
 		filledBase = maker.RemainingBaseAmount
 	}
-	if err := k.partialFill(ctx, maker.MarketIndex, maker.IsAsk, makerIndex, filledBase); err != nil {
+
+	entryRemoved, _, err := k.shrinkEntryResidue(ctx, maker.MarketIndex, maker.IsAsk, makerIndex, filledBase)
+	if err != nil {
 		return types.Order{}, err
 	}
-	maker.RemainingBaseAmount -= filledBase
-	if maker.RemainingBaseAmount == 0 {
+	drained := applyOrderResidue(&maker, filledBase)
+	if entryRemoved != drained {
+		return types.Order{}, types.ErrInvariantViolated.Wrapf(
+			"FillMakerOrder: entry_removed=%v order_drained=%v for order_index=%d (entry/order residue desync)",
+			entryRemoved, drained, makerIndex,
+		)
+	}
+
+	if drained {
 		maker.Status = perptypes.OrderStatusFilled
 		if err := k.unindexClientOrder(ctx, maker); err != nil {
 			return types.Order{}, err
 		}
 		if err := k.unindexAccountOpenOrder(ctx, maker); err != nil {
+			return types.Order{}, err
+		}
+		if err := k.removeExpiryIndex(ctx, maker); err != nil {
 			return types.Order{}, err
 		}
 	} else {
@@ -201,23 +207,28 @@ func (k Keeper) FillMakerOrder(ctx context.Context, makerIndex uint64, filledBas
 	return maker, nil
 }
 
-// EvictMakerOrder removes a maker entry mid-match (GTT expired or
-// reduce-only invariant broken) and marks the underlying Order with
-// `terminalStatus` (typically OrderStatusCancelled). It also clears the
-// client-id and account-open indexes so the now-gone resting order does
-// not survive as a stale "open" entry.
+// EvictMakerOrder removes a resting maker entry mid-match (GTT
+// expired, reduce-only invariant broken) and marks the underlying
+// Order with `terminalStatus` (typically OrderStatusCancelled).
+//
+// It performs the full close sequence inline so the order's exit path
+// has the same shape as a user CancelOrder:
+//
+//   - remove the orderbook entry (entry / price-level / sort-key)
+//   - release the residual spot lock (no-op for perp)
+//   - clear client_id, account-open, and expiry indexes
+//   - flip Status and persist the Order
+//
+// The pre-mutation `maker` snapshot drives releaseSpotLockOnClose so
+// the released amount equals the residue that was still on the book.
 func (k Keeper) EvictMakerOrder(ctx context.Context, makerIndex uint64, terminalStatus uint32) (types.Order, error) {
 	maker, err := k.GetOrder(ctx, makerIndex)
 	if err != nil {
 		return types.Order{}, err
 	}
-	if err := k.removeOrderbookEntry(ctx, maker.MarketIndex, maker.IsAsk, makerIndex); err != nil {
+	if err := k.removeEntry(ctx, maker.MarketIndex, maker.IsAsk, makerIndex); err != nil {
 		return types.Order{}, err
 	}
-	// Release any still-locked spot resources before flipping the order
-	// to its terminal status. We use the pre-mutation copy of `maker`
-	// (with its current RemainingBaseAmount) because the lock that was
-	// reserved at OpenOrder time is sized off the residue.
 	if err := k.releaseSpotLockOnClose(ctx, maker); err != nil {
 		return types.Order{}, err
 	}
@@ -228,6 +239,9 @@ func (k Keeper) EvictMakerOrder(ctx context.Context, makerIndex uint64, terminal
 	if err := k.unindexAccountOpenOrder(ctx, maker); err != nil {
 		return types.Order{}, err
 	}
+	if err := k.removeExpiryIndex(ctx, maker); err != nil {
+		return types.Order{}, err
+	}
 	if err := k.setOrder(ctx, maker); err != nil {
 		return types.Order{}, err
 	}
@@ -235,18 +249,22 @@ func (k Keeper) EvictMakerOrder(ctx context.Context, makerIndex uint64, terminal
 }
 
 // CancelOrder is the unified cancel entrypoint used by user cancels,
-// liquidation cancel-all, and the orderbook GTT-expiry sweep. It branches
-// on the order's current Status:
+// liquidation cancel-all, the orderbook GTT-expiry sweep, and the
+// matching trigger-activation cleanup path. It branches on the
+// order's current Status:
 //
-//   - Open / PartiallyFilled: the orderbook entry is removed.
+//   - Open / PartiallyFilled: the orderbook entry is removed and the
+//     residual spot lock is released.
 //   - TriggeredPending:        the trigger registration is removed.
-//   - anything else:           returns ErrOrderNotCancelable so callers
-//     cannot accidentally overwrite a terminal Order record.
+//     (No spot lock to release: triggers do not lock on placement.)
+//   - anything else:           returns ErrOrderNotCancelable so
+//     callers cannot accidentally overwrite a terminal Order record.
 //
-// In all successful branches the order's Status is set to Cancelled, the
-// client-id mapping is removed only when it still points at this order
-// (so a re-used client_order_index on a new order is not wiped), and the
-// account-open marker is cleared. The updated Order is returned.
+// In all successful branches the order's Status is set to Cancelled,
+// the client_id mapping is removed only when it still points at this
+// order (so a re-used client_order_index on a new order is not
+// wiped), the account-open marker and the expiry index entry are
+// cleared, and the updated Order record is persisted.
 func (k Keeper) CancelOrder(ctx context.Context, orderIndex uint64) (types.Order, error) {
 	o, err := k.GetOrder(ctx, orderIndex)
 	if err != nil {
@@ -257,13 +275,9 @@ func (k Keeper) CancelOrder(ctx context.Context, orderIndex uint64) (types.Order
 		if o.RemainingBaseAmount == 0 {
 			return types.Order{}, types.ErrOrderNotCancelable.Wrapf("order_index=%d already fully filled", o.OrderIndex)
 		}
-		if err := k.removeOrderbookEntry(ctx, o.MarketIndex, o.IsAsk, o.OrderIndex); err != nil {
+		if err := k.removeEntry(ctx, o.MarketIndex, o.IsAsk, o.OrderIndex); err != nil {
 			return types.Order{}, err
 		}
-		// Release residue lock for resting spot orders. Trigger
-		// cancels do not need to release because triggers do not
-		// lock at OpenTriggerOrder time — the lock only happens
-		// after activation when the order rests on the book.
 		if err := k.releaseSpotLockOnClose(ctx, o); err != nil {
 			return types.Order{}, err
 		}
@@ -279,6 +293,9 @@ func (k Keeper) CancelOrder(ctx context.Context, orderIndex uint64) (types.Order
 		return types.Order{}, err
 	}
 	if err := k.unindexAccountOpenOrder(ctx, o); err != nil {
+		return types.Order{}, err
+	}
+	if err := k.removeExpiryIndex(ctx, o); err != nil {
 		return types.Order{}, err
 	}
 	if err := k.setOrder(ctx, o); err != nil {

@@ -30,9 +30,8 @@ message OrderBookEntry {
   int64 nonce = 4;
   uint64 remaining_base_amount = 5;
   int64 expiry = 6;
-  bool is_post_only = 7;
-  bool reduce_only = 8;
-  uint32 order_type = 9;
+  bool reduce_only = 7;
+  uint32 order_type = 8;
 }
 
 message PriceLevelAggregate {

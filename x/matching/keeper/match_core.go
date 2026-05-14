@@ -52,7 +52,7 @@ func (k Keeper) nextMaker(
 	now int64,
 ) (orderbooktypes.OrderBookEntry, bool, error) {
 	for {
-		best, ok, err := k.bookKeeper.PeekBestOpposite(ctx, taker.MarketIndex, taker.IsAsk)
+		best, ok, err := k.bookKeeper.PeekBest(ctx, taker.MarketIndex, !taker.IsAsk)
 		if err != nil {
 			return orderbooktypes.OrderBookEntry{}, false, err
 		}
@@ -247,17 +247,22 @@ func (k Keeper) applySpotFill(
 // classifyApplyError translates a trade-engine error from a single
 // (apply + FillMakerOrder) cache attempt into the matching loop's
 // recoverable-error vocabulary, performing the outer-ctx side-effect
-// each branch requires (maker eviction event + book mutation; or a
-// taker-aborted event). It is the only place the matching keeper
-// inspects tradetypes recoverable sentinels, keeping the apply
-// helpers free of policy.
+// each branch requires (maker eviction + book mutation; or taker
+// abort). It is the only place the matching keeper inspects
+// tradetypes recoverable sentinels, keeping the apply helpers free
+// of policy.
+//
+// Both recoverable branches log the reason at error level for
+// observability; the order's resulting Status (Cancelled for the
+// evicted maker, force-cancel residue for the taker) is the
+// authoritative externally-visible signal.
 func (k Keeper) classifyApplyError(
 	ctx context.Context,
 	marketIdx uint32,
 	makerOrderIdx uint64,
 	applyErr error,
 ) (bool, error) {
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	logger := sdk.UnwrapSDKContext(ctx).Logger()
 	switch {
 	case tradetypes.IsRecoverableMakerError(applyErr):
 		// Discard cache, evict the bad maker on the OUTER ctx so
@@ -266,12 +271,12 @@ func (k Keeper) classifyApplyError(
 		if _, err := k.bookKeeper.EvictMakerOrder(ctx, makerOrderIdx, perptypes.OrderStatusCancelled); err != nil {
 			return false, err
 		}
-		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
-			types.EventTypeMakerEvictedBadState,
-			sdk.NewAttribute(types.AttributeKeyMarketIndex, strconv.FormatUint(uint64(marketIdx), 10)),
-			sdk.NewAttribute(types.AttributeKeyOrderIndex, strconv.FormatUint(makerOrderIdx, 10)),
-			sdk.NewAttribute(types.AttributeKeyReason, applyErr.Error()),
-		))
+		logger.Error(
+			"matching: maker evicted on recoverable bad-state error",
+			"market_index", marketIdx,
+			"order_index", makerOrderIdx,
+			"reason", applyErr,
+		)
 		return false, nil
 	case tradetypes.IsRecoverableTakerError(applyErr):
 		// Discard cache. Previously committed fills (any writeCache
@@ -281,11 +286,11 @@ func (k Keeper) classifyApplyError(
 		// the book would only re-trigger the same failure for
 		// downstream takers. Matches `cancel_taker_order`, which
 		// pops the taker register regardless of TIF.
-		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
-			types.EventTypeTakerAbortedBadState,
-			sdk.NewAttribute(types.AttributeKeyMarketIndex, strconv.FormatUint(uint64(marketIdx), 10)),
-			sdk.NewAttribute(types.AttributeKeyReason, applyErr.Error()),
-		))
+		logger.Error(
+			"matching: taker aborted on recoverable bad-state error",
+			"market_index", marketIdx,
+			"reason", applyErr,
+		)
 		return false, errTakerRejected
 	default:
 		return false, applyErr

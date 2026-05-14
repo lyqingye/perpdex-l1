@@ -2,49 +2,73 @@ package keeper
 
 import (
 	"context"
+	"errors"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
-	perptypes "github.com/perpdex/perpdex-l1/types"
+	"github.com/perpdex/perpdex-l1/x/orderbook/types"
 )
 
-// EndBlocker scans for expired GTT orders and cancels them via the unified
-// CancelOrder lifecycle. Trigger handling (which spawns matching) is owned
-// by x/matching.
+// EndBlocker walks the GTT ExpiryIndex (ordered ascending by expiry
+// timestamp) and cancels every order whose expiry has elapsed.
 //
-// Orders that have already reached a terminal status (Filled / Cancelled)
-// are skipped: the matching loop may have evicted a GTT-expired maker as
-// part of an in-block fill via EvictMakerOrder, in which case re-cancelling
-// here would error with ErrOrderNotCancelable.
+// The keyset only carries GTT orders that are currently open / partially
+// filled / trigger-pending — terminal-status orders have already
+// been removed by FillMakerOrder / EvictMakerOrder / CancelOrder
+// — so we never run a full Orders-table scan per block.
+//
+// Trigger handling (which spawns matching) is owned by x/matching.
+//
+// Per-order failures are isolated: `ErrOrderNotCancelable` is silently
+// tolerated (an in-block EvictMakerOrder may already have cancelled
+// the maker; the keyset cleanup is idempotent). Any other error is
+// logged at error level and the sweep continues with the next
+// expired order — a single corrupt key must not stall the whole
+// sweep and trip the Cosmos `EndBlocker` panic guard.
 func (k Keeper) EndBlocker(ctx context.Context) error {
-	now := sdk.UnwrapSDKContext(ctx).BlockTime().UnixMilli()
-	iter, err := k.Orders.Iterate(ctx, nil)
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	now := sdkCtx.BlockTime().UnixMilli()
+	expired, err := k.collectExpiredOrders(ctx, now)
 	if err != nil {
 		return err
 	}
-	expired := []uint64{}
-	for ; iter.Valid(); iter.Next() {
-		v, err := iter.Value()
-		if err != nil {
-			iter.Close()
-			return err
-		}
-		if v.TimeInForce != perptypes.GTT || v.Expiry == 0 || now < v.Expiry {
-			continue
-		}
-		switch v.Status {
-		case perptypes.OrderStatusOpen,
-			perptypes.OrderStatusPartiallyFilled,
-			perptypes.OrderStatusTriggeredPending:
-			expired = append(expired, v.OrderIndex)
-		}
-	}
-	iter.Close()
-
 	for _, idx := range expired {
 		if _, err := k.CancelOrder(ctx, idx); err != nil {
-			return err
+			if errors.Is(err, types.ErrOrderNotCancelable) {
+				continue
+			}
+			sdkCtx.Logger().Error(
+				"orderbook EndBlocker: failed to cancel expired order",
+				"order_index", idx,
+				"err", err,
+			)
 		}
 	}
 	return nil
+}
+
+// collectExpiredOrders scans the ExpiryIndex in ascending expiry order
+// and returns every order_index whose expiry is <= now. Iteration stops
+// at the first non-expired key — the keyset is sorted by `(expiry,
+// order_index)` so all later entries are guaranteed to be in the
+// future.
+func (k Keeper) collectExpiredOrders(ctx context.Context, now int64) ([]uint64, error) {
+	iter, err := k.ExpiryIndex.Iterate(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer iter.Close()
+	var expired []uint64
+	for ; iter.Valid(); iter.Next() {
+		key, err := iter.Key()
+		if err != nil {
+			return nil, err
+		}
+		expiry := key.K1()
+		if expiry > now {
+			break
+		}
+		expired = append(expired, key.K2())
+	}
+	return expired, nil
 }
