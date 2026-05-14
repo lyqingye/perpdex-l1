@@ -214,7 +214,7 @@ func (k Keeper) adjustPriceLevel(
 			return err
 		}
 		pl.AskQuoteSum = nextQuote
-		nextCount, err := applyCountDelta(pl.AskCount, countDelta)
+		nextCount, err := ApplyCountDelta(pl.AskCount, countDelta)
 		if err != nil {
 			return err
 		}
@@ -230,13 +230,21 @@ func (k Keeper) adjustPriceLevel(
 			return err
 		}
 		pl.BidQuoteSum = nextQuote
-		nextCount, err := applyCountDelta(pl.BidCount, countDelta)
+		nextCount, err := ApplyCountDelta(pl.BidCount, countDelta)
 		if err != nil {
 			return err
 		}
 		pl.BidCount = nextCount
 	}
-	if pl.AskBaseSum == 0 && pl.BidBaseSum == 0 && pl.AskCount == 0 && pl.BidCount == 0 {
+	// Cross-field invariant: the price level was built from
+	// (base, quote, count) contributions added together, so all six
+	// aggregates must drop to zero in lock-step. Cleaning up only on
+	// "base + count == 0" left a window where a future bug could leave
+	// QuoteSum > 0 sitting on a zero-base row; the explicit conjunction
+	// catches that drift instead of persisting a half-empty level.
+	if pl.AskBaseSum == 0 && pl.BidBaseSum == 0 &&
+		pl.AskQuoteSum == 0 && pl.BidQuoteSum == 0 &&
+		pl.AskCount == 0 && pl.BidCount == 0 {
 		return k.PriceLevels.Remove(ctx, key)
 	}
 	return k.PriceLevels.Set(ctx, key, pl)
@@ -268,18 +276,19 @@ func ApplyMagDelta(cur uint64, mag uint64, sign int8) (uint64, error) {
 	}
 }
 
-// applyCountDelta enforces the same strict invariant on the per-side
+// ApplyCountDelta enforces the same strict invariant on the per-side
 // entry-count aggregate. The price level is created together with its
 // first entry and torn down together with the last one, so any negative
-// adjustment that would underflow is a bug.
-func applyCountDelta(cur uint32, delta int32) (uint32, error) {
+// adjustment that would underflow is a bug. The upper bound is the
+// proto field's full uint32 range, matching bumpAccountOpenOrderCount.
+func ApplyCountDelta(cur uint32, delta int32) (uint32, error) {
 	next := int64(cur) + int64(delta)
 	if next < 0 {
 		return 0, types.ErrInvariantViolated.Wrapf(
 			"price-level count under-subtract: cur=%d delta=%d", cur, delta,
 		)
 	}
-	if next > stdmath.MaxInt32 {
+	if next > stdmath.MaxUint32 {
 		return 0, types.ErrPriceLevelOverflow.Wrapf(
 			"price-level count overflow: cur=%d delta=%d", cur, delta,
 		)
@@ -655,9 +664,15 @@ func (k Keeper) GetAccountOpenOrderCount(ctx context.Context, accIdx uint64, mar
 // other markets are skipped at the key layer, not via per-order
 // GetOrder + post-filter.
 //
-// Callback contract: returning `true` STOPS iteration; returning
-// `false` continues. The stop-on-true convention matches IterateTriggers
-// and the upstream Cosmos collections iterator style.
+// Callback contract:
+//   - return `true` to STOP iteration (matches IterateTriggers and the
+//     upstream Cosmos collections iterator style)
+//   - return `false` to continue
+//   - the callback MUST NOT mutate AccountOpenOrders (no CancelOrder /
+//     OpenOrder / EvictMakerOrder / OpenTriggerOrder) — collect target
+//     order indexes into a local slice and process them AFTER this
+//     method returns. The canonical pattern is in
+//     x/matching/keeper/msg_server.go::CancelAllOrders.
 func (k Keeper) IterateAccountOpenOrders(
 	ctx context.Context,
 	account uint64,

@@ -44,9 +44,6 @@ func (stubMarketKeeper) GetMarketDetails(_ context.Context, idx uint32) (markett
 func (stubMarketKeeper) AllocateNonce(_ context.Context, _ uint32, _ bool) (int64, error) {
 	return 1, nil
 }
-func (stubMarketKeeper) SetMarketDetails(_ context.Context, _ markettypes.MarketDetails) error {
-	return nil
-}
 
 // stubLocker is a no-op SpotLocker used in orderbook unit tests that do
 // not exercise lock-on-place behaviour.

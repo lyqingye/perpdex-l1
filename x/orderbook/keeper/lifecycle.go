@@ -152,16 +152,27 @@ func (k Keeper) OpenTriggerOrder(ctx context.Context, o types.Order) error {
 }
 
 // ActivateTrigger transitions a trigger-pending order back into an executable
-// open order. It removes the trigger registration, flips Status to Open, and
-// persists the Order. The caller (matching EndBlocker) is then expected to
-// mutate OrderType / TimeInForce / Price for the activated variant, run the
-// match loop, and call OpenOrder for any residual base.
+// open order. It removes the trigger registration, drops the
+// pre-activation ExpiryIndex entry, flips Status to Open, and persists
+// the Order. The caller (matching EndBlocker) is then expected to mutate
+// OrderType / TimeInForce / Price for the activated variant, run the
+// match loop, and call OpenOrder — which re-installs the ExpiryIndex
+// entry for any GTT residual and clears it again on a terminal status.
+//
+// Removing the ExpiryIndex here, rather than relying on a later
+// OpenOrder to overwrite the same key, makes the post-match `OpenOrder`
+// the single authoritative owner of that index. Any path that does NOT
+// reach the post-match OpenOrder (matching error, EndBlocker early
+// return) therefore leaves no orphan expiry entry behind.
 func (k Keeper) ActivateTrigger(ctx context.Context, orderIndex uint64) (types.Order, error) {
 	o, err := k.GetOrder(ctx, orderIndex)
 	if err != nil {
 		return types.Order{}, err
 	}
 	if err := k.removeTrigger(ctx, o.MarketIndex, o.TriggerPrice, o.OrderIndex); err != nil {
+		return types.Order{}, err
+	}
+	if err := k.removeExpiryIndex(ctx, o); err != nil {
 		return types.Order{}, err
 	}
 	o.Status = perptypes.OrderStatusOpen

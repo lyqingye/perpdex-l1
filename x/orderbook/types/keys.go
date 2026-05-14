@@ -6,6 +6,13 @@ const (
 	RouterKey  = ModuleName
 )
 
+// DefaultOrderBookSnapshotMaxDepth caps the per-side levels returned by
+// the OrderBookSnapshot query. The cap protects the public RPC from
+// accidental full-book pulls that would dominate validator query CPU
+// on busy markets; callers that need deeper context should iterate
+// price levels directly via state queries.
+const DefaultOrderBookSnapshotMaxDepth uint32 = 50
+
 var (
 	ParamsKey                = []byte{0x00}
 	OrderBookEntryKey        = []byte{0x01}

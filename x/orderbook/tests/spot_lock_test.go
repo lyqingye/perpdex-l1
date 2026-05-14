@@ -48,9 +48,6 @@ func (spotMarketKeeper) GetMarketDetails(_ context.Context, idx uint32) (markett
 func (spotMarketKeeper) AllocateNonce(_ context.Context, _ uint32, _ bool) (int64, error) {
 	return 1, nil
 }
-func (spotMarketKeeper) SetMarketDetails(_ context.Context, _ markettypes.MarketDetails) error {
-	return nil
-}
 
 // recordingLocker keeps a per-(account,asset) running balance so tests
 // can assert the lock-on-place / release-on-close arithmetic without

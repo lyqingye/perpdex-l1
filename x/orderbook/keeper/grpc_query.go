@@ -12,12 +12,6 @@ import (
 	"github.com/perpdex/perpdex-l1/x/orderbook/types"
 )
 
-// maxOrderBookSnapshotDepth caps the per-side levels returned by the
-// snapshot RPC when the caller passes `depth = 0` (or a value above
-// the cap). The cap protects the RPC from accidental full-book pulls
-// that would dominate validator query CPU on busy markets.
-const maxOrderBookSnapshotDepth = uint32(50)
-
 type Querier struct{ k Keeper }
 
 func NewQuerier(k Keeper) Querier { return Querier{k: k} }
@@ -50,60 +44,98 @@ func (q Querier) OrderByClientId(ctx context.Context, req *types.QueryOrderByCli
 // `market_index` (both zero = unfiltered, account-only = all that
 // account's orders, market-only = that market's history) and applies
 // the standard Cosmos pagination envelope to bound the response size.
+//
+// The predicate is pushed into `CollectionFilteredPaginate` so the
+// returned page contains up to `Limit` *matches*, not up to `Limit`
+// raw rows that may all be filtered out. This is required for the
+// envelope's `NextKey` / `Total` to mean "more matches available" and
+// "total matches", respectively.
 func (q Querier) Orders(ctx context.Context, req *types.QueryOrdersRequest) (*types.QueryOrdersResponse, error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "empty request")
 	}
-	out, pageRes, err := query.CollectionPaginate(
+	out, pageRes, err := query.CollectionFilteredPaginate(
 		ctx,
 		q.k.Orders,
 		req.Pagination,
-		func(_ uint64, o types.Order) (types.Order, error) {
-			return o, nil
+		func(_ uint64, o types.Order) (bool, error) {
+			if req.AccountIndex != 0 && o.OwnerAccountIndex != req.AccountIndex {
+				return false, nil
+			}
+			if req.MarketIndex != 0 && o.MarketIndex != req.MarketIndex {
+				return false, nil
+			}
+			return true, nil
 		},
+		func(_ uint64, o types.Order) (types.Order, error) { return o, nil },
 	)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-	filtered := out[:0]
-	for _, o := range out {
-		if req.AccountIndex != 0 && o.OwnerAccountIndex != req.AccountIndex {
-			continue
-		}
-		if req.MarketIndex != 0 && o.MarketIndex != req.MarketIndex {
-			continue
-		}
-		filtered = append(filtered, o)
+	if out == nil {
+		out = []types.Order{}
 	}
-	return &types.QueryOrdersResponse{Orders: filtered, Pagination: pageRes}, nil
+	return &types.QueryOrdersResponse{Orders: out, Pagination: pageRes}, nil
 }
 
-// OrderBookSnapshot honours `req.Depth` and limits the iteration to the
-// requested market via a prefix range. A zero / over-cap depth is
-// clamped to `maxOrderBookSnapshotDepth` to avoid full-book dumps.
+// OrderBookSnapshot returns the top-of-book per side for `market_index`.
+// Bids are walked in descending price order (best bid first); asks are
+// walked in ascending price order (best ask first). Levels with zero
+// base on the requested side are skipped so a `bids` entry always has
+// `BidBaseSum > 0` and an `asks` entry always has `AskBaseSum > 0`.
+//
+// `depth` bounds the number of levels returned PER SIDE. A zero or
+// over-cap value is clamped to `types.DefaultOrderBookSnapshotMaxDepth`
+// so the RPC cannot be coerced into a full-book scan.
 func (q Querier) OrderBookSnapshot(ctx context.Context, req *types.QueryOrderBookSnapshotRequest) (*types.QueryOrderBookSnapshotResponse, error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "empty request")
 	}
 	depth := req.Depth
-	if depth == 0 || depth > maxOrderBookSnapshotDepth {
-		depth = maxOrderBookSnapshotDepth
+	if depth == 0 || depth > types.DefaultOrderBookSnapshotMaxDepth {
+		depth = types.DefaultOrderBookSnapshotMaxDepth
 	}
-	rng := collections.NewPrefixedPairRange[uint32, uint32](req.MarketIndex)
-	iter, err := q.k.PriceLevels.Iterate(ctx, rng)
+	bids, err := q.collectSnapshotSide(ctx, req.MarketIndex, depth, false)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
+	}
+	asks, err := q.collectSnapshotSide(ctx, req.MarketIndex, depth, true)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	return &types.QueryOrderBookSnapshotResponse{Bids: bids, Asks: asks}, nil
+}
+
+// collectSnapshotSide walks PriceLevels for `market` and returns up to
+// `depth` aggregates that have non-zero base on the requested side.
+// `isAsk == true` returns ascending price (best ask first); `false`
+// returns descending price (best bid first).
+func (q Querier) collectSnapshotSide(ctx context.Context, market uint32, depth uint32, isAsk bool) ([]types.PriceLevelAggregate, error) {
+	rng := collections.NewPrefixedPairRange[uint32, uint32](market)
+	if !isAsk {
+		rng = rng.Descending()
+	}
+	iter, err := q.k.PriceLevels.Iterate(ctx, rng)
+	if err != nil {
+		return nil, err
 	}
 	defer iter.Close()
 	out := make([]types.PriceLevelAggregate, 0, depth)
 	for ; iter.Valid() && uint32(len(out)) < depth; iter.Next() {
 		v, err := iter.Value()
 		if err != nil {
-			return nil, status.Error(codes.Internal, err.Error())
+			return nil, err
+		}
+		if isAsk {
+			if v.AskBaseSum == 0 {
+				continue
+			}
+		} else if v.BidBaseSum == 0 {
+			continue
 		}
 		out = append(out, v)
 	}
-	return &types.QueryOrderBookSnapshotResponse{Levels: out}, nil
+	return out, nil
 }
 
 func (q Querier) BestBidAsk(ctx context.Context, req *types.QueryBestBidAskRequest) (*types.QueryBestBidAskResponse, error) {

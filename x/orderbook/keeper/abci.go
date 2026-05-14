@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	"errors"
+	"strconv"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
@@ -19,13 +20,15 @@ import (
 //
 // Trigger handling (which spawns matching) is owned by x/matching.
 //
-// Orders that have already reached a terminal status are tolerated by
-// `CancelOrder` (it surfaces `ErrOrderNotCancelable`, which we swallow)
-// because the matching loop may have evicted a GTT-expired maker as
-// part of an in-block fill via EvictMakerOrder, in which case re-
-// cancelling here would be a no-op.
+// Per-order failures are isolated: `ErrOrderNotCancelable` is swallowed
+// silently (an in-block EvictMakerOrder may already have cancelled the
+// maker; the keyset cleanup is idempotent), and any other error emits
+// an `EventTypeExpirySweepError` event and continues with the next
+// expired order — a single corrupt key cannot stall the whole sweep
+// and trip the Cosmos `EndBlocker` panic guard.
 func (k Keeper) EndBlocker(ctx context.Context) error {
-	now := sdk.UnwrapSDKContext(ctx).BlockTime().UnixMilli()
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	now := sdkCtx.BlockTime().UnixMilli()
 	expired, err := k.collectExpiredOrders(ctx, now)
 	if err != nil {
 		return err
@@ -35,7 +38,11 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 			if errors.Is(err, types.ErrOrderNotCancelable) {
 				continue
 			}
-			return err
+			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
+				types.EventTypeExpirySweepError,
+				sdk.NewAttribute(types.AttributeKeyOrderIndex, strconv.FormatUint(idx, 10)),
+				sdk.NewAttribute(types.AttributeKeyErr, err.Error()),
+			))
 		}
 	}
 	return nil

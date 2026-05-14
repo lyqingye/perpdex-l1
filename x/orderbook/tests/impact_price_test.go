@@ -52,9 +52,6 @@ func (s impactStubMarket) GetMarketDetails(_ context.Context, idx uint32) (marke
 func (impactStubMarket) AllocateNonce(_ context.Context, _ uint32, _ bool) (int64, error) {
 	return 1, nil
 }
-func (impactStubMarket) SetMarketDetails(_ context.Context, _ markettypes.MarketDetails) error {
-	return nil
-}
 
 func newImpactKeeper(t *testing.T, minIMF uint32) (orderbookkeeper.Keeper, sdk.Context) {
 	t.Helper()

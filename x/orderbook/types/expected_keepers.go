@@ -8,11 +8,14 @@ import (
 	markettypes "github.com/perpdex/perpdex-l1/x/market/types"
 )
 
+// MarketKeeper is the narrow read-side surface orderbook needs to
+// validate orders and allocate per-side nonces. Mutations on
+// MarketDetails (e.g. funding-rate accrual) live behind their own
+// module boundary and are deliberately NOT exposed here.
 type MarketKeeper interface {
 	GetMarket(ctx context.Context, idx uint32) (markettypes.Market, error)
 	GetMarketDetails(ctx context.Context, idx uint32) (markettypes.MarketDetails, error)
 	AllocateNonce(ctx context.Context, marketIdx uint32, isAsk bool) (int64, error)
-	SetMarketDetails(ctx context.Context, d markettypes.MarketDetails) error
 }
 
 // SpotLocker is the narrow surface orderbook needs to enforce

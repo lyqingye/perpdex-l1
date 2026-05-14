@@ -70,3 +70,52 @@ func TestApplyMagDelta_ZeroSignIsNoop(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 42, got)
 }
+
+// TestApplyCountDelta_OverflowGuard rejects a positive delta that
+// would carry the per-side entry-count past math.MaxUint32. The
+// counter mirrors the proto field width (uint32) so the upper bound
+// is MaxUint32, not MaxInt32.
+func TestApplyCountDelta_OverflowGuard(t *testing.T) {
+	_, err := orderbookkeeper.ApplyCountDelta(stdmath.MaxUint32, +1)
+	require.ErrorIs(t, err, types.ErrPriceLevelOverflow)
+}
+
+// TestApplyCountDelta_UnderflowIsInvariant proves a decrement on a
+// zero counter surfaces ErrInvariantViolated — the price level is
+// created together with its first entry and torn down together with
+// the last, so an under-subtract is a state-machine bug.
+func TestApplyCountDelta_UnderflowIsInvariant(t *testing.T) {
+	_, err := orderbookkeeper.ApplyCountDelta(0, -1)
+	require.ErrorIs(t, err, types.ErrInvariantViolated)
+}
+
+// TestApplyCountDelta_ExactBoundary checks the legal MaxUint32 ceiling
+// is reachable (the guard kicks in strictly past it).
+func TestApplyCountDelta_ExactBoundary(t *testing.T) {
+	got, err := orderbookkeeper.ApplyCountDelta(stdmath.MaxUint32-1, +1)
+	require.NoError(t, err)
+	require.EqualValues(t, uint32(stdmath.MaxUint32), got)
+}
+
+// TestCheckedQuote_ZeroBase / _ZeroPrice / _BothZero pin the smooth
+// boundary at the multiplicative identity: orders / fill-bookkeeping
+// frequently hand the helper (0, x) or (x, 0) and rely on a clean
+// (0, nil) return rather than an error. `partialFill` in particular
+// reaches this branch on full-fill cleanup.
+func TestCheckedQuote_ZeroBase(t *testing.T) {
+	q, err := orderbookkeeper.CheckedQuote(0, 1_000)
+	require.NoError(t, err)
+	require.Zero(t, q)
+}
+
+func TestCheckedQuote_ZeroPrice(t *testing.T) {
+	q, err := orderbookkeeper.CheckedQuote(1_000, 0)
+	require.NoError(t, err)
+	require.Zero(t, q)
+}
+
+func TestCheckedQuote_BothZero(t *testing.T) {
+	q, err := orderbookkeeper.CheckedQuote(0, 0)
+	require.NoError(t, err)
+	require.Zero(t, q)
+}

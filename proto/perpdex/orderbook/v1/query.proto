@@ -54,10 +54,19 @@ message QueryOrdersResponse {
 
 message QueryOrderBookSnapshotRequest {
   uint32 market_index = 1;
+  // depth bounds the number of price levels returned PER SIDE. 0 or
+  // a value above the keeper-side cap is clamped to the cap.
   uint32 depth = 2;
 }
+// QueryOrderBookSnapshotResponse returns the top-of-book levels split
+// by side: `bids` is sorted high-price-first (best bid at index 0),
+// `asks` is sorted low-price-first (best ask at index 0). Each entry
+// only contains the requested side's contribution (the keeper filters
+// out price levels with zero base on the requested side), so a
+// PriceLevelAggregate seen in `bids` always has BidBaseSum > 0.
 message QueryOrderBookSnapshotResponse {
-  repeated PriceLevelAggregate levels = 1 [(gogoproto.nullable) = false];
+  repeated PriceLevelAggregate bids = 1 [(gogoproto.nullable) = false];
+  repeated PriceLevelAggregate asks = 2 [(gogoproto.nullable) = false];
 }
 
 message QueryBestBidAskRequest { uint32 market_index = 1; }
