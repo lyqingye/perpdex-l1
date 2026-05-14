@@ -68,7 +68,7 @@ type OrderbookKeeper interface {
 	// status is Open / PartiallyFilled the order is rested on the book
 	// and indexed; terminal statuses (Filled / Cancelled) are persisted
 	// without an entry so IOC residue and zero-fill orders cannot leak.
-	OpenOrder(ctx context.Context, o orderbooktypes.Order, isPostOnly bool) error
+	OpenOrder(ctx context.Context, o orderbooktypes.Order) error
 	// OpenTriggerOrder parks a stop/take order in the trigger index
 	// while still indexing it for cancel-all reach.
 	OpenTriggerOrder(ctx context.Context, o orderbooktypes.Order) error

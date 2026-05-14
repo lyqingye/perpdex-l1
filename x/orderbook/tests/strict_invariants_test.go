@@ -1,8 +1,8 @@
-// strict_invariants_test.go locks in the runtime invariant guards that
-// replaced the previous silent-clamp helpers: per-side aggregate
-// arithmetic (`adjustPriceLevel` via `applyMagDelta`), the per-account
-// open-order counter (`bumpAccountOpenOrderCount`), and `CheckedQuote`'s
-// dual cap (`MaxOrderQuoteAmount` AND `math.MaxInt64`).
+// strict_invariants_test.go locks in the runtime invariant guards on
+// per-side aggregate arithmetic (`adjustPriceLevel` via
+// `ApplyMagDelta`), the per-account open-order counter
+// (`bumpAccountOpenOrderCount`), and `CheckedQuote`'s dual cap
+// (`MaxOrderQuoteAmount` AND `math.MaxInt64`).
 package tests
 
 import (
@@ -59,7 +59,7 @@ func TestStrictCounter_DoubleCancelIsRejected(t *testing.T) {
 	k, ctx := newOrderbookKeeper(t)
 
 	o := makeOrder(1, 99, 1, 10, false)
-	require.NoError(t, k.OpenOrder(ctx, o, false))
+	require.NoError(t, k.OpenOrder(ctx, o))
 
 	_, err := k.CancelOrder(ctx, 1)
 	require.NoError(t, err)
@@ -78,21 +78,16 @@ func TestStrictCounter_DoubleCancelIsRejected(t *testing.T) {
 	require.Zero(t, cnt, "counter must stay at zero after a redundant cancel")
 }
 
-// TestAccountOpenOrders_TripleKeyMarketFilter verifies the new
+// TestAccountOpenOrders_TripleKeyMarketFilter verifies the
 // (account, market, order_index) triple supports a (account, market)
 // prefix scan: filter=N must yield only the N-market orders without
 // the keeper loading and post-filtering orders from other markets.
-//
-// (Behaviourally the helper already enforced this; the test exists to
-// pin the contract so a future refactor that drops the embedded
-// market field would break this test rather than silently degrade
-// cancel-all latency.)
 func TestAccountOpenOrders_TripleKeyMarketFilter(t *testing.T) {
 	k, ctx := newOrderbookKeeper(t)
 
 	for i, mkt := range []uint32{1, 2, 1, 3} {
 		o := makeOrder(uint64(i+1), 7, mkt, 0, false)
-		require.NoError(t, k.OpenOrder(ctx, o, false))
+		require.NoError(t, k.OpenOrder(ctx, o))
 	}
 
 	collect := func(filter uint32) []uint64 {

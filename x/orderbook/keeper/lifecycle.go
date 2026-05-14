@@ -75,10 +75,7 @@ func (k Keeper) releaseSpotLockOnClose(ctx context.Context, o types.Order) error
 //     the Order and clear any pre-existing client + account-open indexes.
 //     Idempotent — a brand-new terminal order with no prior indexes
 //     simply no-ops on unindex.
-//
-// `isPostOnly` is forwarded onto `OrderBookEntry.IsPostOnly` for the resting
-// path; ignored when the order is terminal.
-func (k Keeper) OpenOrder(ctx context.Context, o types.Order, isPostOnly bool) error {
+func (k Keeper) OpenOrder(ctx context.Context, o types.Order) error {
 	switch o.Status {
 	case perptypes.OrderStatusOpen, perptypes.OrderStatusPartiallyFilled:
 		// Lock-on-place for spot residue first: if the lock fails
@@ -95,7 +92,6 @@ func (k Keeper) OpenOrder(ctx context.Context, o types.Order, isPostOnly bool) e
 			Nonce:               o.Nonce,
 			RemainingBaseAmount: o.RemainingBaseAmount,
 			Expiry:              o.Expiry,
-			IsPostOnly:          isPostOnly,
 			ReduceOnly:          o.ReduceOnly,
 			OrderType:           o.OrderType,
 		}

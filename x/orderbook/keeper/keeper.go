@@ -55,8 +55,7 @@ type Keeper struct {
 	//
 	// The market field sits between account and order_index so
 	// `IterateAccountOpenOrders(account, market=N)` is a single
-	// (account, market) prefix scan — no per-order GetOrder + filter
-	// like the previous (account, order_index) layout required.
+	// (account, market) prefix scan with no per-order GetOrder + filter.
 	AccountOpenOrders collections.KeySet[collections.Triple[uint64, uint32, uint64]]
 
 	// AccountOpenOrderCount[(account, market)]: number of open orders

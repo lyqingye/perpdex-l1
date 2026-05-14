@@ -204,12 +204,12 @@ func (k Keeper) adjustPriceLevel(
 		pl = types.PriceLevelAggregate{MarketIndex: market, Price: price}
 	}
 	if isAsk {
-		next, err := applyMagDelta(pl.AskBaseSum, baseMag, sign)
+		next, err := ApplyMagDelta(pl.AskBaseSum, baseMag, sign)
 		if err != nil {
 			return err
 		}
 		pl.AskBaseSum = next
-		nextQuote, err := applyMagDelta(pl.AskQuoteSum, quoteMag, sign)
+		nextQuote, err := ApplyMagDelta(pl.AskQuoteSum, quoteMag, sign)
 		if err != nil {
 			return err
 		}
@@ -220,12 +220,12 @@ func (k Keeper) adjustPriceLevel(
 		}
 		pl.AskCount = nextCount
 	} else {
-		next, err := applyMagDelta(pl.BidBaseSum, baseMag, sign)
+		next, err := ApplyMagDelta(pl.BidBaseSum, baseMag, sign)
 		if err != nil {
 			return err
 		}
 		pl.BidBaseSum = next
-		nextQuote, err := applyMagDelta(pl.BidQuoteSum, quoteMag, sign)
+		nextQuote, err := ApplyMagDelta(pl.BidQuoteSum, quoteMag, sign)
 		if err != nil {
 			return err
 		}
@@ -242,13 +242,12 @@ func (k Keeper) adjustPriceLevel(
 	return k.PriceLevels.Set(ctx, key, pl)
 }
 
-// applyMagDelta is the strict signed-delta primitive used by
+// ApplyMagDelta is the strict signed-delta primitive used by
 // adjustPriceLevel. `sign == 0` is a no-op; `sign == +1` adds `mag` and
 // errors on uint64 overflow; `sign == -1` subtracts `mag` and errors on
-// under-subtraction (the aggregate was built from the entries we are
-// removing, so an under-subtract means a previous insert/remove pair
-// drifted).
-func applyMagDelta(cur uint64, mag uint64, sign int8) (uint64, error) {
+// under-subtraction — the aggregate is built from the same entries the
+// runtime removes, so an under-subtract is a state-machine bug.
+func ApplyMagDelta(cur uint64, mag uint64, sign int8) (uint64, error) {
 	switch sign {
 	case 0:
 		return cur, nil
@@ -265,7 +264,7 @@ func applyMagDelta(cur uint64, mag uint64, sign int8) (uint64, error) {
 		}
 		return cur - mag, nil
 	default:
-		return 0, types.ErrInvariantViolated.Wrapf("applyMagDelta: bad sign=%d", sign)
+		return 0, types.ErrInvariantViolated.Wrapf("ApplyMagDelta: bad sign=%d", sign)
 	}
 }
 
@@ -286,26 +285,6 @@ func applyCountDelta(cur uint32, delta int32) (uint32, error) {
 		)
 	}
 	return uint32(next), nil
-}
-
-// ApplyQuoteDelta is kept around for callers / tests that exercise the
-// strict aggregate arithmetic. Positive deltas overflow with
-// ErrPriceLevelOverflow; negative deltas that would push the result
-// below zero return ErrInvariantViolated rather than silently clamping
-// to zero — that case represents a state-machine drift in the orderbook
-// and the runtime must fail loudly, not absorb the bug.
-//
-// The signature stays `(uint64, int64) -> (uint64, error)` for API
-// stability; internally we delegate to the strict primitive.
-func ApplyQuoteDelta(cur uint64, delta int64) (uint64, error) {
-	if delta == 0 {
-		return cur, nil
-	}
-	if delta < 0 {
-		mag := uint64(-delta)
-		return applyMagDelta(cur, mag, -1)
-	}
-	return applyMagDelta(cur, uint64(delta), +1)
 }
 
 // CheckedQuote returns base*price and enforces two guards:

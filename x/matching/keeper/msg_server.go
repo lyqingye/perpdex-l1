@@ -253,7 +253,7 @@ func (m MsgServer) CreateOrder(ctx context.Context, msg *types.MsgCreateOrder) (
 			))
 		}
 	}
-	if err := m.bookKeeper.OpenOrder(ctx, order, msg.TimeInForce == perptypes.PostOnly); err != nil {
+	if err := m.bookKeeper.OpenOrder(ctx, order); err != nil {
 		return nil, err
 	}
 

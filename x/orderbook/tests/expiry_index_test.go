@@ -37,14 +37,14 @@ func TestExpiry_EndBlockerCancelsOnlyDueOrders(t *testing.T) {
 		o.Expiry = expiry
 		return o
 	}
-	require.NoError(t, k.OpenOrder(ctx, mkGTT(1, 100), false))
-	require.NoError(t, k.OpenOrder(ctx, mkGTT(2, 200), false))
-	require.NoError(t, k.OpenOrder(ctx, mkGTT(3, 300), false))
+	require.NoError(t, k.OpenOrder(ctx, mkGTT(1, 100)))
+	require.NoError(t, k.OpenOrder(ctx, mkGTT(2, 200)))
+	require.NoError(t, k.OpenOrder(ctx, mkGTT(3, 300)))
 
 	postOnly := makeOrder(4, 77, 1, 99, true)
 	postOnly.TimeInForce = perptypes.PostOnly
 	postOnly.Expiry = 0
-	require.NoError(t, k.OpenOrder(ctx, postOnly, false))
+	require.NoError(t, k.OpenOrder(ctx, postOnly))
 
 	// Tick to t = 150ms: only order 1 is due.
 	ctxAt := sdk.UnwrapSDKContext(ctx).WithBlockHeader(cmtprototypes.Header{Time: time.UnixMilli(150)})
@@ -74,7 +74,7 @@ func TestExpiry_FillRemovesIndex(t *testing.T) {
 	o := makeOrder(1, 77, 1, 10, false)
 	o.TimeInForce = perptypes.GTT
 	o.Expiry = 200
-	require.NoError(t, k.OpenOrder(ctx, o, false))
+	require.NoError(t, k.OpenOrder(ctx, o))
 
 	// Fully fill the maker; it must leave the expiry keyset.
 	_, err := k.FillMakerOrder(ctx, 1, o.RemainingBaseAmount)
@@ -96,7 +96,7 @@ func TestExpiry_CancelRemovesIndex(t *testing.T) {
 	o := makeOrder(1, 77, 1, 10, false)
 	o.TimeInForce = perptypes.GTT
 	o.Expiry = 200
-	require.NoError(t, k.OpenOrder(ctx, o, false))
+	require.NoError(t, k.OpenOrder(ctx, o))
 
 	_, err := k.CancelOrder(ctx, 1)
 	require.NoError(t, err)

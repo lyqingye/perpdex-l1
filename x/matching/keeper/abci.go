@@ -125,7 +125,7 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 		if o.TimeInForce == perptypes.IOC && o.RemainingBaseAmount > 0 {
 			o.Status = perptypes.OrderStatusCancelled
 		}
-		if err := k.bookKeeper.OpenOrder(ctx, o, false); err != nil {
+		if err := k.bookKeeper.OpenOrder(ctx, o); err != nil {
 			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
 				types.EventTypeTriggerInsertError,
 				sdk.NewAttribute(types.AttributeKeyOrderIndex, strconv.FormatUint(o.OrderIndex, 10)),

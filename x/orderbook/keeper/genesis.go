@@ -11,10 +11,8 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 	if err := k.Params.Set(ctx, gs.Params); err != nil {
 		return err
 	}
-	// Force the sequence to start at >= 1 so AllocateOrderIndex never
-	// hands out 0 (which would alias the "absent" zero-value across
-	// the rest of the codebase). The default genesis already sets 1;
-	// this is the safety net for hand-edited / migrated states.
+	// Sequence must start at >= 1 so AllocateOrderIndex never hands out
+	// 0, which would alias the "absent" zero-value used elsewhere.
 	next := gs.NextOrderIndex
 	if next < 1 {
 		next = 1
@@ -43,7 +41,6 @@ func (k Keeper) restoreGenesisOrderIndexes(ctx context.Context, o types.Order) e
 			Nonce:               o.Nonce,
 			RemainingBaseAmount: o.RemainingBaseAmount,
 			Expiry:              o.Expiry,
-			IsPostOnly:          o.TimeInForce == perptypes.PostOnly,
 			ReduceOnly:          o.ReduceOnly,
 			OrderType:           o.OrderType,
 		}

@@ -1,7 +1,7 @@
-// grpc_query_test.go pins the two query handlers that previously
-// dropped their request parameters: `Orders` now honours
-// account/market filters and pagination, and `OrderBookSnapshot`
-// limits the iteration to the requested market AND caps the depth.
+// grpc_query_test.go pins the contracts of the two list query
+// handlers: `Orders` honours account/market filters and pagination,
+// and `OrderBookSnapshot` limits the iteration to the requested market
+// AND caps the depth.
 package tests
 
 import (
@@ -16,8 +16,8 @@ import (
 	"github.com/perpdex/perpdex-l1/x/orderbook/types"
 )
 
-// TestQueryOrders_HonorsAccountAndMarketFilters ensures the handler no
-// longer ignores its request: filtering by account_index alone, by
+// TestQueryOrders_HonorsAccountAndMarketFilters confirms the handler
+// applies its request parameters: filtering by account_index alone, by
 // market_index alone, and by both at the same time yields the matching
 // subset of the persisted orders.
 func TestQueryOrders_HonorsAccountAndMarketFilters(t *testing.T) {
@@ -37,7 +37,7 @@ func TestQueryOrders_HonorsAccountAndMarketFilters(t *testing.T) {
 	}
 	for _, c := range combos {
 		o := makeOrder(c.idx, c.account, c.market, c.idx, false)
-		require.NoError(t, k.OpenOrder(ctx, o, false))
+		require.NoError(t, k.OpenOrder(ctx, o))
 	}
 
 	// account=7 only: orders 1 and 2.
@@ -66,7 +66,7 @@ func TestQueryOrders_PaginationLimitsResponse(t *testing.T) {
 
 	for i := uint64(1); i <= 10; i++ {
 		o := makeOrder(i, 1, 1, i, false)
-		require.NoError(t, k.OpenOrder(ctx, o, false))
+		require.NoError(t, k.OpenOrder(ctx, o))
 	}
 
 	resp, err := q.Orders(ctx, &types.QueryOrdersRequest{
@@ -91,13 +91,13 @@ func TestQueryOrderBookSnapshot_DepthAndMarketPrefix(t *testing.T) {
 		o.Price = price
 		o.OrderType = perptypes.LimitOrder
 		o.TimeInForce = perptypes.GTT
-		require.NoError(t, k.OpenOrder(ctx, o, false))
+		require.NoError(t, k.OpenOrder(ctx, o))
 	}
 	// Market 2 has its own level — it must not appear when querying
 	// market 1.
 	other := makeOrder(99, 7, 2, 99, false)
 	other.Price = 500
-	require.NoError(t, k.OpenOrder(ctx, other, false))
+	require.NoError(t, k.OpenOrder(ctx, other))
 
 	resp, err := q.OrderBookSnapshot(ctx, &types.QueryOrderBookSnapshotRequest{MarketIndex: 1, Depth: 2})
 	require.NoError(t, err)

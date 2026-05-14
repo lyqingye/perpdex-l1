@@ -138,7 +138,7 @@ func TestSpotLock_AskLocksBase(t *testing.T) {
 		RemainingBaseAmount: 5,
 		Status:              perptypes.OrderStatusOpen,
 	}
-	require.NoError(t, k.OpenOrder(ctx, o, false))
+	require.NoError(t, k.OpenOrder(ctx, o))
 	require.True(t, locker.get(42, 100).Equal(cosmosmath.NewInt(5)),
 		"ask should lock base = remaining_base")
 	require.True(t, locker.get(42, 200).IsZero(), "no quote lock for asks")
@@ -166,7 +166,7 @@ func TestSpotLock_BidLocksQuote(t *testing.T) {
 		RemainingBaseAmount: 3,
 		Status:              perptypes.OrderStatusOpen,
 	}
-	require.NoError(t, k.OpenOrder(ctx, o, false))
+	require.NoError(t, k.OpenOrder(ctx, o))
 	require.True(t, locker.get(42, 200).Equal(cosmosmath.NewInt(3000)),
 		"bid should lock quote = base * price")
 	require.True(t, locker.get(42, 100).IsZero(), "no base lock for bids")
@@ -196,7 +196,7 @@ func TestSpotLock_PartialFillReleasesResidueOnCancel(t *testing.T) {
 		RemainingBaseAmount: 10,
 		Status:              perptypes.OrderStatusOpen,
 	}
-	require.NoError(t, k.OpenOrder(ctx, o, false))
+	require.NoError(t, k.OpenOrder(ctx, o))
 	require.True(t, locker.get(42, 100).Equal(cosmosmath.NewInt(10)))
 
 	// Simulate a partial fill of 4 base. In production this is
@@ -236,7 +236,7 @@ func TestSpotLock_OpenOrderRejectsWhenLockerInsufficient(t *testing.T) {
 		RemainingBaseAmount: 1,
 		Status:              perptypes.OrderStatusOpen,
 	}
-	require.Error(t, k.OpenOrder(ctx, o, false))
+	require.Error(t, k.OpenOrder(ctx, o))
 
 	// No order record persisted, no AccountOpenOrders entry.
 	_, err := k.GetOrder(ctx, 4)
@@ -269,8 +269,8 @@ func TestAccountOpenOrderCount_TracksLifecycle(t *testing.T) {
 		}
 	}
 
-	require.NoError(t, k.OpenOrder(ctx, mkOrder(1, true), false))
-	require.NoError(t, k.OpenOrder(ctx, mkOrder(2, false), false))
+	require.NoError(t, k.OpenOrder(ctx, mkOrder(1, true)))
+	require.NoError(t, k.OpenOrder(ctx, mkOrder(2, false)))
 	cnt, err := k.GetAccountOpenOrderCount(ctx, 77, 1)
 	require.NoError(t, err)
 	require.EqualValues(t, 2, cnt)

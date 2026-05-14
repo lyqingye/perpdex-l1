@@ -98,7 +98,7 @@ func openImpactOrder(ctx context.Context, k orderbookkeeper.Keeper, market uint3
 		Nonce:               1,
 		Status:              perptypes.OrderStatusOpen,
 	}
-	return k.OpenOrder(ctx, o, false)
+	return k.OpenOrder(ctx, o)
 }
 
 // TestMarketImpactNotional_PerMarketDerivation pins down the per-market

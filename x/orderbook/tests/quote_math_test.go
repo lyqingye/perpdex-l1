@@ -2,12 +2,11 @@
 // orderbook price-level arithmetic from silent uint64 overflow:
 // `CheckedQuote(base, price)` enforces the per-order
 // `MaxOrderQuoteAmount` cap on multiplication, and
-// `ApplyQuoteDelta(cur, delta)` adds a signed delta to a price-level
-// aggregate while rejecting positive sums that would wrap past
-// `math.MaxUint64` AND rejecting negative sums that would underflow
-// (the latter case is treated as an invariant violation rather than a
-// silent clamp because the runtime always removes contributions of
-// the exact size they were inserted with).
+// `ApplyMagDelta(cur, mag, sign)` applies a signed delta to a
+// price-level aggregate while rejecting positive sums that would wrap
+// past `math.MaxUint64` AND rejecting negative sums that would
+// underflow — under-subtraction is an invariant violation because each
+// removal is paired 1:1 with a prior insertion of the same magnitude.
 package tests
 
 import (
@@ -42,27 +41,32 @@ func TestCheckedQuote_Overflow(t *testing.T) {
 	require.ErrorIs(t, err, types.ErrQuoteOverflow)
 }
 
-// TestApplyQuoteDelta_OverflowGuard refuses to wrap past math.MaxUint64.
-func TestApplyQuoteDelta_OverflowGuard(t *testing.T) {
-	_, err := orderbookkeeper.ApplyQuoteDelta(stdmath.MaxUint64-10, 11)
+// TestApplyMagDelta_OverflowGuard refuses to wrap past math.MaxUint64.
+func TestApplyMagDelta_OverflowGuard(t *testing.T) {
+	_, err := orderbookkeeper.ApplyMagDelta(stdmath.MaxUint64-10, 11, +1)
 	require.ErrorIs(t, err, types.ErrPriceLevelOverflow)
 }
 
-// TestApplyQuoteDelta_NegativeUnderflowIsInvariant verifies that
+// TestApplyMagDelta_NegativeUnderflowIsInvariant verifies that
 // removing more than was inserted surfaces ErrInvariantViolated
-// instead of silently clamping to zero. The orderbook only ever
-// adjusts a price-level aggregate by amounts it previously added, so
-// an under-subtract represents a state-machine drift the runtime must
-// fail loudly on.
-func TestApplyQuoteDelta_NegativeUnderflowIsInvariant(t *testing.T) {
-	_, err := orderbookkeeper.ApplyQuoteDelta(50, -100)
+// instead of silently clamping to zero.
+func TestApplyMagDelta_NegativeUnderflowIsInvariant(t *testing.T) {
+	_, err := orderbookkeeper.ApplyMagDelta(50, 100, -1)
 	require.ErrorIs(t, err, types.ErrInvariantViolated)
 }
 
-// TestApplyQuoteDelta_ExactSubtractOk confirms the strict path still
-// admits removing exactly the contribution that was added.
-func TestApplyQuoteDelta_ExactSubtractOk(t *testing.T) {
-	got, err := orderbookkeeper.ApplyQuoteDelta(100, -100)
+// TestApplyMagDelta_ExactSubtractOk admits removing exactly the
+// contribution that was added.
+func TestApplyMagDelta_ExactSubtractOk(t *testing.T) {
+	got, err := orderbookkeeper.ApplyMagDelta(100, 100, -1)
 	require.NoError(t, err)
 	require.Zero(t, got)
+}
+
+// TestApplyMagDelta_ZeroSignIsNoop confirms a sign of 0 leaves the
+// aggregate untouched regardless of magnitude.
+func TestApplyMagDelta_ZeroSignIsNoop(t *testing.T) {
+	got, err := orderbookkeeper.ApplyMagDelta(42, 7, 0)
+	require.NoError(t, err)
+	require.EqualValues(t, 42, got)
 }

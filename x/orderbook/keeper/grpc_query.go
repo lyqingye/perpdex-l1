@@ -50,11 +50,6 @@ func (q Querier) OrderByClientId(ctx context.Context, req *types.QueryOrderByCli
 // `market_index` (both zero = unfiltered, account-only = all that
 // account's orders, market-only = that market's history) and applies
 // the standard Cosmos pagination envelope to bound the response size.
-//
-// Previously the handler ignored the request entirely and returned
-// every Order on chain, which made the public RPC effectively a
-// validator-only debug endpoint and a trivial DoS vector once Orders
-// grew past a few thousand rows.
 func (q Querier) Orders(ctx context.Context, req *types.QueryOrdersRequest) (*types.QueryOrdersResponse, error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "empty request")
@@ -86,10 +81,6 @@ func (q Querier) Orders(ctx context.Context, req *types.QueryOrdersRequest) (*ty
 // OrderBookSnapshot honours `req.Depth` and limits the iteration to the
 // requested market via a prefix range. A zero / over-cap depth is
 // clamped to `maxOrderBookSnapshotDepth` to avoid full-book dumps.
-//
-// The previous implementation iterated every price level in the store
-// and post-filtered by market, which made the RPC O(global_price_levels)
-// per call.
 func (q Querier) OrderBookSnapshot(ctx context.Context, req *types.QueryOrderBookSnapshotRequest) (*types.QueryOrderBookSnapshotResponse, error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "empty request")

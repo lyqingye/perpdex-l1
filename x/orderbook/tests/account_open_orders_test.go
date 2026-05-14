@@ -20,10 +20,10 @@ func TestAccountOpenOrders_CoversNoClientID(t *testing.T) {
 	k, ctx := newOrderbookKeeper(t)
 
 	a := makeOrder(1, 99, 1, 10, false)
-	require.NoError(t, k.OpenOrder(ctx, a, false))
+	require.NoError(t, k.OpenOrder(ctx, a))
 
 	b := makeOrder(2, 99, 1, 0, false)
-	require.NoError(t, k.OpenOrder(ctx, b, false))
+	require.NoError(t, k.OpenOrder(ctx, b))
 
 	seen := map[uint64]bool{}
 	require.NoError(t, k.IterateAccountOpenOrders(ctx, 99, 0, func(o types.Order) bool {
@@ -41,7 +41,7 @@ func TestAccountOpenOrders_HonorsMarketFilter(t *testing.T) {
 
 	for i, mkt := range []uint32{1, 2, 1, 3} {
 		o := makeOrder(uint64(i+1), 7, mkt, 0, false)
-		require.NoError(t, k.OpenOrder(ctx, o, false))
+		require.NoError(t, k.OpenOrder(ctx, o))
 	}
 
 	collect := func(filter uint32) []uint64 {
@@ -65,7 +65,7 @@ func TestAccountOpenOrders_CancelRemoves(t *testing.T) {
 	k, ctx := newOrderbookKeeper(t)
 
 	o := makeOrder(5, 1, 1, 0, false)
-	require.NoError(t, k.OpenOrder(ctx, o, false))
+	require.NoError(t, k.OpenOrder(ctx, o))
 
 	var hits int
 	require.NoError(t, k.IterateAccountOpenOrders(ctx, 1, 0, func(types.Order) bool {

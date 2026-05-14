@@ -395,7 +395,7 @@ func newMatchEnv(t *testing.T) *matchEnv {
 // side from o.IsAsk.
 func (e *matchEnv) rest(t *testing.T, o orderbooktypes.Order, _ bool) {
 	t.Helper()
-	require.NoError(t, e.bk.OpenOrder(e.ctx, o, false))
+	require.NoError(t, e.bk.OpenOrder(e.ctx, o))
 }
 
 // withInjectingTrade returns an env whose tradeKeeper consumes a script
