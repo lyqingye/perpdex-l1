@@ -126,6 +126,22 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 			o.Status = perptypes.OrderStatusCancelled
 		}
 		if err := k.bookKeeper.OpenOrder(ctx, o); err != nil {
+			// OpenOrder failed AFTER ActivateTrigger persisted
+			// Status=Open: without cleanup the order would survive
+			// as a ghost — visible via AccountOpenOrders /
+			// ClientOrderIndex (installed at OpenTriggerOrder
+			// time) but with no orderbook entry and no spot lock,
+			// uncancelable by the user because they cannot tell
+			// it ever existed. Mirror the MatchOrder error path
+			// above and CancelOrder the activated order so every
+			// index is dropped. CancelOrder is tolerant of
+			// missing entries / locks (x/account's
+			// DecreaseLockedBalance clamps), so the cleanup
+			// succeeds even when applySpotLockOnOpen never
+			// acquired anything.
+			if _, cerr := k.bookKeeper.CancelOrder(ctx, o.OrderIndex); cerr != nil {
+				_ = cerr
+			}
 			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
 				types.EventTypeTriggerInsertError,
 				sdk.NewAttribute(types.AttributeKeyOrderIndex, strconv.FormatUint(o.OrderIndex, 10)),
