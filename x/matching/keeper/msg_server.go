@@ -2,7 +2,6 @@ package keeper
 
 import (
 	"context"
-	"strconv"
 
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -243,14 +242,14 @@ func (m MsgServer) CreateOrder(ctx context.Context, msg *types.MsgCreateOrder) (
 		}
 		if avail.LT(lockAmt) {
 			order.Status = perptypes.OrderStatusCancelled
-			sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
-				types.EventTypeOrderResidueUnlockable,
-				sdk.NewAttribute(types.AttributeKeyMarketIndex, strconv.FormatUint(uint64(order.MarketIndex), 10)),
-				sdk.NewAttribute(types.AttributeKeyOrderIndex, strconv.FormatUint(order.OrderIndex, 10)),
-				sdk.NewAttribute(types.AttributeKeyAssetID, strconv.FormatUint(uint64(assetID), 10)),
-				sdk.NewAttribute(types.AttributeKeyAvailable, avail.String()),
-				sdk.NewAttribute(types.AttributeKeyRequired, lockAmt.String()),
-			))
+			sdk.UnwrapSDKContext(ctx).Logger().Error(
+				"matching CreateOrder: spot residue unlockable; force-cancelled residue",
+				"market_index", order.MarketIndex,
+				"order_index", order.OrderIndex,
+				"asset_id", assetID,
+				"available", avail.String(),
+				"required", lockAmt.String(),
+			)
 		}
 	}
 	if err := m.bookKeeper.OpenOrder(ctx, order); err != nil {

@@ -2,37 +2,36 @@ package keeper
 
 import (
 	"context"
-	"strconv"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
-	"github.com/perpdex/perpdex-l1/x/matching/types"
 	orderbooktypes "github.com/perpdex/perpdex-l1/x/orderbook/types"
 )
 
 // EndBlocker iterates every order currently parked in the trigger index and
 // activates those whose trigger condition has been met against the latest
 // mark price. Activated triggers become resting limit orders (or IOC/market
-// fills) and go through the normal matching pipeline. Errors from a single
-// market are emitted as events but do not short-circuit the loop so a stale
-// oracle for one market cannot jam the rest.
+// fills) and go through the normal matching pipeline. Per-trigger failures
+// are logged at error level and the sweep continues with the next trigger
+// so a stale oracle / corrupt order for one market cannot jam the rest.
 func (k Keeper) EndBlocker(ctx context.Context) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	logger := sdkCtx.Logger()
 	var due []uint64
 	err := k.bookKeeper.IterateTriggers(ctx, func(o orderbooktypes.Order) error {
 		// Route the markPrice read through MarketKeeper so trigger
 		// activation shares the fail-closed zero/staleness gate.
-		// Failures emit TriggerOracleError and skip the trigger;
-		// stop-loss / take-profit must never fire on a stale or
-		// missing markPrice.
+		// Failures are logged and the trigger is skipped; stop-loss /
+		// take-profit must never fire on a stale or missing markPrice.
 		markPrice, _, err := k.marketKeeper.GetMarkPriceAndDetails(ctx, o.MarketIndex)
 		if err != nil {
-			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
-				types.EventTypeTriggerOracleError,
-				sdk.NewAttribute(types.AttributeKeyMarketIndex, strconv.FormatUint(uint64(o.MarketIndex), 10)),
-				sdk.NewAttribute(types.AttributeKeyErr, err.Error()),
-			))
+			logger.Error(
+				"matching EndBlocker: trigger oracle read failed; skipping trigger",
+				"market_index", o.MarketIndex,
+				"order_index", o.OrderIndex,
+				"err", err,
+			)
 			return nil
 		}
 		if markPrice == 0 {
@@ -72,11 +71,11 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 	for _, orderIndex := range due {
 		o, err := k.bookKeeper.ActivateTrigger(ctx, orderIndex)
 		if err != nil {
-			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
-				types.EventTypeTriggerDequeueError,
-				sdk.NewAttribute(types.AttributeKeyOrderIndex, strconv.FormatUint(orderIndex, 10)),
-				sdk.NewAttribute(types.AttributeKeyErr, err.Error()),
-			))
+			logger.Error(
+				"matching EndBlocker: ActivateTrigger failed; skipping trigger",
+				"order_index", orderIndex,
+				"err", err,
+			)
 			continue
 		}
 		// Convert trigger variant to its executable twin:
@@ -100,18 +99,18 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 			// Match failed mid-trigger: we already removed the
 			// trigger registration via ActivateTrigger, so cancel
 			// the order to keep state consistent. CancelOrder is
-			// idempotent for orders without a resting entry.
+			// idempotent for orders without a resting entry; an
+			// ErrOrderNotCancelable means the order was already
+			// drained (FillMakerOrder fully consumed it) and is
+			// safe to drop.
 			if _, cerr := k.bookKeeper.CancelOrder(ctx, o.OrderIndex); cerr != nil {
-				// Already-terminal orders or missing entries
-				// surface as ErrOrderNotCancelable; ignore so
-				// the original match error wins.
 				_ = cerr
 			}
-			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
-				types.EventTypeTriggerMatchError,
-				sdk.NewAttribute(types.AttributeKeyOrderIndex, strconv.FormatUint(o.OrderIndex, 10)),
-				sdk.NewAttribute(types.AttributeKeyErr, err.Error()),
-			))
+			logger.Error(
+				"matching EndBlocker: post-trigger MatchOrder failed; order cancelled",
+				"order_index", o.OrderIndex,
+				"err", err,
+			)
 			continue
 		}
 		o.Status = status
@@ -135,11 +134,11 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 			if _, cerr := k.bookKeeper.CancelOrder(ctx, o.OrderIndex); cerr != nil {
 				_ = cerr
 			}
-			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
-				types.EventTypeTriggerInsertError,
-				sdk.NewAttribute(types.AttributeKeyOrderIndex, strconv.FormatUint(o.OrderIndex, 10)),
-				sdk.NewAttribute(types.AttributeKeyErr, err.Error()),
-			))
+			logger.Error(
+				"matching EndBlocker: post-trigger OpenOrder failed; ghost order cancelled",
+				"order_index", o.OrderIndex,
+				"err", err,
+			)
 		}
 	}
 	return nil
