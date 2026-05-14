@@ -108,6 +108,9 @@ func (k Keeper) OpenOrder(ctx context.Context, o types.Order, isPostOnly bool) e
 		if err := k.indexAccountOpenOrder(ctx, o); err != nil {
 			return err
 		}
+		if err := k.addExpiryIndex(ctx, o); err != nil {
+			return err
+		}
 	default:
 		// Terminal status: clear any indexes that may have been
 		// installed earlier in this order's lifetime (e.g. by
@@ -120,6 +123,9 @@ func (k Keeper) OpenOrder(ctx context.Context, o types.Order, isPostOnly bool) e
 			return err
 		}
 		if err := k.unindexAccountOpenOrder(ctx, o); err != nil {
+			return err
+		}
+		if err := k.removeExpiryIndex(ctx, o); err != nil {
 			return err
 		}
 	}
@@ -137,6 +143,13 @@ func (k Keeper) OpenTriggerOrder(ctx context.Context, o types.Order) error {
 		return err
 	}
 	if err := k.indexAccountOpenOrder(ctx, o); err != nil {
+		return err
+	}
+	// Trigger-pending GTT orders must expire on schedule even before
+	// they activate. Indexing here lets EndBlocker cancel a stale
+	// stop-loss without having to scan the trigger keyset every
+	// block.
+	if err := k.addExpiryIndex(ctx, o); err != nil {
 		return err
 	}
 	return k.setOrder(ctx, o)
@@ -192,6 +205,9 @@ func (k Keeper) FillMakerOrder(ctx context.Context, makerIndex uint64, filledBas
 		if err := k.unindexAccountOpenOrder(ctx, maker); err != nil {
 			return types.Order{}, err
 		}
+		if err := k.removeExpiryIndex(ctx, maker); err != nil {
+			return types.Order{}, err
+		}
 	} else {
 		maker.Status = perptypes.OrderStatusPartiallyFilled
 	}
@@ -226,6 +242,9 @@ func (k Keeper) EvictMakerOrder(ctx context.Context, makerIndex uint64, terminal
 		return types.Order{}, err
 	}
 	if err := k.unindexAccountOpenOrder(ctx, maker); err != nil {
+		return types.Order{}, err
+	}
+	if err := k.removeExpiryIndex(ctx, maker); err != nil {
 		return types.Order{}, err
 	}
 	if err := k.setOrder(ctx, maker); err != nil {
@@ -279,6 +298,9 @@ func (k Keeper) CancelOrder(ctx context.Context, orderIndex uint64) (types.Order
 		return types.Order{}, err
 	}
 	if err := k.unindexAccountOpenOrder(ctx, o); err != nil {
+		return types.Order{}, err
+	}
+	if err := k.removeExpiryIndex(ctx, o); err != nil {
 		return types.Order{}, err
 	}
 	if err := k.setOrder(ctx, o); err != nil {

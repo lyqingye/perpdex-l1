@@ -4,10 +4,14 @@
 // `MaxOrderQuoteAmount` cap on multiplication, and
 // `ApplyQuoteDelta(cur, delta)` adds a signed delta to a price-level
 // aggregate while rejecting positive sums that would wrap past
-// `MaxUint64` and clamping over-subtraction to zero.
+// `math.MaxUint64` AND rejecting negative sums that would underflow
+// (the latter case is treated as an invariant violation rather than a
+// silent clamp because the runtime always removes contributions of
+// the exact size they were inserted with).
 package tests
 
 import (
+	stdmath "math"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -40,14 +44,25 @@ func TestCheckedQuote_Overflow(t *testing.T) {
 
 // TestApplyQuoteDelta_OverflowGuard refuses to wrap past math.MaxUint64.
 func TestApplyQuoteDelta_OverflowGuard(t *testing.T) {
-	_, err := orderbookkeeper.ApplyQuoteDelta(orderbookkeeper.MaxUint64-10, 11)
+	_, err := orderbookkeeper.ApplyQuoteDelta(stdmath.MaxUint64-10, 11)
 	require.ErrorIs(t, err, types.ErrPriceLevelOverflow)
 }
 
-// TestApplyQuoteDelta_NegativeCapped clamps a negative delta to zero rather
-// than wrapping to a huge uint64.
-func TestApplyQuoteDelta_NegativeCapped(t *testing.T) {
-	got, err := orderbookkeeper.ApplyQuoteDelta(50, -100)
+// TestApplyQuoteDelta_NegativeUnderflowIsInvariant verifies that
+// removing more than was inserted surfaces ErrInvariantViolated
+// instead of silently clamping to zero. The orderbook only ever
+// adjusts a price-level aggregate by amounts it previously added, so
+// an under-subtract represents a state-machine drift the runtime must
+// fail loudly on.
+func TestApplyQuoteDelta_NegativeUnderflowIsInvariant(t *testing.T) {
+	_, err := orderbookkeeper.ApplyQuoteDelta(50, -100)
+	require.ErrorIs(t, err, types.ErrInvariantViolated)
+}
+
+// TestApplyQuoteDelta_ExactSubtractOk confirms the strict path still
+// admits removing exactly the contribution that was added.
+func TestApplyQuoteDelta_ExactSubtractOk(t *testing.T) {
+	got, err := orderbookkeeper.ApplyQuoteDelta(100, -100)
 	require.NoError(t, err)
 	require.Zero(t, got)
 }

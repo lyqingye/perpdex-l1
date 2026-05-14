@@ -17,4 +17,9 @@ var (
 	NextOrderIndexKey        = []byte{0x07}
 	AccountOpenOrdersKey     = []byte{0x08}
 	AccountOpenOrderCountKey = []byte{0x09}
+	// ExpiryIndexKey backs the GTT expiry keyset
+	// `(expiry_ms, order_index) -> ()`. EndBlocker iterates this
+	// keyset by ascending expiry so each block walks only the
+	// orders due to expire, never the full Orders history.
+	ExpiryIndexKey = []byte{0x0A}
 )

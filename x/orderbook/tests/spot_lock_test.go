@@ -8,6 +8,7 @@ package tests
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -76,9 +77,15 @@ func (l *recordingLocker) get(acc uint64, asset uint32) cosmosmath.Int {
 	return cosmosmath.ZeroInt()
 }
 
+// errLockerInsufficient is a test-local sentinel used by the
+// recordingLocker to simulate an under-funded account. The orderbook
+// keeper does not care about the concrete error type — it only checks
+// that OpenOrder propagates the failure and skips state writes.
+var errLockerInsufficient = errors.New("spot locker: simulated under-funded account")
+
 func (l *recordingLocker) IncreaseLockedBalance(_ context.Context, acc uint64, asset uint32, amount cosmosmath.Int) error {
 	if l.insufficient {
-		return types.ErrInsufficientLiquidity.Wrapf("simulated under-funded account")
+		return errLockerInsufficient
 	}
 	cur := l.get(acc, asset)
 	l.balances[lockKey{acc, asset}] = cur.Add(amount)

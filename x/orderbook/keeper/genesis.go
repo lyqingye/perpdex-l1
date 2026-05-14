@@ -11,7 +11,15 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 	if err := k.Params.Set(ctx, gs.Params); err != nil {
 		return err
 	}
-	if err := k.NextOrderIndex.Set(ctx, gs.NextOrderIndex); err != nil {
+	// Force the sequence to start at >= 1 so AllocateOrderIndex never
+	// hands out 0 (which would alias the "absent" zero-value across
+	// the rest of the codebase). The default genesis already sets 1;
+	// this is the safety net for hand-edited / migrated states.
+	next := gs.NextOrderIndex
+	if next < 1 {
+		next = 1
+	}
+	if err := k.NextOrderIndex.Set(ctx, next); err != nil {
 		return err
 	}
 	for _, o := range gs.Orders {
@@ -45,7 +53,10 @@ func (k Keeper) restoreGenesisOrderIndexes(ctx context.Context, o types.Order) e
 		if err := k.indexClientOrder(ctx, o); err != nil {
 			return err
 		}
-		return k.indexAccountOpenOrder(ctx, o)
+		if err := k.indexAccountOpenOrder(ctx, o); err != nil {
+			return err
+		}
+		return k.addExpiryIndex(ctx, o)
 	case perptypes.OrderStatusTriggeredPending:
 		if err := k.addTrigger(ctx, o.MarketIndex, o.TriggerPrice, o.OrderIndex); err != nil {
 			return err
@@ -53,7 +64,10 @@ func (k Keeper) restoreGenesisOrderIndexes(ctx context.Context, o types.Order) e
 		if err := k.indexClientOrder(ctx, o); err != nil {
 			return err
 		}
-		return k.indexAccountOpenOrder(ctx, o)
+		if err := k.indexAccountOpenOrder(ctx, o); err != nil {
+			return err
+		}
+		return k.addExpiryIndex(ctx, o)
 	default:
 		return nil
 	}

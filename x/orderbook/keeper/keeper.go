@@ -48,11 +48,16 @@ type Keeper struct {
 	// TriggerIndex tracks orders awaiting trigger price activation.
 	TriggerIndex collections.KeySet[collections.Triple[uint32, uint32, uint64]]
 
-	// AccountOpenOrders[(account, order_index)]: tracks every order
-	// belonging to `account` that is in a non-terminal status (open /
-	// partially_filled / triggered_pending). Independent of
+	// AccountOpenOrders[(account, market, order_index)]: tracks every
+	// order belonging to `account` that is in a non-terminal status
+	// (open / partially_filled / triggered_pending). Independent of
 	// client_order_index so cancel-all can find every resting order.
-	AccountOpenOrders collections.KeySet[collections.Pair[uint64, uint64]]
+	//
+	// The market field sits between account and order_index so
+	// `IterateAccountOpenOrders(account, market=N)` is a single
+	// (account, market) prefix scan — no per-order GetOrder + filter
+	// like the previous (account, order_index) layout required.
+	AccountOpenOrders collections.KeySet[collections.Triple[uint64, uint32, uint64]]
 
 	// AccountOpenOrderCount[(account, market)]: number of open orders
 	// (resting + trigger-pending) the account currently holds in this
@@ -61,6 +66,13 @@ type Keeper struct {
 	// orders. Maintained in lock-step with AccountOpenOrders by
 	// indexAccountOpenOrder / unindexAccountOpenOrder.
 	AccountOpenOrderCount collections.Map[collections.Pair[uint64, uint32], uint32]
+
+	// ExpiryIndex[(expiry_ms, order_index)] tracks every GTT order
+	// currently on the book (or parked as a trigger) sorted by its
+	// expiry timestamp. EndBlocker iterates this keyset in ascending
+	// order and stops once it sees an entry with `expiry > now`, so
+	// each block does O(due_orders) work instead of O(N_history).
+	ExpiryIndex collections.KeySet[collections.Pair[int64, uint64]]
 }
 
 func NewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, authority string, mk types.MarketKeeper, sl types.SpotLocker) Keeper {
@@ -96,11 +108,14 @@ func NewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, authori
 			collections.TripleKeyCodec(collections.Uint32Key, collections.Uint32Key, collections.Uint64Key)),
 
 		AccountOpenOrders: collections.NewKeySet(sb, types.AccountOpenOrdersKey, "account_open_orders",
-			collections.PairKeyCodec(collections.Uint64Key, collections.Uint64Key)),
+			collections.TripleKeyCodec(collections.Uint64Key, collections.Uint32Key, collections.Uint64Key)),
 
 		AccountOpenOrderCount: collections.NewMap(sb, types.AccountOpenOrderCountKey, "account_open_order_count",
 			collections.PairKeyCodec(collections.Uint64Key, collections.Uint32Key),
 			collections.Uint32Value),
+
+		ExpiryIndex: collections.NewKeySet(sb, types.ExpiryIndexKey, "expiry_index",
+			collections.PairKeyCodec(collections.Int64Key, collections.Uint64Key)),
 	}
 	schema, err := sb.Build()
 	if err != nil {

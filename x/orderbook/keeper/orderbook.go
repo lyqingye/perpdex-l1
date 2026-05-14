@@ -3,48 +3,22 @@ package keeper
 import (
 	"context"
 	"errors"
+	stdmath "math"
 	"math/big"
 
 	"cosmossdk.io/collections"
-	"cosmossdk.io/math"
+	sdkmath "cosmossdk.io/math"
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
 	"github.com/perpdex/perpdex-l1/x/orderbook/types"
 )
 
-// sideByte returns the discriminator byte used as the first byte of the
-// orderbook entry sort-key (ask=0, bid=1) so each side iterates separately.
-func sideByte(isAsk bool) byte {
-	if isAsk {
-		return 0
-	}
-	return 1
-}
-
-// composeSortKey returns sideByte || sortableKey (13 bytes).
-func composeSortKey(isAsk bool, sk []byte) []byte {
-	out := make([]byte, 0, 1+len(sk))
-	out = append(out, sideByte(isAsk))
-	out = append(out, sk...)
-	return out
-}
-
-// sidePrefix returns the 1-byte prefix used to iterate one side of a market.
-func sidePrefix(isAsk bool) []byte { return []byte{sideByte(isAsk)} }
-
-// AllocateOrderIndex returns the next order_index, ensuring it starts at 1.
+// AllocateOrderIndex returns the next order_index. The 1-based invariant is
+// established up-front in InitGenesis (NextOrderIndex is forced to >= 1
+// during boot), so this is a straight Sequence.Next with no skip-zero
+// branch.
 func (k Keeper) AllocateOrderIndex(ctx context.Context) (uint64, error) {
-	idx, err := k.NextOrderIndex.Next(ctx)
-	if err != nil {
-		return 0, err
-	}
-	if idx == 0 {
-		idx, err = k.NextOrderIndex.Next(ctx)
-		if err != nil {
-			return 0, err
-		}
-	}
-	return idx, nil
+	return k.NextOrderIndex.Next(ctx)
 }
 
 // insertOrderbookEntry adds an order to the orderbook (sorted side store) and
@@ -59,35 +33,34 @@ func (k Keeper) insertOrderbookEntry(ctx context.Context, market uint32, isAsk b
 		return err
 	}
 	sk := types.SortableKey(o.Price, o.Nonce, isAsk)
-	composed := composeSortKey(isAsk, sk)
-	if err := k.OrderBookEntries.Set(ctx, collections.Join(market, composed), o); err != nil {
+	if err := k.OrderBookEntries.Set(ctx, collections.Join(market, sk), o); err != nil {
 		return err
 	}
-	if err := k.OrderToSortKey.Set(ctx, collections.Join(market, o.OrderIndex), composed); err != nil {
+	if err := k.OrderToSortKey.Set(ctx, collections.Join(market, o.OrderIndex), sk); err != nil {
 		return err
 	}
-	return k.adjustPriceLevel(ctx, market, isAsk, o.Price, int64(o.RemainingBaseAmount), int64(quote), 1)
+	return k.adjustPriceLevel(ctx, market, isAsk, o.Price, o.RemainingBaseAmount, quote, +1, +1)
 }
 
 // removeOrderbookEntry deletes the entry and decrements the price-level.
 //
 // Internal helper. External callers go through CancelOrder / EvictMakerOrder.
 func (k Keeper) removeOrderbookEntry(ctx context.Context, market uint32, isAsk bool, orderIndex uint64) error {
-	composed, err := k.OrderToSortKey.Get(ctx, collections.Join(market, orderIndex))
+	sk, err := k.OrderToSortKey.Get(ctx, collections.Join(market, orderIndex))
 	if err != nil {
 		if errors.Is(err, collections.ErrNotFound) {
 			return nil
 		}
 		return err
 	}
-	entry, err := k.OrderBookEntries.Get(ctx, collections.Join(market, composed))
+	entry, err := k.OrderBookEntries.Get(ctx, collections.Join(market, sk))
 	if err != nil {
 		if errors.Is(err, collections.ErrNotFound) {
 			return nil
 		}
 		return err
 	}
-	if err := k.OrderBookEntries.Remove(ctx, collections.Join(market, composed)); err != nil {
+	if err := k.OrderBookEntries.Remove(ctx, collections.Join(market, sk)); err != nil {
 		return err
 	}
 	if err := k.OrderToSortKey.Remove(ctx, collections.Join(market, orderIndex)); err != nil {
@@ -100,11 +73,7 @@ func (k Keeper) removeOrderbookEntry(ctx context.Context, market uint32, isAsk b
 	if err != nil {
 		return err
 	}
-	return k.adjustPriceLevel(ctx, market, isAsk, entry.Price,
-		-int64(entry.RemainingBaseAmount),
-		-int64(quote),
-		-1,
-	)
+	return k.adjustPriceLevel(ctx, market, isAsk, entry.Price, entry.RemainingBaseAmount, quote, -1, -1)
 }
 
 // partialFill subtracts filledBase from the remaining_base_amount of the entry
@@ -112,11 +81,11 @@ func (k Keeper) removeOrderbookEntry(ctx context.Context, market uint32, isAsk b
 //
 // Internal helper. External callers go through FillMakerOrder.
 func (k Keeper) partialFill(ctx context.Context, market uint32, isAsk bool, orderIndex uint64, filledBase uint64) error {
-	composed, err := k.OrderToSortKey.Get(ctx, collections.Join(market, orderIndex))
+	sk, err := k.OrderToSortKey.Get(ctx, collections.Join(market, orderIndex))
 	if err != nil {
 		return err
 	}
-	tripKey := collections.Join(market, composed)
+	tripKey := collections.Join(market, sk)
 	entry, err := k.OrderBookEntries.Get(ctx, tripKey)
 	if err != nil {
 		return err
@@ -131,11 +100,7 @@ func (k Keeper) partialFill(ctx context.Context, market uint32, isAsk bool, orde
 	if err != nil {
 		return err
 	}
-	if err := k.adjustPriceLevel(ctx, market, isAsk, entry.Price,
-		-int64(filledBase),
-		-int64(filledQuote),
-		0,
-	); err != nil {
+	if err := k.adjustPriceLevel(ctx, market, isAsk, entry.Price, filledBase, filledQuote, -1, 0); err != nil {
 		return err
 	}
 	if entry.RemainingBaseAmount == 0 {
@@ -145,38 +110,51 @@ func (k Keeper) partialFill(ctx context.Context, market uint32, isAsk bool, orde
 		if err := k.OrderToSortKey.Remove(ctx, collections.Join(market, orderIndex)); err != nil {
 			return err
 		}
-		return k.adjustPriceLevel(ctx, market, isAsk, entry.Price, 0, 0, -1)
+		// The base and quote contributions were already subtracted
+		// above; only the entry-count delta is left to apply.
+		return k.adjustPriceLevel(ctx, market, isAsk, entry.Price, 0, 0, 0, -1)
 	}
 	return k.OrderBookEntries.Set(ctx, tripKey, entry)
 }
 
 // PeekBestOpposite returns the head-of-book entry on the opposite side of
 // `isAsk`. Returns (entry, true, nil) if an order exists.
+//
+// The iterator is scoped to the (market, opposite-side) byte range so it
+// does not walk across the other side of the book — best bid lookups
+// won't pay an O(asks) traversal and vice versa.
 func (k Keeper) PeekBestOpposite(ctx context.Context, market uint32, isAsk bool) (types.OrderBookEntry, bool, error) {
-	prefix := sidePrefix(!isAsk)
-	rng := new(collections.Range[collections.Pair[uint32, []byte]]).
-		Prefix(collections.PairPrefix[uint32, []byte](market))
+	rng := sidePrefixedRange(market, !isAsk)
 	iter, err := k.OrderBookEntries.Iterate(ctx, rng)
 	if err != nil {
 		return types.OrderBookEntry{}, false, err
 	}
 	defer iter.Close()
-	for ; iter.Valid(); iter.Next() {
-		k2, err := iter.Key()
-		if err != nil {
-			return types.OrderBookEntry{}, false, err
-		}
-		composed := k2.K2()
-		if len(composed) == 0 || composed[0] != prefix[0] {
-			continue
-		}
-		v, err := iter.Value()
-		if err != nil {
-			return types.OrderBookEntry{}, false, err
-		}
-		return v, true, nil
+	if !iter.Valid() {
+		return types.OrderBookEntry{}, false, nil
 	}
-	return types.OrderBookEntry{}, false, nil
+	v, err := iter.Value()
+	if err != nil {
+		return types.OrderBookEntry{}, false, err
+	}
+	return v, true, nil
+}
+
+// sidePrefixedRange returns a Range covering exactly the entries on the
+// requested side of `market`. We rely on the fact that SortableKey
+// prefixes every key with the side discriminator byte (see
+// types.SortableKey): the range is `[market || side_byte || 0...0,
+// market || (side_byte+1) || 0...0)`.
+func sidePrefixedRange(market uint32, isAsk bool) *collections.Range[collections.Pair[uint32, []byte]] {
+	side := types.SideByte(isAsk)
+	start := make([]byte, types.SortableKeyLen)
+	start[0] = side
+	end := make([]byte, types.SortableKeyLen)
+	end[0] = side + 1
+	rng := new(collections.Range[collections.Pair[uint32, []byte]]).
+		StartInclusive(collections.Join(market, start)).
+		EndExclusive(collections.Join(market, end))
+	return rng
 }
 
 // WouldCross reports whether placing an order at `price` on `isAsk` side would
@@ -193,10 +171,30 @@ func (k Keeper) WouldCross(ctx context.Context, market uint32, isAsk bool, price
 }
 
 // adjustPriceLevel applies signed deltas to the price-level aggregate at
-// (market, price) for the given side. The quote aggregate is guarded against
-// uint64 overflow (returning ErrPriceLevelOverflow), so a burst of large
-// orders at the same level cannot silently wrap around.
-func (k Keeper) adjustPriceLevel(ctx context.Context, market uint32, isAsk bool, price uint32, baseDelta, quoteDelta int64, countDelta int32) error {
+// (market, price) for the given side. All deltas are split into
+// magnitude (`baseMag` / `quoteMag`, both uint64) and direction (`sign`,
+// either +1 or -1) so we never round-trip through `int64` — a value
+// approaching `MaxOrderQuoteAmount` never gets silently truncated when
+// cast.
+//
+// `countDelta` is the +/-1 entry-count delta. The quote aggregate is
+// guarded against uint64 overflow (returning ErrPriceLevelOverflow) on
+// positive deltas, and against under-subtraction (returning
+// ErrInvariantViolated) on negative deltas — the price level was built
+// from the same contributions the runtime removes, so a "remove > add"
+// situation is a state-machine bug, never a normal flow.
+func (k Keeper) adjustPriceLevel(
+	ctx context.Context,
+	market uint32,
+	isAsk bool,
+	price uint32,
+	baseMag, quoteMag uint64,
+	sign int8,
+	countDelta int32,
+) error {
+	if sign != +1 && sign != -1 && sign != 0 {
+		return types.ErrInvariantViolated.Wrapf("adjustPriceLevel: bad sign=%d", sign)
+	}
 	key := collections.Join(market, price)
 	pl, err := k.PriceLevels.Get(ctx, key)
 	if err != nil && !errors.Is(err, collections.ErrNotFound) {
@@ -206,21 +204,37 @@ func (k Keeper) adjustPriceLevel(ctx context.Context, market uint32, isAsk bool,
 		pl = types.PriceLevelAggregate{MarketIndex: market, Price: price}
 	}
 	if isAsk {
-		pl.AskBaseSum = applyDelta(pl.AskBaseSum, baseDelta)
-		q, err := ApplyQuoteDelta(pl.AskQuoteSum, quoteDelta)
+		next, err := applyMagDelta(pl.AskBaseSum, baseMag, sign)
 		if err != nil {
 			return err
 		}
-		pl.AskQuoteSum = q
-		pl.AskCount = uint32(int32(pl.AskCount) + countDelta)
+		pl.AskBaseSum = next
+		nextQuote, err := applyMagDelta(pl.AskQuoteSum, quoteMag, sign)
+		if err != nil {
+			return err
+		}
+		pl.AskQuoteSum = nextQuote
+		nextCount, err := applyCountDelta(pl.AskCount, countDelta)
+		if err != nil {
+			return err
+		}
+		pl.AskCount = nextCount
 	} else {
-		pl.BidBaseSum = applyDelta(pl.BidBaseSum, baseDelta)
-		q, err := ApplyQuoteDelta(pl.BidQuoteSum, quoteDelta)
+		next, err := applyMagDelta(pl.BidBaseSum, baseMag, sign)
 		if err != nil {
 			return err
 		}
-		pl.BidQuoteSum = q
-		pl.BidCount = uint32(int32(pl.BidCount) + countDelta)
+		pl.BidBaseSum = next
+		nextQuote, err := applyMagDelta(pl.BidQuoteSum, quoteMag, sign)
+		if err != nil {
+			return err
+		}
+		pl.BidQuoteSum = nextQuote
+		nextCount, err := applyCountDelta(pl.BidCount, countDelta)
+		if err != nil {
+			return err
+		}
+		pl.BidCount = nextCount
 	}
 	if pl.AskBaseSum == 0 && pl.BidBaseSum == 0 && pl.AskCount == 0 && pl.BidCount == 0 {
 		return k.PriceLevels.Remove(ctx, key)
@@ -228,53 +242,103 @@ func (k Keeper) adjustPriceLevel(ctx context.Context, market uint32, isAsk bool,
 	return k.PriceLevels.Set(ctx, key, pl)
 }
 
-func applyDelta(cur uint64, delta int64) uint64 {
-	if delta < 0 {
-		dec := uint64(-delta)
-		if dec > cur {
-			return 0
+// applyMagDelta is the strict signed-delta primitive used by
+// adjustPriceLevel. `sign == 0` is a no-op; `sign == +1` adds `mag` and
+// errors on uint64 overflow; `sign == -1` subtracts `mag` and errors on
+// under-subtraction (the aggregate was built from the entries we are
+// removing, so an under-subtract means a previous insert/remove pair
+// drifted).
+func applyMagDelta(cur uint64, mag uint64, sign int8) (uint64, error) {
+	switch sign {
+	case 0:
+		return cur, nil
+	case +1:
+		if cur > stdmath.MaxUint64-mag {
+			return 0, types.ErrPriceLevelOverflow
 		}
-		return cur - dec
+		return cur + mag, nil
+	case -1:
+		if mag > cur {
+			return 0, types.ErrInvariantViolated.Wrapf(
+				"price-level aggregate under-subtract: cur=%d delta=-%d", cur, mag,
+			)
+		}
+		return cur - mag, nil
+	default:
+		return 0, types.ErrInvariantViolated.Wrapf("applyMagDelta: bad sign=%d", sign)
 	}
-	return cur + uint64(delta)
 }
 
-// ApplyQuoteDelta updates the quote aggregate with signed overflow detection.
-// Positive deltas that would push the sum past `math.MaxUint64` return
-// `ErrPriceLevelOverflow` so the caller can reject the underlying order.
+// applyCountDelta enforces the same strict invariant on the per-side
+// entry-count aggregate. The price level is created together with its
+// first entry and torn down together with the last one, so any negative
+// adjustment that would underflow is a bug.
+func applyCountDelta(cur uint32, delta int32) (uint32, error) {
+	next := int64(cur) + int64(delta)
+	if next < 0 {
+		return 0, types.ErrInvariantViolated.Wrapf(
+			"price-level count under-subtract: cur=%d delta=%d", cur, delta,
+		)
+	}
+	if next > stdmath.MaxInt32 {
+		return 0, types.ErrPriceLevelOverflow.Wrapf(
+			"price-level count overflow: cur=%d delta=%d", cur, delta,
+		)
+	}
+	return uint32(next), nil
+}
+
+// ApplyQuoteDelta is kept around for callers / tests that exercise the
+// strict aggregate arithmetic. Positive deltas overflow with
+// ErrPriceLevelOverflow; negative deltas that would push the result
+// below zero return ErrInvariantViolated rather than silently clamping
+// to zero — that case represents a state-machine drift in the orderbook
+// and the runtime must fail loudly, not absorb the bug.
+//
+// The signature stays `(uint64, int64) -> (uint64, error)` for API
+// stability; internally we delegate to the strict primitive.
 func ApplyQuoteDelta(cur uint64, delta int64) (uint64, error) {
+	if delta == 0 {
+		return cur, nil
+	}
 	if delta < 0 {
-		dec := uint64(-delta)
-		if dec > cur {
-			return 0, nil
-		}
-		return cur - dec, nil
+		mag := uint64(-delta)
+		return applyMagDelta(cur, mag, -1)
 	}
-	add := uint64(delta)
-	if cur > MaxUint64-add {
-		return 0, types.ErrPriceLevelOverflow
-	}
-	return cur + add, nil
+	return applyMagDelta(cur, uint64(delta), +1)
 }
 
-const MaxUint64 = uint64(1<<64 - 1)
-
-// CheckedQuote returns base*price using big.Int and enforces the canonical
-// `MaxOrderQuoteAmount` cap (≈2.8e14). Both factors are small enough to avoid
-// intermediate overflow when the result is within the cap, but we still go
-// through big.Int so the overflow path is guarded even if the cap changes.
+// CheckedQuote returns base*price and enforces two guards:
+//
+//   - `MaxOrderQuoteAmount` cap (~2.8e14): per-order notional ceiling so
+//     a single order cannot dominate the orderbook bookkeeping.
+//   - `math.MaxInt64` cap: even though today's `MaxOrderQuoteAmount` is
+//     well below `MaxInt64`, the price-level math and the `int64`
+//     conversions performed by the caller (and by future code paths)
+//     rely on the quote fitting in a signed 64-bit integer. The
+//     assertion is cheap; it makes a future bump of
+//     `MaxOrderQuoteAmount` impossible to do silently.
+//
+// `base == 0 || price == 0 → (0, nil)` keeps the boundary smooth for
+// callers that build entries from optional-zero fields.
 func CheckedQuote(base, price uint64) (uint64, error) {
 	if base == 0 || price == 0 {
 		return 0, nil
 	}
-	// Fast path: for values within uint64 we detect overflow by dividing.
 	product := new(big.Int).Mul(
 		new(big.Int).SetUint64(base),
 		new(big.Int).SetUint64(price),
 	)
-	quoteCap := math.NewIntFromUint64(perptypes.MaxOrderQuoteAmount).BigInt()
+	quoteCap := sdkmath.NewIntFromUint64(perptypes.MaxOrderQuoteAmount).BigInt()
 	if product.Cmp(quoteCap) > 0 {
 		return 0, types.ErrQuoteOverflow
+	}
+	// Belt and suspenders: if MaxOrderQuoteAmount is ever raised above
+	// MaxInt64, fail loud rather than overflow downstream int64 casts.
+	if !product.IsInt64() {
+		return 0, types.ErrQuoteOverflow.Wrapf(
+			"product %s exceeds math.MaxInt64", product.String(),
+		)
 	}
 	return product.Uint64(), nil
 }
@@ -284,10 +348,11 @@ func CheckedQuote(base, price uint64) (uint64, error) {
 // Returns 0 when depth is insufficient or the market has not been
 // initialised; callers treat a zero VWAP as "side unavailable".
 //
-// Walk: bid side from highest price down, ask side from lowest up. The
-// last partial level uses `ceil_div(needQuote, price)` so the notional is
-// never under-filled. The final VWAP rounds UP for asks and DOWN for bids
-// so that `max(0, idx - ask)` cannot round in the trader's favour.
+// Walk: bid side from highest price down (iterator runs in descending
+// order), ask side from lowest up. The last partial level uses
+// `ceil_div(needQuote, price)` so the notional is never under-filled.
+// The final VWAP rounds UP for asks and DOWN for bids so that
+// `max(0, idx - ask)` cannot round in the trader's favour.
 func (k Keeper) ComputeImpactPrice(ctx context.Context, market uint32, isAsk bool) (uint32, error) {
 	notional, err := k.MarketImpactNotional(ctx, market)
 	if err != nil {
@@ -298,66 +363,53 @@ func (k Keeper) ComputeImpactPrice(ctx context.Context, market uint32, isAsk boo
 	}
 
 	rng := collections.NewPrefixedPairRange[uint32, uint32](market)
+	if !isAsk {
+		// Bid VWAP must walk the highest price first.
+		rng = rng.Descending()
+	}
 	iter, err := k.PriceLevels.Iterate(ctx, rng)
 	if err != nil {
 		return 0, err
 	}
 	defer iter.Close()
 
-	type level struct {
-		price uint32
-		base  uint64
-		quote uint64
-	}
-	var levels []level
+	var accBase, accQuote uint64
 	for ; iter.Valid(); iter.Next() {
 		v, err := iter.Value()
 		if err != nil {
 			return 0, err
 		}
+		var lvBase, lvQuote uint64
 		if isAsk {
-			if v.AskBaseSum > 0 {
-				levels = append(levels, level{v.Price, v.AskBaseSum, v.AskQuoteSum})
-			}
+			lvBase, lvQuote = v.AskBaseSum, v.AskQuoteSum
 		} else {
-			if v.BidBaseSum > 0 {
-				levels = append(levels, level{v.Price, v.BidBaseSum, v.BidQuoteSum})
-			}
+			lvBase, lvQuote = v.BidBaseSum, v.BidQuoteSum
 		}
-	}
-	if len(levels) == 0 {
-		return 0, nil
-	}
-	if !isAsk {
-		// Bid side: walk highest price first (reverse iterator order).
-		for i, j := 0, len(levels)-1; i < j; i, j = i+1, j-1 {
-			levels[i], levels[j] = levels[j], levels[i]
+		if lvBase == 0 {
+			continue
 		}
-	}
-
-	var accBase, accQuote uint64
-	for _, lv := range levels {
 		// `accQuote` and `notional` must share the same quote-scale
 		// convention. Today `{Ask,Bid}QuoteSum` is raw `base*price`
 		// and `notional` is computed with QuoteMultiplier=1 in
 		// MarketImpactNotional, so the comparison is direct.
 		// See the INVARIANT note on MarketImpactNotional.
-		if accQuote+lv.quote >= notional {
+		if accQuote+lvQuote >= notional {
 			needQuote := notional - accQuote
 			// Ceiling: floor would leave us short of `notional` on a
 			// fractional level and (incorrectly) report insufficient
-			// depth. Gated on `lv.base * price >= needQuote`, so it
-			// never overshoots `lv.base`.
-			needBase := (needQuote + uint64(lv.price) - 1) / uint64(lv.price)
+			// depth. Gated on `lvBase * price >= needQuote`, so it
+			// never overshoots `lvBase`.
+			price := uint64(v.Price)
+			needBase := (needQuote + price - 1) / price
 			if needBase == 0 {
 				needBase = 1
 			}
 			accBase += needBase
-			accQuote += needBase * uint64(lv.price)
+			accQuote += needBase * price
 			break
 		}
-		accBase += lv.base
-		accQuote += lv.quote
+		accBase += lvBase
+		accQuote += lvQuote
 	}
 	if accQuote < notional || accBase == 0 {
 		return 0, nil
@@ -516,13 +568,21 @@ func (k Keeper) HasOpenClientOrder(ctx context.Context, market uint32, account u
 	return false, 0, nil
 }
 
+// accountOpenOrderKey assembles the (account, market, order_index) triple
+// used by AccountOpenOrders. The leading account prefix powers the
+// `IterateAccountOpenOrders` scan; the embedded market lets cancel-all
+// filter by market without loading every Order.
+func accountOpenOrderKey(o types.Order) collections.Triple[uint64, uint32, uint64] {
+	return collections.Join3(o.OwnerAccountIndex, o.MarketIndex, o.OrderIndex)
+}
+
 // indexAccountOpenOrder marks `o` as a non-terminal order owned by
 // `o.OwnerAccountIndex`. Independent of client_order_index so cancel-all
 // can find every resting order.
 //
 // Internal helper. External callers go through OpenOrder / OpenTriggerOrder.
 func (k Keeper) indexAccountOpenOrder(ctx context.Context, o types.Order) error {
-	key := collections.Join(o.OwnerAccountIndex, o.OrderIndex)
+	key := accountOpenOrderKey(o)
 	had, err := k.AccountOpenOrders.Has(ctx, key)
 	if err != nil {
 		return err
@@ -539,13 +599,13 @@ func (k Keeper) indexAccountOpenOrder(ctx context.Context, o types.Order) error 
 	return k.bumpAccountOpenOrderCount(ctx, o.OwnerAccountIndex, o.MarketIndex, +1)
 }
 
-// unindexAccountOpenOrder removes the (account, order_index) tuple. Safe
-// to call on a tuple that was never indexed.
+// unindexAccountOpenOrder removes the (account, market, order_index)
+// triple. Safe to call on a tuple that was never indexed.
 //
 // Internal helper. External callers go through CancelOrder / FillMakerOrder /
 // EvictMakerOrder.
 func (k Keeper) unindexAccountOpenOrder(ctx context.Context, o types.Order) error {
-	key := collections.Join(o.OwnerAccountIndex, o.OrderIndex)
+	key := accountOpenOrderKey(o)
 	had, err := k.AccountOpenOrders.Has(ctx, key)
 	if err != nil {
 		return err
@@ -560,9 +620,14 @@ func (k Keeper) unindexAccountOpenOrder(ctx context.Context, o types.Order) erro
 }
 
 // bumpAccountOpenOrderCount adjusts the cap-tracking counter by delta
-// (+1 / -1). The counter never goes below zero — clamping protects
-// against stale unindex calls from genesis or test fixtures that did
-// not write the matching index entry.
+// (+1 / -1). The runtime path is strict — a negative result is reported
+// as `ErrInvariantViolated` because indexAccountOpenOrder /
+// unindexAccountOpenOrder are the only writers and they take the
+// "AccountOpenOrders.Has(...)" pre-check before touching the counter,
+// so a drift here means the keyset and the counter went out of sync.
+//
+// Genesis rehydration calls indexAccountOpenOrder on a fresh keyset so
+// it only increments; the strict guard never fires from genesis paths.
 func (k Keeper) bumpAccountOpenOrderCount(ctx context.Context, accIdx uint64, marketIdx uint32, delta int32) error {
 	key := collections.Join(accIdx, marketIdx)
 	cur, err := k.AccountOpenOrderCount.Get(ctx, key)
@@ -571,10 +636,18 @@ func (k Keeper) bumpAccountOpenOrderCount(ctx context.Context, accIdx uint64, ma
 	}
 	next := int64(cur) + int64(delta)
 	if next < 0 {
-		next = 0
+		return types.ErrInvariantViolated.Wrapf(
+			"account_open_order_count under-subtract: account=%d market=%d cur=%d delta=%d",
+			accIdx, marketIdx, cur, delta,
+		)
+	}
+	if next > stdmath.MaxUint32 {
+		return types.ErrInvariantViolated.Wrapf(
+			"account_open_order_count overflow: account=%d market=%d cur=%d delta=%d",
+			accIdx, marketIdx, cur, delta,
+		)
 	}
 	if next == 0 {
-		// Avoid persisting trivial zero rows.
 		if cur != 0 {
 			return k.AccountOpenOrderCount.Remove(ctx, key)
 		}
@@ -598,16 +671,26 @@ func (k Keeper) GetAccountOpenOrderCount(ctx context.Context, accIdx uint64, mar
 }
 
 // IterateAccountOpenOrders walks every order currently indexed as open
-// for `account`. When `marketFilter != 0` only orders whose MarketIndex
-// equals `marketFilter` are yielded; passing 0 yields all markets.
-// Callers can return true from `cb` to stop early.
+// for `account`. When `marketFilter != 0` the iterator is scoped to
+// that market via a (account, market) double-prefix range — orders in
+// other markets are skipped at the key layer, not via per-order
+// GetOrder + post-filter.
+//
+// Callback contract: returning `true` STOPS iteration; returning
+// `false` continues. The stop-on-true convention matches IterateTriggers
+// and the upstream Cosmos collections iterator style.
 func (k Keeper) IterateAccountOpenOrders(
 	ctx context.Context,
 	account uint64,
 	marketFilter uint32,
 	cb func(types.Order) bool,
 ) error {
-	rng := collections.NewPrefixedPairRange[uint64, uint64](account)
+	var rng collections.Ranger[collections.Triple[uint64, uint32, uint64]]
+	if marketFilter == 0 {
+		rng = collections.NewPrefixedTripleRange[uint64, uint32, uint64](account)
+	} else {
+		rng = collections.NewSuperPrefixedTripleRange[uint64, uint32, uint64](account, marketFilter)
+	}
 	iter, err := k.AccountOpenOrders.Iterate(ctx, rng)
 	if err != nil {
 		return err
@@ -618,15 +701,12 @@ func (k Keeper) IterateAccountOpenOrders(
 		if err != nil {
 			return err
 		}
-		o, err := k.GetOrder(ctx, key.K2())
+		o, err := k.GetOrder(ctx, key.K3())
 		if err != nil {
 			if errors.Is(err, types.ErrOrderNotFound) {
 				continue
 			}
 			return err
-		}
-		if marketFilter != 0 && o.MarketIndex != marketFilter {
-			continue
 		}
 		if cb(o) {
 			return nil
@@ -650,8 +730,10 @@ func (k Keeper) removeTrigger(ctx context.Context, market uint32, triggerPrice u
 }
 
 // IterateTriggers yields every (market, triggerPrice, orderIndex) entry in
-// the trigger index in ascending key order. The callback may return true to
-// stop early.
+// the trigger index in ascending key order.
+//
+// Callback contract: returning `true` STOPS iteration; returning
+// `false` continues.
 func (k Keeper) IterateTriggers(ctx context.Context, cb func(market uint32, triggerPrice uint32, orderIndex uint64) bool) error {
 	iter, err := k.TriggerIndex.Iterate(ctx, nil)
 	if err != nil {
@@ -668,6 +750,53 @@ func (k Keeper) IterateTriggers(ctx context.Context, cb func(market uint32, trig
 		}
 	}
 	return nil
+}
+
+// addExpiryIndex registers `o` in the GTT expiry index so EndBlocker
+// can walk only the orders due to expire by `now`. Non-GTT orders and
+// GTT orders with `Expiry == 0` are not indexed (they never expire).
+//
+// Internal helper. External callers go through OpenOrder /
+// OpenTriggerOrder (any time an order with GTT semantics is being
+// persisted onto / kept onto the book).
+func (k Keeper) addExpiryIndex(ctx context.Context, o types.Order) error {
+	if !indexExpiry(o) {
+		return nil
+	}
+	return k.ExpiryIndex.Set(ctx, collections.Join(o.Expiry, o.OrderIndex))
+}
+
+// removeExpiryIndex drops the (expiry, order_index) entry. Safe to call
+// on orders that were never indexed (Expiry==0 short-circuits, missing
+// keys are tolerated as no-ops).
+//
+// The gate is intentionally weaker than `indexExpiry`: a trigger order
+// added under TimeInForce==GTT can have its TIF rewritten to IOC by
+// matching when the activated variant becomes a market order, so the
+// keyset entry must still be cleaned up even though the post-mutation
+// order would not satisfy `indexExpiry`. The key uses only (Expiry,
+// OrderIndex), both of which survive the rewrite.
+//
+// Internal helper. External callers go through CancelOrder /
+// FillMakerOrder / EvictMakerOrder / OpenOrder (any time an order
+// leaves the book or moves to a terminal status).
+func (k Keeper) removeExpiryIndex(ctx context.Context, o types.Order) error {
+	if o.Expiry == 0 {
+		return nil
+	}
+	err := k.ExpiryIndex.Remove(ctx, collections.Join(o.Expiry, o.OrderIndex))
+	if err != nil && !errors.Is(err, collections.ErrNotFound) {
+		return err
+	}
+	return nil
+}
+
+// indexExpiry reports whether `o` should appear in the GTT expiry
+// keyset. An order is indexed iff TimeInForce==GTT and Expiry > 0; the
+// EndBlocker walks the keyset by ascending expiry timestamp so each
+// block does O(due_orders) work instead of O(history).
+func indexExpiry(o types.Order) bool {
+	return o.TimeInForce == perptypes.GTT && o.Expiry > 0
 }
 
 // IsExpired reports whether the order has passed its expiry.
