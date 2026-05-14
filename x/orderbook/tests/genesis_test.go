@@ -48,25 +48,28 @@ func TestGenesis_RestoresOrderIndexes(t *testing.T) {
 	require.EqualValues(t, 2, count)
 
 	seenOpen := map[uint64]bool{}
-	require.NoError(t, k.IterateAccountOpenOrders(ctx, open.OwnerAccountIndex, 0, func(o types.Order) bool {
+	require.NoError(t, k.IterateAccountOpenOrders(ctx, open.OwnerAccountIndex, 0, func(o types.Order) error {
 		seenOpen[o.OrderIndex] = true
-		return false
+		return nil
 	}))
 	require.True(t, seenOpen[open.OrderIndex])
 	require.True(t, seenOpen[trigger.OrderIndex])
 	require.False(t, seenOpen[cancelled.OrderIndex])
 
-	best, ok, err := k.PeekBestOpposite(ctx, open.MarketIndex, true)
+	best, ok, err := k.PeekBest(ctx, open.MarketIndex, false)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, open.OrderIndex, best.OrderIndex)
 
 	seenTrigger := false
-	require.NoError(t, k.IterateTriggers(ctx, func(market uint32, triggerPrice uint32, orderIndex uint64) bool {
-		seenTrigger = market == trigger.MarketIndex &&
-			triggerPrice == trigger.TriggerPrice &&
-			orderIndex == trigger.OrderIndex
-		return seenTrigger
+	require.NoError(t, k.IterateTriggers(ctx, func(o types.Order) error {
+		if o.MarketIndex == trigger.MarketIndex &&
+			o.TriggerPrice == trigger.TriggerPrice &&
+			o.OrderIndex == trigger.OrderIndex {
+			seenTrigger = true
+			return types.ErrStopIteration
+		}
+		return nil
 	}))
 	require.True(t, seenTrigger)
 

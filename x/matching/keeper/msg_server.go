@@ -383,9 +383,9 @@ func (m MsgServer) CancelAllOrders(ctx context.Context, msg *types.MsgCancelAllO
 	// regardless of client_order_index, and `MarketIndexFilter==0`
 	// means all markets per the proto contract.
 	targets := make([]orderbooktypes.Order, 0, maxCancels)
-	if err := m.bookKeeper.IterateAccountOpenOrders(ctx, msg.AccountIndex, msg.MarketIndexFilter, func(o orderbooktypes.Order) bool {
+	if err := m.bookKeeper.IterateAccountOpenOrders(ctx, msg.AccountIndex, msg.MarketIndexFilter, func(o orderbooktypes.Order) error {
 		if uint32(len(targets)) >= maxCancels {
-			return true
+			return orderbooktypes.ErrStopIteration
 		}
 		switch o.Status {
 		case perptypes.OrderStatusOpen,
@@ -393,7 +393,7 @@ func (m MsgServer) CancelAllOrders(ctx context.Context, msg *types.MsgCancelAllO
 			perptypes.OrderStatusTriggeredPending:
 			targets = append(targets, o)
 		}
-		return false
+		return nil
 	}); err != nil {
 		return nil, err
 	}

@@ -44,7 +44,7 @@ func (k Keeper) restoreGenesisOrderIndexes(ctx context.Context, o types.Order) e
 			ReduceOnly:          o.ReduceOnly,
 			OrderType:           o.OrderType,
 		}
-		if err := k.insertOrderbookEntry(ctx, o.MarketIndex, o.IsAsk, entry); err != nil {
+		if err := k.insertEntry(ctx, o.MarketIndex, o.IsAsk, entry); err != nil {
 			return err
 		}
 		if err := k.indexClientOrder(ctx, o); err != nil {

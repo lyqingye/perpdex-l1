@@ -8,6 +8,7 @@ import (
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
 	"github.com/perpdex/perpdex-l1/x/matching/types"
+	orderbooktypes "github.com/perpdex/perpdex-l1/x/orderbook/types"
 )
 
 // EndBlocker iterates every order currently parked in the trigger index and
@@ -18,35 +19,26 @@ import (
 // oracle for one market cannot jam the rest.
 func (k Keeper) EndBlocker(ctx context.Context) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
-	type triggered struct {
-		market       uint32
-		triggerPrice uint32
-		orderIndex   uint64
-	}
-	var due []triggered
-	if err := k.bookKeeper.IterateTriggers(ctx, func(market uint32, triggerPrice uint32, orderIndex uint64) bool {
+	var due []uint64
+	err := k.bookKeeper.IterateTriggers(ctx, func(o orderbooktypes.Order) error {
 		// Route the markPrice read through MarketKeeper so trigger
 		// activation shares the fail-closed zero/staleness gate.
 		// Failures emit TriggerOracleError and skip the trigger;
 		// stop-loss / take-profit must never fire on a stale or
 		// missing markPrice.
-		markPrice, _, err := k.marketKeeper.GetMarkPriceAndDetails(ctx, market)
+		markPrice, _, err := k.marketKeeper.GetMarkPriceAndDetails(ctx, o.MarketIndex)
 		if err != nil {
 			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
 				types.EventTypeTriggerOracleError,
-				sdk.NewAttribute(types.AttributeKeyMarketIndex, strconv.FormatUint(uint64(market), 10)),
+				sdk.NewAttribute(types.AttributeKeyMarketIndex, strconv.FormatUint(uint64(o.MarketIndex), 10)),
 				sdk.NewAttribute(types.AttributeKeyErr, err.Error()),
 			))
-			return false
+			return nil
 		}
 		if markPrice == 0 {
 			// Defensive: GetMarkPriceAndDetails should already reject a
 			// zero markPrice; guard the comparison anyway.
-			return false
-		}
-		o, err := k.bookKeeper.GetOrder(ctx, orderIndex)
-		if err != nil {
-			return false
+			return nil
 		}
 		// Activation semantics, mirroring the spec docs:
 		//   stop-loss long (isAsk=true, protect long): trigger when markPrice <= trigger
@@ -57,31 +49,32 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 		switch o.OrderType {
 		case perptypes.StopLossOrder, perptypes.StopLossLimitOrder:
 			if o.IsAsk {
-				active = markPrice <= triggerPrice
+				active = markPrice <= o.TriggerPrice
 			} else {
-				active = markPrice >= triggerPrice
+				active = markPrice >= o.TriggerPrice
 			}
 		case perptypes.TakeProfitOrder, perptypes.TakeProfitLimitOrder:
 			if o.IsAsk {
-				active = markPrice >= triggerPrice
+				active = markPrice >= o.TriggerPrice
 			} else {
-				active = markPrice <= triggerPrice
+				active = markPrice <= o.TriggerPrice
 			}
 		}
 		if active {
-			due = append(due, triggered{market: market, triggerPrice: triggerPrice, orderIndex: orderIndex})
+			due = append(due, o.OrderIndex)
 		}
-		return false
-	}); err != nil {
+		return nil
+	})
+	if err != nil {
 		return err
 	}
 
-	for _, t := range due {
-		o, err := k.bookKeeper.ActivateTrigger(ctx, t.orderIndex)
+	for _, orderIndex := range due {
+		o, err := k.bookKeeper.ActivateTrigger(ctx, orderIndex)
 		if err != nil {
 			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
 				types.EventTypeTriggerDequeueError,
-				sdk.NewAttribute(types.AttributeKeyOrderIndex, strconv.FormatUint(t.orderIndex, 10)),
+				sdk.NewAttribute(types.AttributeKeyOrderIndex, strconv.FormatUint(orderIndex, 10)),
 				sdk.NewAttribute(types.AttributeKeyErr, err.Error()),
 			))
 			continue

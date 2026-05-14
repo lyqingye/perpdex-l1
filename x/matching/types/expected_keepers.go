@@ -50,15 +50,21 @@ type OrderbookKeeper interface {
 	// HasOpenClientOrder reports whether (market, account, clientID)
 	// currently resolves to an open/pending order in the book.
 	HasOpenClientOrder(ctx context.Context, market uint32, account uint64, clientID uint64) (bool, uint64, error)
-	PeekBestOpposite(ctx context.Context, market uint32, isAsk bool) (orderbooktypes.OrderBookEntry, bool, error)
+	// PeekBest returns the head-of-book entry on `side` (isAsk=true →
+	// best ask / lowest price first; isAsk=false → best bid / highest
+	// price first). Callers crossing the book pass `!taker.IsAsk`.
+	PeekBest(ctx context.Context, market uint32, side bool) (orderbooktypes.OrderBookEntry, bool, error)
 	WouldCross(ctx context.Context, market uint32, isAsk bool, price uint32) (bool, error)
 	AllocateOrderIndex(ctx context.Context) (uint64, error)
 
-	// Iteration.
-	IterateTriggers(ctx context.Context, cb func(market uint32, triggerPrice uint32, orderIndex uint64) bool) error
+	// Iteration. Callbacks return `nil` to continue,
+	// `orderbooktypes.ErrStopIteration` to terminate cleanly, or any
+	// other non-nil error to abort iteration with that error
+	// propagated to the caller.
+	IterateTriggers(ctx context.Context, cb func(orderbooktypes.Order) error) error
 	// IterateAccountOpenOrders yields every resting order owned by
 	// `account`, optionally filtered by market (0 = all markets).
-	IterateAccountOpenOrders(ctx context.Context, account uint64, marketFilter uint32, cb func(orderbooktypes.Order) bool) error
+	IterateAccountOpenOrders(ctx context.Context, account uint64, marketFilter uint32, cb func(orderbooktypes.Order) error) error
 
 	// Lifecycle. Each of these atomically maintains the orderbook entry,
 	// the Order record, and the (client + account-open + trigger)

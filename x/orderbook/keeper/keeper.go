@@ -126,6 +126,14 @@ func NewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, authori
 
 func (k Keeper) Authority() string { return k.authority }
 
+// AllocateOrderIndex returns the next order_index. The 1-based invariant is
+// established up-front in InitGenesis (NextOrderIndex is forced to >= 1
+// during boot), so this is a straight Sequence.Next with no skip-zero
+// branch.
+func (k Keeper) AllocateOrderIndex(ctx context.Context) (uint64, error) {
+	return k.NextOrderIndex.Next(ctx)
+}
+
 // GetOrder returns the order at order_index.
 func (k Keeper) GetOrder(ctx context.Context, idx uint64) (types.Order, error) {
 	o, err := k.Orders.Get(ctx, idx)

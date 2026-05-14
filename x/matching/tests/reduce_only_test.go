@@ -49,9 +49,9 @@ func TestMatchOrder_EvictReduceOnlyClearsOrderRecord(t *testing.T) {
 
 	// Sanity: the AccountOpenOrders index sees the maker as resting.
 	var pre int
-	require.NoError(t, e.bk.IterateAccountOpenOrders(e.ctx, 10, 0, func(orderbooktypes.Order) bool {
+	require.NoError(t, e.bk.IterateAccountOpenOrders(e.ctx, 10, 0, func(orderbooktypes.Order) error {
 		pre++
-		return false
+		return nil
 	}))
 	require.Equal(t, 1, pre)
 
@@ -83,9 +83,9 @@ func TestMatchOrder_EvictReduceOnlyClearsOrderRecord(t *testing.T) {
 	require.Error(t, err, "client_order_index mapping should be removed after eviction")
 
 	var post int
-	require.NoError(t, e.bk.IterateAccountOpenOrders(e.ctx, 10, 0, func(orderbooktypes.Order) bool {
+	require.NoError(t, e.bk.IterateAccountOpenOrders(e.ctx, 10, 0, func(orderbooktypes.Order) error {
 		post++
-		return false
+		return nil
 	}))
 	require.Zero(t, post, "evicted reduce-only maker must not survive in AccountOpenOrders")
 }

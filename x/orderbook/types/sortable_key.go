@@ -15,7 +15,7 @@ const (
 )
 
 // SideByte returns the per-side discriminator byte used by SortableKey
-// and the side-prefixed range scans in keeper.PeekBestOpposite.
+// and the side-prefixed range scans in keeper.PeekBest.
 func SideByte(isAsk bool) byte {
 	if isAsk {
 		return AskSideByte

@@ -311,9 +311,9 @@ func TestTriggerActivation_GhostOrderCleanupAfterOpenOrderFailure(t *testing.T) 
 	// removeExpiryIndex must tolerate the already-empty state and
 	// not surface an error.
 	seen := false
-	require.NoError(t, k.IterateAccountOpenOrders(ctx, o.OwnerAccountIndex, 0, func(types.Order) bool {
+	require.NoError(t, k.IterateAccountOpenOrders(ctx, o.OwnerAccountIndex, 0, func(types.Order) error {
 		seen = true
-		return true
+		return types.ErrStopIteration
 	}))
 	require.False(t, seen, "no orders may survive in the per-account index")
 }

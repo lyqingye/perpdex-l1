@@ -92,11 +92,11 @@ func TestAccountOpenOrders_TripleKeyMarketFilter(t *testing.T) {
 
 	collect := func(filter uint32) []uint64 {
 		var got []uint64
-		require.NoError(t, k.IterateAccountOpenOrders(ctx, 7, filter, func(o types.Order) bool {
+		require.NoError(t, k.IterateAccountOpenOrders(ctx, 7, filter, func(o types.Order) error {
 			require.True(t, filter == 0 || o.MarketIndex == filter,
 				"iterator must NOT yield orders from market %d when filtering for %d", o.MarketIndex, filter)
 			got = append(got, o.OrderIndex)
-			return false
+			return nil
 		}))
 		return got
 	}

@@ -52,7 +52,7 @@ func (k Keeper) nextMaker(
 	now int64,
 ) (orderbooktypes.OrderBookEntry, bool, error) {
 	for {
-		best, ok, err := k.bookKeeper.PeekBestOpposite(ctx, taker.MarketIndex, taker.IsAsk)
+		best, ok, err := k.bookKeeper.PeekBest(ctx, taker.MarketIndex, !taker.IsAsk)
 		if err != nil {
 			return orderbooktypes.OrderBookEntry{}, false, err
 		}
