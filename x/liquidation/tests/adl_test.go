@@ -75,15 +75,16 @@ func TestAutoADL_RequiresZeroPriceAlignment(t *testing.T) {
 
 	require.NoError(t, k.EndBlocker(ctx))
 
-	// ADL should have happened against 202 only, at midpoint of 100 and
-	// 105 = 102.
+	// ADL should have happened against 202 only, at the
+	// victim-favourable midpoint of 100 and 105. victim is long here,
+	// so `ZeroPriceMid` rounds UP: (100 + 105 + 1) / 2 = 103.
 	require.NotEmpty(t, tk.calls)
 	for _, f := range tk.calls {
 		require.NotEqual(t, uint64(201), f.TakerAccountIndex,
 			"misaligned ZP candidate must be skipped")
 	}
 	require.Equal(t, uint64(202), tk.calls[0].TakerAccountIndex)
-	require.Equal(t, uint32(102), tk.calls[0].Price)
+	require.Equal(t, uint32(103), tk.calls[0].Price)
 }
 
 // TestADLQueueBuilder_LeverageAndUPnLRanking verifies the new ranking
@@ -324,6 +325,98 @@ func TestDeleverage_BankruptRiskRegressionRejected(t *testing.T) {
 		"bankrupt (maker) post-trade risk check must remain enabled in deleverage path")
 	require.True(t, tk.calls[0].SkipTakerRiskCheck,
 		"LLP / IF deleverager (taker) skips post-trade risk check")
+}
+
+// TestDeleverage_EmitsEventWithSource: every Deleverage call emits
+// EventTypeDeleverage tagged with the entry-point `source`.
+func TestDeleverage_EmitsEventWithSource(t *testing.T) {
+	ak := newStubAccount()
+	ak.accounts[perptypes.InsuranceFundOperatorAccountIdx] = accounttypes.Account{
+		AccountIndex: perptypes.InsuranceFundOperatorAccountIdx,
+		AccountType:  perptypes.InsuranceFundAccountType,
+		Collateral:   math.NewInt(1_000_000),
+		PublicPoolInfo: &accounttypes.PublicPoolInfo{
+			Status:         perptypes.PublicPoolStatusActive,
+			TotalShares:    math.NewInt(1),
+			OperatorShares: math.NewInt(1),
+		},
+	}
+	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.NewInt(1_000_000)}
+	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
+		AccountIndex: 100, MarketIndex: 0,
+		BaseSize: math.NewInt(20), EntryQuote: math.NewInt(2_000),
+		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
+	}
+	rk := newStubRisk()
+	rk.status = perptypes.HealthFullLiquidation
+	tk := &stubTrade{}
+	matchk := newStubMatching()
+	k, ctx := newKeeper(t, ak, rk, tk, matchk)
+
+	require.NoError(t, k.Deleverage(
+		ctx, 100, 0, perptypes.InsuranceFundOperatorAccountIdx, 20,
+	))
+
+	events := ctx.EventManager().Events()
+	var (
+		found  bool
+		source string
+	)
+	for _, e := range events {
+		if e.Type != liqtypes.EventTypeDeleverage {
+			continue
+		}
+		found = true
+		for _, a := range e.Attributes {
+			if a.Key == liqtypes.AttributeKeySource {
+				source = a.Value
+			}
+		}
+	}
+	require.True(t, found, "Deleverage must emit EventTypeDeleverage")
+	require.Equal(t, "msg", source,
+		"a direct `Deleverage(...)` call with no options must default to source=msg")
+}
+
+// TestDeleverage_RejectsSameSideCounterparty pins the user-side guard
+// in Deleverage: a same-side counterparty is rejected. autoADL builds
+// opposite-side queues itself; this guard protects the MsgDeleverage
+// path where the user picks the counterparty.
+func TestDeleverage_RejectsSameSideCounterparty(t *testing.T) {
+	ak := newStubAccount()
+	// Bankrupt victim, long.
+	ak.accounts[100] = accounttypes.Account{
+		AccountIndex: 100, Collateral: math.NewInt(1_000_000),
+	}
+	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
+		AccountIndex: 100, MarketIndex: 0,
+		BaseSize: math.NewInt(50), EntryQuote: math.NewInt(5_000),
+		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
+	}
+	// Counterparty 200 is ALSO long — same side as the victim. A
+	// deleverage with this counterparty would grow one of the two
+	// sides' exposure, never close out, so it must be refused.
+	ak.accounts[200] = accounttypes.Account{
+		AccountIndex: 200, AccountType: perptypes.MasterAccountType,
+		Collateral: math.NewInt(1_000_000),
+	}
+	ak.pos[[2]uint64{200, 0}] = accounttypes.AccountPosition{
+		AccountIndex: 200, MarketIndex: 0,
+		BaseSize: math.NewInt(50), EntryQuote: math.NewInt(5_000),
+		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
+	}
+	rk := newStubRisk()
+	rk.status = perptypes.HealthFullLiquidation
+	tk := &stubTrade{}
+	matchk := newStubMatching()
+	k, ctx := newKeeper(t, ak, rk, tk, matchk)
+
+	err := k.Deleverage(ctx, 100, 0, 200, 50)
+	require.Error(t, err)
+	require.ErrorIs(t, err, liqtypes.ErrInvalidADLCounterparty,
+		"same-side counterparty must be rejected on MsgDeleverage path")
+	require.Empty(t, tk.calls,
+		"no fill is allowed to reach the trade engine when the same-side guard fires")
 }
 
 // TestDeleverage_InsufficientDeleveragerCollateral_UserADL covers Gap C

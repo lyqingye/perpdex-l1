@@ -14,6 +14,27 @@ import (
 	tradekeeper "github.com/perpdex/perpdex-l1/x/trade/keeper"
 )
 
+// Canonical `source` attribute values for `EventTypeDeleverage`.
+const (
+	DeleverageSourceMsg     = "msg"
+	DeleverageSourceLLP     = "llp"
+	DeleverageSourceAutoADL = "auto_adl"
+)
+
+// DeleverageOption tags the entry point on the emitted
+// `EventTypeDeleverage`.
+type DeleverageOption func(*deleverageOpts)
+
+type deleverageOpts struct {
+	source string
+}
+
+// WithDeleverageSource sets the `source` attribute. Pass one of the
+// `DeleverageSource*` constants.
+func WithDeleverageSource(source string) DeleverageOption {
+	return func(o *deleverageOpts) { o.source = source }
+}
+
 // Liquidate is the keeper entry point for MsgLiquidate. It implements
 // the partial-liquidation procedure:
 //
@@ -158,7 +179,22 @@ func (k Keeper) Liquidate(ctx context.Context, victim uint64, marketIdx uint32, 
 // The deleverager assert short-circuits when the side's predicted
 // realized PnL is non-negative (it gains collateral from the trade)
 // — the check is trivially satisfied in that case.
-func (k Keeper) Deleverage(ctx context.Context, victim uint64, marketIdx uint32, deleverager uint64, baseAmount uint64) error {
+//
+// `opts` only carries the entry-point label emitted on the resulting
+// `EventTypeDeleverage`. Default is `source="msg"`; the LLP absorb
+// path passes `WithDeleverageSource(DeleverageSourceLLP)`. autoADL
+// does NOT route through here — it issues its own ADL trade at
+// `ZeroPriceMid(victimZP, candZP)` directly against the trade engine.
+func (k Keeper) Deleverage(
+	ctx context.Context,
+	victim uint64, marketIdx uint32, deleverager uint64, baseAmount uint64,
+	opts ...DeleverageOption,
+) error {
+	cfg := deleverageOpts{source: DeleverageSourceMsg}
+	for _, o := range opts {
+		o(&cfg)
+	}
+
 	snap, err := k.riskKeeper.GetZeroPriceSnapshot(ctx, victim, marketIdx)
 	if err != nil {
 		return err
@@ -203,9 +239,9 @@ func (k Keeper) Deleverage(ctx context.Context, victim uint64, marketIdx uint32,
 
 	isInsuranceFund := deleverager == perptypes.InsuranceFundOperatorAccountIdx
 	if !isInsuranceFund && !isPoolDeleverager {
-		// User ADL path: enforce opposite-side and size bound on the
-		// counterparty. Same sign means we'd be growing one side's
-		// position — never valid for ADL.
+		// MsgDeleverage lets a user pick the counterparty, so the
+		// same-side / size-cap guard is required here. autoADL does
+		// not route through this function.
 		dPos, err := k.accountKeeper.GetPosition(ctx, deleverager, marketIdx)
 		if err != nil {
 			return err
@@ -227,12 +263,9 @@ func (k Keeper) Deleverage(ctx context.Context, victim uint64, marketIdx uint32,
 
 	takerIsAsk := pos.OpeningIsAsk()
 
-	// Pre-trade collateral assert on the deleverager side only —
-	// the bankrupt side is not asserted (see Deleverage docstring).
-	// IF / Pool deleveragers are absorbers by mandate and bypass the
-	// check; the LLP IMR gate in `tryLLPAbsorb` already vets pool
-	// capacity. Settles pending funding before reading collateral so
-	// the comparison is funding-aware (matches `Engine.Apply` step 1).
+	// Pre-trade collateral assert on the deleverager side only — the
+	// bankrupt side is not asserted (see docstring). IF / Pool
+	// deleveragers are absorbers by mandate and skip the check.
 	if !isInsuranceFund && !isPoolDeleverager {
 		if err := k.preCheckCollateral(
 			ctx, deleverager, marketIdx, baseAmount, zeroPrice,
@@ -250,33 +283,25 @@ func (k Keeper) Deleverage(ctx context.Context, victim uint64, marketIdx uint32,
 		BaseAmount:        baseAmount,
 		IsTakerAsk:        takerIsAsk,
 		NoFee:             true,
-		// Deleverage risk-check policy (defense-in-depth on
-		// perpdex's side):
-		//
-		//   * Bankrupt (maker in our convention) is ALWAYS subject
-		//     to `IsValidRiskChangeFrom` — the trade is supposed to
-		//     mechanically improve their TAV/MMR ratio, and the
-		//     check guards against pathological pricing/funding
-		//     interactions that would silently regress them.
-		//   * Insurance Fund / Public Pool deleveragers are exempt
-		//     from the post-trade risk regression check — they are
-		//     willing absorbers, so the risk regression assert is
-		//     asserted on the bankrupt but NOT on the pool /IF
-		//     deleverager. perpdex keeps this asymmetry but also
-		//     retains the user-ADL deleverager check
-		//     (defense-in-depth) instead of swapping it for a
-		//     collateral-only guard.
+		// Bankrupt (maker) is always risk-checked. IF / Pool
+		// deleveragers are absorbers by mandate and skip the
+		// post-trade taker risk regression; user deleveragers keep
+		// it as defense-in-depth.
 		SkipTakerRiskCheck: isInsuranceFund || isPoolDeleverager,
 	}); err != nil {
 		return err
 	}
-	// Intentionally no post-trade collateral top-up: the deleverage
-	// trade settles bankrupt and deleverager at the victim's zero
-	// price, which by construction zeroes out the bankrupt's
-	// proportional collateral. Any residual negative collateral
-	// (rounding, funding accruals between zero-price computation and
-	// trade application) is allowed to persist as an account-level
-	// debt on the victim ledger — there is no silent IF top-up.
+	// No post-trade IF top-up: residual negative collateral persists
+	// on the victim ledger as account-level debt.
+	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
+		types.EventTypeDeleverage,
+		sdk.NewAttribute(types.AttributeKeyVictim, strconv.FormatUint(victim, 10)),
+		sdk.NewAttribute(types.AttributeKeyDeleverager, strconv.FormatUint(deleverager, 10)),
+		sdk.NewAttribute(types.AttributeKeyMarketIndex, strconv.FormatUint(uint64(marketIdx), 10)),
+		sdk.NewAttribute(types.AttributeKeyBaseAmount, strconv.FormatUint(baseAmount, 10)),
+		sdk.NewAttribute(types.AttributeKeyPrice, strconv.FormatUint(uint64(zeroPrice), 10)),
+		sdk.NewAttribute(types.AttributeKeySource, cfg.source),
+	))
 	return nil
 }
 
