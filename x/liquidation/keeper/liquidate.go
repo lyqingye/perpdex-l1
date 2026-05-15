@@ -14,40 +14,25 @@ import (
 	tradekeeper "github.com/perpdex/perpdex-l1/x/trade/keeper"
 )
 
-// Deleverage entry-point label values used as the `source` attribute on
-// `EventTypeDeleverage`. Concentrated here so emit sites and downstream
-// indexers share a single source of truth.
+// Canonical `source` attribute values for `EventTypeDeleverage`.
 const (
 	DeleverageSourceMsg     = "msg"
 	DeleverageSourceLLP     = "llp"
 	DeleverageSourceAutoADL = "auto_adl"
 )
 
-// DeleverageOption is the functional-options handle for `Deleverage`.
-// Callers configure the entry-point label and (for `autoADL`) override
-// the settle price away from the victim's zero price.
+// DeleverageOption tags the entry point on the emitted
+// `EventTypeDeleverage`.
 type DeleverageOption func(*deleverageOpts)
 
 type deleverageOpts struct {
-	source              string
-	settlePriceOverride *uint32
+	source string
 }
 
-// WithDeleverageSource tags the entry-point. Only the canonical
-// `DeleverageSource*` constants should be passed. Empty / unrecognised
-// values are tolerated and surfaced verbatim on the emitted event for
-// future-proofing, but on-chain callers must use the constants above.
+// WithDeleverageSource sets the `source` attribute. Pass one of the
+// `DeleverageSource*` constants.
 func WithDeleverageSource(source string) DeleverageOption {
 	return func(o *deleverageOpts) { o.source = source }
-}
-
-// WithSettlePrice overrides the trade's settle price. Without this
-// option the trade settles at the victim's zero price (the canonical
-// MsgDeleverage / LLP path). `autoADL` uses it to settle at
-// `zeroPriceMid(victimZP, candZP)` instead, because the ADL fill needs
-// to land inside BOTH sides' zero-price overlap.
-func WithSettlePrice(p uint32) DeleverageOption {
-	return func(o *deleverageOpts) { o.settlePriceOverride = &p }
 }
 
 // Liquidate is the keeper entry point for MsgLiquidate. It implements
@@ -195,13 +180,11 @@ func (k Keeper) Liquidate(ctx context.Context, victim uint64, marketIdx uint32, 
 // realized PnL is non-negative (it gains collateral from the trade)
 // — the check is trivially satisfied in that case.
 //
-// `opts` lets callers override the settle price and tag the entry
-// point on the emitted `EventTypeDeleverage`. Without overrides the
-// trade settles at the victim's zero price and the event reports
-// `source = "msg"`. `autoADL` passes `WithSettlePrice(...)` because
-// the ADL fill needs to land inside BOTH sides' zero-price overlap
-// rather than at the victim's zero price alone, and tags the source as
-// `auto_adl`; the LLP absorb path tags as `llp`.
+// `opts` only carries the entry-point label emitted on the resulting
+// `EventTypeDeleverage`. Default is `source="msg"`; the LLP absorb
+// path passes `WithDeleverageSource(DeleverageSourceLLP)`. autoADL
+// does NOT route through here — it issues its own ADL trade at
+// `zeroPriceMid(victimZP, candZP)` directly against the trade engine.
 func (k Keeper) Deleverage(
 	ctx context.Context,
 	victim uint64, marketIdx uint32, deleverager uint64, baseAmount uint64,
@@ -239,10 +222,7 @@ func (k Keeper) Deleverage(
 			"base_amount=%d exceeds victim position size %s", baseAmount, absVictim.String(),
 		)
 	}
-	settlePrice := snap.ZeroPrice
-	if cfg.settlePriceOverride != nil {
-		settlePrice = *cfg.settlePriceOverride
-	}
+	zeroPrice := snap.ZeroPrice
 
 	dAcc, err := k.accountKeeper.GetAccount(ctx, deleverager)
 	if err != nil {
@@ -259,14 +239,9 @@ func (k Keeper) Deleverage(
 
 	isInsuranceFund := deleverager == perptypes.InsuranceFundOperatorAccountIdx
 	if !isInsuranceFund && !isPoolDeleverager {
-		// User-deleverager paths (both `MsgDeleverage` and
-		// EndBlocker autoADL) enforce opposite-side and size bound
-		// on the counterparty here. For the autoADL path
-		// `BuildADLQueue` already filters to the opposite side, so
-		// the same-side check is a defense-in-depth tautology; for
-		// the MsgDeleverage path the user picks the counterparty,
-		// so this check is the canonical "you can't deleverage
-		// yourself into a same-side position" guard.
+		// MsgDeleverage lets a user pick the counterparty, so the
+		// same-side / size-cap guard is required here. autoADL does
+		// not route through this function.
 		dPos, err := k.accountKeeper.GetPosition(ctx, deleverager, marketIdx)
 		if err != nil {
 			return err
@@ -288,18 +263,12 @@ func (k Keeper) Deleverage(
 
 	takerIsAsk := pos.OpeningIsAsk()
 
-	// Pre-trade collateral assert on the deleverager side only —
-	// the bankrupt side is not asserted (see Deleverage docstring).
-	// IF / Pool deleveragers are absorbers by mandate and bypass the
-	// check; the LLP IMR gate in `tryLLPAbsorb` already vets pool
-	// capacity. Settles pending funding before reading collateral so
-	// the comparison is funding-aware (matches `Engine.Apply` step 1).
-	// The assert uses `settlePrice` (i.e. the override under autoADL),
-	// not the raw zero price, so the predicted realized PnL matches
-	// the price that will actually be applied to the trade.
+	// Pre-trade collateral assert on the deleverager side only — the
+	// bankrupt side is not asserted (see docstring). IF / Pool
+	// deleveragers are absorbers by mandate and skip the check.
 	if !isInsuranceFund && !isPoolDeleverager {
 		if err := k.preCheckCollateral(
-			ctx, deleverager, marketIdx, baseAmount, settlePrice,
+			ctx, deleverager, marketIdx, baseAmount, zeroPrice,
 			true /*isTakerSide*/, takerIsAsk, "deleverager",
 		); err != nil {
 			return err
@@ -310,43 +279,27 @@ func (k Keeper) Deleverage(
 		MakerAccountIndex: victim,
 		TakerAccountIndex: deleverager,
 		MarketIndex:       marketIdx,
-		Price:             settlePrice,
+		Price:             zeroPrice,
 		BaseAmount:        baseAmount,
 		IsTakerAsk:        takerIsAsk,
 		NoFee:             true,
-		// Deleverage risk-check policy (defense-in-depth):
-		//
-		//   * Bankrupt (maker in our convention) is ALWAYS subject
-		//     to `IsValidRiskChangeFrom` — the trade is supposed to
-		//     mechanically improve their TAV/MMR ratio, and the
-		//     check guards against pathological pricing/funding
-		//     interactions that would silently regress them.
-		//   * Insurance Fund / Public Pool deleveragers are exempt
-		//     from the post-trade risk regression check — they are
-		//     willing absorbers, so the risk regression assert is
-		//     asserted on the bankrupt but NOT on the pool /IF
-		//     deleverager. We keep this asymmetry but also retain
-		//     the user-deleverager check (defense-in-depth) instead
-		//     of swapping it for a collateral-only guard.
+		// Bankrupt (maker) is always risk-checked. IF / Pool
+		// deleveragers are absorbers by mandate and skip the
+		// post-trade taker risk regression; user deleveragers keep
+		// it as defense-in-depth.
 		SkipTakerRiskCheck: isInsuranceFund || isPoolDeleverager,
 	}); err != nil {
 		return err
 	}
-	// Intentionally no post-trade collateral top-up: the deleverage
-	// trade settles bankrupt and deleverager at the victim's zero
-	// price (or the autoADL midpoint override), which by
-	// construction zeroes out the bankrupt's proportional
-	// collateral. Any residual negative collateral (rounding, funding
-	// accruals between zero-price computation and trade application)
-	// is allowed to persist as an account-level debt on the victim
-	// ledger — there is no silent IF top-up.
+	// No post-trade IF top-up: residual negative collateral persists
+	// on the victim ledger as account-level debt.
 	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
 		types.EventTypeDeleverage,
 		sdk.NewAttribute(types.AttributeKeyVictim, strconv.FormatUint(victim, 10)),
 		sdk.NewAttribute(types.AttributeKeyDeleverager, strconv.FormatUint(deleverager, 10)),
 		sdk.NewAttribute(types.AttributeKeyMarketIndex, strconv.FormatUint(uint64(marketIdx), 10)),
 		sdk.NewAttribute(types.AttributeKeyBaseAmount, strconv.FormatUint(baseAmount, 10)),
-		sdk.NewAttribute(types.AttributeKeyPrice, strconv.FormatUint(uint64(settlePrice), 10)),
+		sdk.NewAttribute(types.AttributeKeyPrice, strconv.FormatUint(uint64(zeroPrice), 10)),
 		sdk.NewAttribute(types.AttributeKeySource, cfg.source),
 	))
 	return nil

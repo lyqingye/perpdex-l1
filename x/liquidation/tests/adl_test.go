@@ -327,12 +327,8 @@ func TestDeleverage_BankruptRiskRegressionRejected(t *testing.T) {
 		"LLP / IF deleverager (taker) skips post-trade risk check")
 }
 
-// TestDeleverage_EmitsEventWithSource pins F11: every successful
-// `Deleverage` invocation must emit an `EventTypeDeleverage` carrying
-// the entry-point label, regardless of whether the call originates
-// from `MsgDeleverage`, the LLP absorb path, or `autoADL`. The
-// `source` attribute is the canonical way for downstream indexers to
-// audit which path drove the deleverage.
+// TestDeleverage_EmitsEventWithSource: every Deleverage call emits
+// EventTypeDeleverage tagged with the entry-point `source`.
 func TestDeleverage_EmitsEventWithSource(t *testing.T) {
 	ak := newStubAccount()
 	ak.accounts[perptypes.InsuranceFundOperatorAccountIdx] = accounttypes.Account{
@@ -382,13 +378,10 @@ func TestDeleverage_EmitsEventWithSource(t *testing.T) {
 		"a direct `Deleverage(...)` call with no options must default to source=msg")
 }
 
-// TestDeleverage_RejectsSameSideCounterparty pins the same-side guard
-// inside `Deleverage`: a user-supplied counterparty whose position is
-// on the same side as the victim must be rejected, regardless of
-// whether the call originates from `MsgDeleverage` or autoADL. autoADL
-// builds its queue from opposite-side candidates only, so this guard
-// is the canonical defence on the `MsgDeleverage` path where the user
-// picks the counterparty themselves.
+// TestDeleverage_RejectsSameSideCounterparty pins the user-side guard
+// in Deleverage: a same-side counterparty is rejected. autoADL builds
+// opposite-side queues itself; this guard protects the MsgDeleverage
+// path where the user picks the counterparty.
 func TestDeleverage_RejectsSameSideCounterparty(t *testing.T) {
 	ak := newStubAccount()
 	// Bankrupt victim, long.

@@ -10,12 +10,9 @@ import (
 	risktypes "github.com/perpdex/perpdex-l1/x/risk/types"
 )
 
-// TestZeroPriceMid_Rounding pins the direction-aware integer midpoint
-// used by `autoADL`. The function MUST round in the direction that
-// preserves the victim's TAV — for a long victim the midpoint is
-// rounded UP (ceiling), for a short victim DOWN (floor). The
-// distinction only matters when `(a + b)` is odd; even sums hit the
-// exact midpoint regardless.
+// TestZeroPriceMid_Rounding pins the direction-aware midpoint: long
+// victim → ceiling, short victim → floor. Even sums round the same
+// way; only odd sums exercise the asymmetry.
 func TestZeroPriceMid_Rounding(t *testing.T) {
 	cases := []struct {
 		name         string
@@ -41,12 +38,8 @@ func TestZeroPriceMid_Rounding(t *testing.T) {
 	}
 }
 
-// TestComputeLeverage_Edges pins the three edge branches of
-// `computeLeverage`: (1) IM=0 returns a neutral leverage of 1
-// regardless of collateral, (2) Collateral<=0 clamps to 1 so the
-// ratio collapses to `IM * MarginTick` (most-leveraged rank), (3)
-// nominal positive Collateral and positive IM produces
-// `IM * MarginTick / Collateral`.
+// TestComputeLeverage_Edges covers the three branches: IM=0 → 1,
+// Collateral<=0 clamps to 1 (front of queue), and the nominal ratio.
 func TestComputeLeverage_Edges(t *testing.T) {
 	cases := []struct {
 		name string
@@ -95,18 +88,11 @@ func TestComputeLeverage_Edges(t *testing.T) {
 }
 
 // TestComputeLeverage_PanicsOnNilCollateral pins the invariant guard:
-// an uninitialised `RiskParameters{}` (nil Collateral) is a sign that
-// the upstream risk keeper invariants are violated, and the ADL queue
-// must NOT silently degrade rank to 1 — instead the call panics so
-// the upstream bug surfaces immediately.
+// nil Collateral panics rather than silently degrading rank to 1.
 func TestComputeLeverage_PanicsOnNilCollateral(t *testing.T) {
 	rp := risktypes.RiskParameters{
-		// Collateral left as zero-value (math.Int{}), i.e. IsNil() is true.
 		InitialMarginRequirement: math.NewInt(1),
 	}
-	require.True(t, rp.Collateral.IsNil(),
-		"fixture sanity: zero-value RiskParameters{} must report Collateral.IsNil()")
-	require.Panics(t, func() {
-		_ = computeLeverage(rp)
-	}, "nil Collateral must panic to surface the upstream invariant violation")
+	require.True(t, rp.Collateral.IsNil())
+	require.Panics(t, func() { _ = computeLeverage(rp) })
 }
