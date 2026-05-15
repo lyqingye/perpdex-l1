@@ -392,7 +392,7 @@ func (s *LiquidationSuite) TestEndBlockerAutoADL() {
 // TestADLRespectsPerBlockCap pins MaxAdlAttemptsPerBlock=1, makes BOTH
 // users 0 and 2 bankrupt against user1's short, and verifies that the
 // EndBlocker only closes ONE victim in a single block. The second
-// victim must remain open (and flagged) until the next block.
+// victim must remain open until the next block.
 func (s *LiquidationSuite) TestADLRespectsPerBlockCap() {
 	const entry = uint32(50_000)
 	const qty = uint64(1_000_000_000)

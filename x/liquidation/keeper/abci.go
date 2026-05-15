@@ -22,11 +22,9 @@ import (
 //     (`preCheckCollateral`) skips under-capitalised candidates and
 //     advances to the next counterparty.
 //
-// The chain caller bounds total work by
-// `Params.MaxAdlAttemptsPerBlock`. PARTIAL_LIQUIDATION accounts are
-// intentionally NOT processed here: that tier is keeper-bot
-// territory via MsgLiquidate. PRE_LIQUIDATION and HEALTHY do
-// nothing.
+// Total work is bounded by `Params.MaxAdlAttemptsPerBlock`.
+// PARTIAL_LIQUIDATION is serviced exclusively by MsgLiquidate;
+// PRE_LIQUIDATION and HEALTHY are no-ops.
 func (k Keeper) EndBlocker(ctx context.Context) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 
@@ -60,14 +58,10 @@ func (k Keeper) EndBlocker(ctx context.Context) error {
 // each (account, market) with a non-zero position, the relevant
 // health envelope (cross for cross-margined positions, per-market
 // isolated otherwise) is consulted; FULL_LIQUIDATION and BANKRUPTCY
-// positions enter the LLP/ADL waterfall. PARTIAL_LIQUIDATION is
-// skipped — those are MsgLiquidate's responsibility.
-//
-// Health is re-read inside the FULL/BANKRUPTCY branch right before
-// the LLP/ADL waterfall fires so a sibling-market fill that already
-// healed the account in this iteration short-circuits before any
-// (now-bogus) liquidation fill is quoted. autoADL also self-asserts
-// FULL/BANKRUPTCY against its own fresh snapshot.
+// positions enter the LLP/ADL waterfall. Health is re-read right
+// before the waterfall fires so a fill on an earlier market in the
+// same iteration can prevent a redundant close-out on an
+// already-recovered envelope.
 func (k Keeper) processAccount(
 	ctx context.Context, a accounttypes.Account,
 	attemptsLeft *uint32, candCap uint32,
@@ -103,13 +97,11 @@ func (k Keeper) processAccount(
 		if attemptsLeft == nil || *attemptsLeft == 0 {
 			return false
 		}
-		// FULL_LIQUIDATION + BANKRUPTCY: try the LLP first
-		// ("LLP closes all of the user's positions by taking
-		// them over"), gated by SimulateRiskAfterTakeover so the
-		// LLP never breaches its IMR. Anything the LLP refuses
-		// falls through to ADL. Each callee re-snapshots the
-		// victim internally so the post-mutation state is what
-		// drives the next market's decision.
+		// Hand the position to the LLP first, gated by
+		// SimulateRiskAfterTakeover so the LLP never breaches
+		// its IMR. Anything refused falls through to ADL. Each
+		// callee re-snapshots the victim internally so the
+		// post-mutation state drives the next market's decision.
 		fresh, err := k.refreshHealth(ctx, a.AccountIndex, marketIdx, pos.MarginMode)
 		if err != nil {
 			iterErr = err
@@ -131,12 +123,8 @@ func (k Keeper) processAccount(
 					"victim", a.AccountIndex, "market", marketIdx, "err", err)
 			}
 		}
-		// No silent IF top-up of residual negative collateral.
-		// "Absorption" is the LLP/IF deleverage trade itself; if
-		// `tryLLPAbsorb` rejected (IMR breach) and `autoADL` could
-		// not find counterparties, the position simply remains and
-		// is re-evaluated next block — there is no silent IF
-		// top-up sweep.
+		// If both LLP and ADL refuse, the position remains and is
+		// re-evaluated next block; there is no IF top-up sweep.
 		return false
 	}); err != nil {
 		return err

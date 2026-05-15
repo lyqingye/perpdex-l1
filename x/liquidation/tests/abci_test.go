@@ -139,11 +139,10 @@ func TestEndBlocker_BankruptcyFallsThroughToADLWhenLLPBreachesIMR(t *testing.T) 
 	require.Equal(t, uint64(999), tk.calls[0].TakerAccountIndex)
 }
 
-// TestEndBlocker_PreLiquidationClearsFlags ensures the EndBlocker
-// drops stale liquidation flags as soon as the account's health
-// recovers to PRE / HEALTHY (no flag should persist into a healthy
-// account's records).
-func TestEndBlocker_PreLiquidationClearsFlags(t *testing.T) {
+// TestEndBlocker_PreLiquidationShortCircuits ensures the EndBlocker
+// skips accounts in PRE_LIQUIDATION (and HEALTHY) without issuing
+// any fill: those tiers are not EndBlocker territory.
+func TestEndBlocker_PreLiquidationShortCircuits(t *testing.T) {
 	ak := newStubAccount()
 	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.NewInt(10_000)}
 	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
@@ -158,21 +157,17 @@ func TestEndBlocker_PreLiquidationClearsFlags(t *testing.T) {
 	k, ctx := newKeeper(t, ak, rk, tk, matchk)
 
 	require.NoError(t, k.EndBlocker(ctx))
-	// PRE → no fill, no flag.
+	// PRE → no fill.
 	require.Empty(t, tk.calls)
 }
 
 // TestEndBlocker_BankruptResidueStaysWithVictim covers the worst-case
 // path: a bankrupt account whose LLP takeover would breach the IF's
 // IMR AND whose ADL queue is empty (no profitable opposite-side
-// counterparties). The position simply remains open and is
-// re-evaluated next block; there is no chain-level rescue that
-// drains the IF to make the bankrupt's collateral non-negative.
-//
-// Pre-fix behaviour: the EndBlocker would silently move the residual
-// negative collateral to the IF (which itself has no balance check)
-// regardless of the LLP IMR gate's verdict, completely defeating the
-// LLP→ADL waterfall. Post-fix: ledger values are untouched.
+// counterparties). When both LLP and ADL refuse, neither the IF nor
+// any other chain mechanism moves funds: the negative collateral
+// stays on the victim's ledger and the position is re-evaluated next
+// block.
 func TestEndBlocker_BankruptResidueStaysWithVictim(t *testing.T) {
 	ak := newStubAccount()
 	// IF that would breach IMR if it took over the position.

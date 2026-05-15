@@ -304,10 +304,9 @@ func TestDeleverage_BankruptRiskRegressionRejected(t *testing.T) {
 	rk := newStubRisk()
 	rk.status = perptypes.HealthFullLiquidation
 	tk := &stubTrade{
-		// Simulate post-trade risk regression on the bankrupt side
-		// so the engine returns ErrMakerRiskRegression. Pre-fix the
-		// LLP path used SkipMakerRiskCheck=true and would have silently
-		// committed.
+		// Stub the engine to reject the deleverage with a maker-side
+		// risk regression so the bankrupt-side post-trade risk check
+		// is exercised.
 		err: liqtypes.ErrInsuranceUnderfunded.Wrap("simulated bankrupt risk regression"),
 	}
 	matchk := newStubMatching()

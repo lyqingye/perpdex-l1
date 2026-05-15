@@ -15,15 +15,15 @@ import (
 //
 //  1. PRE_LIQUIDATION  - no engine action. The matching gate
 //     (x/matching) restricts the user to reduce-only orders.
-//  2. PARTIAL_LIQUIDATION - keeper-bot driven MsgLiquidate. The engine
-//     cancels the victim's open orders, then submits a victim-owned
-//     `LIQUIDATION_ORDER + IOC + reduce_only` at the zero price for
-//     matching against the open book. Improvements above the zero
-//     price are taxed at `min(market.LiquidationFee, price_diff_rate)`
-//     and routed to the LLP / Insurance Fund. The matching loop
-//     short-circuits the moment the victim is no longer in
-//     liquidation: as soon as the victim's health recovers the loop
-//     stops consuming the book.
+//  2. PARTIAL_LIQUIDATION - keeper-bot driven MsgLiquidate. Bots
+//     select targets via x/risk health queries (the chain does not
+//     mirror this status). The engine cancels the victim's open
+//     orders, then submits a victim-owned `LIQUIDATION_ORDER + IOC +
+//     reduce_only` at the zero price for matching against the open
+//     book. Improvements above the zero price are taxed at
+//     `min(market.LiquidationFee, price_diff_rate)` and routed to
+//     the LLP / Insurance Fund. The matching loop short-circuits the
+//     moment the victim is no longer in liquidation.
 //  3. FULL_LIQUIDATION - EndBlocker hands the victim's positions to
 //     the LLP one at a time, ranked by ascending unrealized PnL,
 //     gated by "LLP TAV stays >= LLP IMR after takeover". Any
@@ -44,11 +44,6 @@ import (
 //     ledger; the chain does NOT silently move it to the IF. IF
 //     "absorption" is realised by the IF taking the position via
 //     `Deleverage`, never via a silent post-trade top-up.
-//
-// Off-chain keeper bots track which (account, market) pairs need
-// MsgLiquidate by reading health directly via x/risk's queries; the
-// chain does not maintain a "flag" mirror because that would only
-// duplicate state already derivable from risk parameters.
 type Keeper struct {
 	cdc            codec.BinaryCodec
 	storeService   store.KVStoreService

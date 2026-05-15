@@ -305,11 +305,10 @@ func (k Keeper) victimHealthForPosition(
 //
 // Behaviour:
 //
-//  1. Settle pending funding on the (account, market) position. This
-//     is idempotent (Engine.Apply step 1 does the same) and ensures
-//     the post-funding `EntryQuote` feeds into the predicted PnL — so
-//     the comparison is funding-aware (reads collateral from a state
-//     that already incorporates accrued funding).
+//  1. Settle pending funding on the (account, market) position so the
+//     post-funding `EntryQuote` feeds into the predicted PnL — the
+//     comparison is funding-aware. Idempotent: `Engine.Apply` step 1
+//     does the same.
 //  2. Compute the predicted realized PnL via the same pure `ApplyFill`
 //     used by `Engine.applyPositionChange` so the assert and the
 //     engine cannot drift on sign / scaling.
