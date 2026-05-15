@@ -37,8 +37,7 @@ auto-deleveraging.
   burn LP shares, NAV-based share valuation, operator fee shares, LLP burn
   cooldowns, strategy bucket transfers and governance force-burn.
 - gRPC and REST query surfaces generated from protobuf definitions for accounts,
-  positions, public pool info/shares/share value, liquidation flags and ADL
-  candidates.
+  positions, public pool info/shares/share value and ADL candidates.
 - Integration and e2e test coverage for genesis, funding, oracle, trading,
   market expiry, liquidation, ADL and public-pool behavior.
 

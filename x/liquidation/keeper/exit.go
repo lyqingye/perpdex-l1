@@ -4,8 +4,6 @@ import (
 	"context"
 	"strconv"
 
-	"cosmossdk.io/collections"
-
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
@@ -65,7 +63,6 @@ func (k Keeper) ApplyExitPosition(ctx context.Context, marketIdx uint32) error {
 			)
 			return false
 		}
-		_ = k.Flags.Remove(ctx, collections.Join(a.AccountIndex, marketIdx))
 		closed++
 		return false
 	}); err != nil {

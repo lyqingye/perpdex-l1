@@ -1,33 +1,30 @@
 // EndBlocker scheduling for x/liquidation.
 //
-// The EndBlocker drives the LLP→ADL waterfall, the flag lifecycle, and
-// the cross-aggregate refresh that protects multi-market accounts from
-// stale snapshots. This file covers:
+// The EndBlocker drives the LLP→ADL waterfall and the cross-aggregate
+// refresh that protects multi-market accounts from stale snapshots.
+// This file covers:
 //
 //   - Happy-path FULL_LIQUIDATION: LLP absorbs the worst-uPnL position
 //     first; no ADL fill is generated when the LLP accepts.
 //   - Bankruptcy fall-through to ADL when the LLP refuses on IMR.
-//   - PRE_LIQUIDATION/healthy short-circuit: no fills and no flags.
+//   - PRE_LIQUIDATION/healthy short-circuit: no fills.
 //   - Bankrupt-residue retention when LLP refuses AND the ADL queue is
 //     empty (no silent IF top-up).
 //   - ADL candidate-skip: an under-collateralised first candidate must
 //     not stop the loop; the next candidate takes over.
 //   - Cross-aggregate freshness across markets: a mid-iteration heal
-//     must be observed before the next market's trigger fires, and
-//     no LiquidationFlagged event should leak for a healed account.
+//     must be observed before the next market's trigger fires.
 package tests
 
 import (
 	"testing"
 
-	"cosmossdk.io/collections"
 	"cosmossdk.io/math"
 
 	"github.com/stretchr/testify/require"
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
 	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
-	liqtypes "github.com/perpdex/perpdex-l1/x/liquidation/types"
 	risktypes "github.com/perpdex/perpdex-l1/x/risk/types"
 	tradekeeper "github.com/perpdex/perpdex-l1/x/trade/keeper"
 )
@@ -83,7 +80,7 @@ func TestEndBlocker_FullLiquidationPrefersLLPThenADL(t *testing.T) {
 }
 
 // TestEndBlocker_BankruptcyFallsThroughToADLWhenLLPBreachesIMR
-// verifies the spec rule: a deeply bankrupt account whose absorption
+// verifies the rule: a deeply bankrupt account whose absorption
 // would breach the LLP's IMR is closed via ADL instead, leaving the
 // LLP untouched.
 func TestEndBlocker_BankruptcyFallsThroughToADLWhenLLPBreachesIMR(t *testing.T) {
@@ -142,11 +139,10 @@ func TestEndBlocker_BankruptcyFallsThroughToADLWhenLLPBreachesIMR(t *testing.T) 
 	require.Equal(t, uint64(999), tk.calls[0].TakerAccountIndex)
 }
 
-// TestEndBlocker_PreLiquidationClearsFlags ensures the EndBlocker
-// drops stale liquidation flags as soon as the account's health
-// recovers to PRE / HEALTHY (no flag should persist into a healthy
-// account's records).
-func TestEndBlocker_PreLiquidationClearsFlags(t *testing.T) {
+// TestEndBlocker_PreLiquidationShortCircuits ensures the EndBlocker
+// skips accounts in PRE_LIQUIDATION (and HEALTHY) without issuing
+// any fill: those tiers are not EndBlocker territory.
+func TestEndBlocker_PreLiquidationShortCircuits(t *testing.T) {
 	ak := newStubAccount()
 	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.NewInt(10_000)}
 	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
@@ -161,21 +157,17 @@ func TestEndBlocker_PreLiquidationClearsFlags(t *testing.T) {
 	k, ctx := newKeeper(t, ak, rk, tk, matchk)
 
 	require.NoError(t, k.EndBlocker(ctx))
-	// PRE → no fill, no flag.
+	// PRE → no fill.
 	require.Empty(t, tk.calls)
 }
 
 // TestEndBlocker_BankruptResidueStaysWithVictim covers the worst-case
 // path: a bankrupt account whose LLP takeover would breach the IF's
 // IMR AND whose ADL queue is empty (no profitable opposite-side
-// counterparties). The position simply remains open and is
-// re-evaluated next block; there is no chain-level rescue that
-// drains the IF to make the bankrupt's collateral non-negative.
-//
-// Pre-fix behaviour: the EndBlocker would silently move the residual
-// negative collateral to the IF (which itself has no balance check)
-// regardless of the LLP IMR gate's verdict, completely defeating the
-// LLP→ADL waterfall. Post-fix: ledger values are untouched.
+// counterparties). When both LLP and ADL refuse, neither the IF nor
+// any other chain mechanism moves funds: the negative collateral
+// stays on the victim's ledger and the position is re-evaluated next
+// block.
 func TestEndBlocker_BankruptResidueStaysWithVictim(t *testing.T) {
 	ak := newStubAccount()
 	// IF that would breach IMR if it took over the position.
@@ -380,25 +372,4 @@ func TestEndBlocker_CrossAggregateRefreshedAcrossMarkets(t *testing.T) {
 	require.Equal(t, uint32(0), tk.calls[0].MarketIndex)
 	require.GreaterOrEqual(t, rk.snapshotCalls, 1,
 		"market 0's LLP path must build at least one fresh risk snapshot before the fill")
-	// processAccount must leave NO cross flag for this account once
-	// the iteration ends with a HEALTHY post-state, regardless of
-	// whether the flag was written before (market 0, written then
-	// the LLP fill rescued the account) or after (market 1, written
-	// by the per-loop branch and removed once refreshHealth caught
-	// the heal). The end-of-iteration sweep covers the former; the
-	// per-loop refreshHealth branch covers the latter.
-	for _, market := range []uint32{0, 1} {
-		has, err := k.Flags.Has(ctx, collections.Join[uint64, uint32](100, market))
-		require.NoError(t, err)
-		require.False(t, has,
-			"no cross flag should remain for market %d once the account ended HEALTHY", market)
-	}
-	// processAccount must re-read the cross status before emitting
-	// LiquidationFlagged. The account started FULL_LIQ but a fill
-	// healed it to HEALTHY; the event must NOT carry the stale
-	// pre-iteration status (or fire at all).
-	for _, e := range ctx.EventManager().Events() {
-		require.NotEqual(t, liqtypes.EventTypeLiquidationFlagged, e.Type,
-			"no LiquidationFlagged event should be emitted for an account that healed mid-iteration")
-	}
 }

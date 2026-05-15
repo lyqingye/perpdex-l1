@@ -291,8 +291,8 @@ func (s *injectingTrade) ApplySpotMatching(ctx context.Context, f tradekeeper.Sp
 // per-account / per-(account, market) FIFO; an empty slice falls back
 // to `defaultStatus`. This lets tests step the victim's health from
 // PARTIAL → HEALTHY across loop iterations to exercise the
-// `is_not_in_liquidation_and_is_liquidation_order` short-circuit
-// without standing up the real risk keeper.
+// "stop once the victim recovers" short-circuit without standing
+// up the real risk keeper.
 type stubRisk struct {
 	defaultStatus uint32
 	cross         map[uint64][]uint32

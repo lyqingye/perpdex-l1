@@ -28,7 +28,7 @@ import (
 )
 
 // TestMatchOrder_BadMakerEvictedAndContinues verifies the
-// `cancel_maker_order` semantics: when a single maker fails the
+// "cancel maker order" recovery rule: when a single maker fails the
 // post-trade risk check, the maker is evicted on the outer ctx and
 // the taker continues onto the next price level rather than reverting
 // the entire CreateOrder.
@@ -93,8 +93,8 @@ func TestMatchOrder_MultipleBadMakersAllEvicted(t *testing.T) {
 }
 
 // TestMatchOrder_BadTakerStopsButPreservesPriorFills confirms the
-// `cancel_taker_order` semantics: when the taker fails risk on the
-// second iteration, the first fill survives but the residue is
+// "cancel taker order" recovery rule: when the taker fails risk on
+// the second iteration, the first fill survives but the residue is
 // terminated rather than resting on the book.
 func TestMatchOrder_BadTakerStopsButPreservesPriorFills(t *testing.T) {
 	e, _ := withInjectingTrade(t,
@@ -225,10 +225,10 @@ func TestCreateOrder_IOCBypassesCap(t *testing.T) {
 }
 
 // TestMatchOrder_BadMakerInvalidPositionEvictedAndContinues confirms
-// the `is_new_maker_position_invalid` semantics (case 1 of
-// `is_valid_perps_trade`): when a maker's post-trade position would
-// overflow the bit-width bound, the maker is evicted on the outer
-// ctx and the taker continues.
+// the "post-trade maker position overflow" branch of perps
+// validation: when a maker's post-trade position would overflow the
+// bit-width bound, the maker is evicted on the outer ctx and the
+// taker continues.
 func TestMatchOrder_BadMakerInvalidPositionEvictedAndContinues(t *testing.T) {
 	e, _ := withInjectingTrade(t,
 		sdkerrors.Wrap(tradetypes.ErrMakerInvalidPosition, "first maker overflow"),
@@ -257,9 +257,9 @@ func TestMatchOrder_BadMakerInvalidPositionEvictedAndContinues(t *testing.T) {
 }
 
 // TestMatchOrder_BadMakerInsufficientCollateralEvictedAndContinues
-// confirms the `is_maker_has_enough_cross_collateral` semantics
-// (case 3): a maker whose isolated margin auto-allocation cannot be
-// funded from cross collateral is evicted and the loop continues.
+// confirms the "maker has enough cross collateral" branch: a maker
+// whose isolated margin auto-allocation cannot be funded from cross
+// collateral is evicted and the loop continues.
 func TestMatchOrder_BadMakerInsufficientCollateralEvictedAndContinues(t *testing.T) {
 	e, _ := withInjectingTrade(t,
 		sdkerrors.Wrap(tradetypes.ErrMakerInsufficientCollateral, "first maker poor"),

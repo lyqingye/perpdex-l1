@@ -16,12 +16,12 @@ func (m msgServer) Liquidate(ctx context.Context, msg *types.MsgLiquidate) (*typ
 	if err := msg.ValidateBasic(); err != nil {
 		return nil, err
 	}
-	// The partial-liquidation tx (`InternalLiquidatePositionTx`) has
-	// no counterparty — the victim's close-out fills against the
-	// public order book. There is no `liquidator_account_index` to
-	// resolve and no sender authorisation check beyond ValidateBasic
-	// (anyone can poke the engine to liquidate an underwater account;
-	// the LLP / Insurance Fund collects the improvement fee).
+	// The partial-liquidation tx has no counterparty — the victim's
+	// close-out fills against the public order book. There is no
+	// liquidator account to resolve and no sender authorisation
+	// check beyond ValidateBasic (anyone can poke the engine to
+	// liquidate an underwater account; the LLP / Insurance Fund
+	// collects the improvement fee).
 	if err := m.Keeper.Liquidate(ctx, msg.VictimAccountIndex, msg.MarketIndex, msg.BaseAmount); err != nil {
 		return nil, err
 	}

@@ -7,10 +7,6 @@
 package query
 
 import (
-	"context"
-	"errors"
-
-	"cosmossdk.io/collections"
 	"cosmossdk.io/math"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -119,27 +115,6 @@ func Order(
 	orderIdx uint64,
 ) (orderbooktypes.Order, error) {
 	return app.OrderbookKeeper.GetOrder(ctx, orderIdx)
-}
-
-// LiquidationFlag fetches the (account, market) liquidation flag if any
-// has been raised by the EndBlocker. The boolean discriminates between
-// "not flagged" (ok=false) and "fetch error" (err != nil).
-func LiquidationFlag(
-	app *perp.PerpDEXApp,
-	ctx sdk.Context,
-	accountIdx uint64,
-	marketIdx uint32,
-) (liquidationtypes.LiquidationFlag, bool, error) {
-	flag, err := app.LiquidationKeeper.Flags.Get(
-		context.Context(ctx), collections.Join(accountIdx, marketIdx),
-	)
-	if errors.Is(err, collections.ErrNotFound) {
-		return liquidationtypes.LiquidationFlag{}, false, nil
-	}
-	if err != nil {
-		return liquidationtypes.LiquidationFlag{}, false, err
-	}
-	return flag, true, nil
 }
 
 // HealthStatus runs the risk classifier and returns one of the 5

@@ -3,13 +3,6 @@ package perpdex.liquidation.v1;
 
 option go_package = "github.com/perpdex/perpdex-l1/x/liquidation/types";
 
-message LiquidationFlag {
-  uint64 account_index = 1;
-  uint32 market_index = 2;
-  int64 flagged_at_block = 3;
-  int64 flagged_at_time = 4;
-}
-
 message Params {
   // max_adl_attempts_per_block caps how many counterparty fills the
   // EndBlocker auto-ADL loop is allowed to push through in one block.

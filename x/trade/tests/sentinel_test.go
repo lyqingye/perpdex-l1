@@ -4,7 +4,7 @@
 // rejection branch and asserts:
 //
 //  1. The returned error is the canonical `ErrTaker*` / `ErrMaker*`
-//     sentinel (so `errors.Is` lookups in matching_engine.rs match).
+//     sentinel (so `errors.Is` lookups in the matching engine match).
 //  2. `IsRecoverableTakerError` / `IsRecoverableMakerError` route the
 //     error to the correct side of the eviction-vs-stop fork.
 //  3. Hard / unrelated errors do NOT classify as recoverable on
@@ -173,7 +173,7 @@ func TestSentinel_HardErrorClassification(t *testing.T) {
 
 // TestSentinel_ApplyPerpsMatching_MakerInvalidPosition triggers the
 // post-trade `|position|` overflow branch on the maker side. The
-// maker enters with a position one base unit below the prover circuit
+// maker enters with a position one base unit below the bit-width
 // limit (POSITION_SIZE_BITS = 56) and the taker sells one base unit
 // against it — a buy from the maker grows |position| past the bound.
 // Result must be ErrMakerInvalidPosition + recoverable so the matching
@@ -260,8 +260,8 @@ func TestSentinel_ApplyPerpsMatching_TakerInvalidPosition(t *testing.T) {
 }
 
 // TestSentinel_ApplyPerpsMatching_MakerInsufficientCollateral exercises
-// the `is_maker_has_enough_cross_collateral` branch. The maker
-// sits in isolated mode with zero allocated_margin; the fill grows
+// the "maker has enough cross collateral" branch. The maker sits in
+// isolated mode with zero allocated_margin; the fill grows
 // |position| so `margin_delta > 0`. Set the stub's available cross
 // collateral below `margin_delta` and ensure the trade is rejected
 // with `ErrMakerInsufficientCollateral` before the post-trade risk

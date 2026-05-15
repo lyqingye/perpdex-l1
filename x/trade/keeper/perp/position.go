@@ -32,7 +32,7 @@ type positionChangeResult struct {
 // errPositionOutOfBounds is the internal sentinel returned by
 // `applyPositionChange` when the post-trade `|position|` or
 // `|entry_quote|` would overflow `POSITION_SIZE_BITS` /
-// `ENTRY_QUOTE_BITS` (`is_new_position_valid` failure mode).
+// `ENTRY_QUOTE_BITS`.
 // `Apply` re-wraps it into `ErrMakerInvalidPosition` /
 // `ErrTakerInvalidPosition` so the matching loop can route the failure
 // through `IsRecoverable*Error`.
@@ -50,9 +50,9 @@ var errPositionOutOfBounds = errors.New("trade: post-trade position out of bound
 // driving the persisted RMW + bounds-check + OI delta around it.
 //
 // `errPositionOutOfBounds` is returned when the new size or entry
-// quote would overflow the bit-width bounds enforced by the prover
-// circuit; the caller wraps it into the appropriate maker / taker
-// sentinel.
+// quote would overflow the bit-width bounds
+// (POSITION_SIZE_BITS / ENTRY_QUOTE_BITS); the caller wraps it into
+// the appropriate maker / taker sentinel.
 func (e Engine) applyPositionChange(ctx context.Context, accountIdx uint64, marketIdx uint32, price uint32, baseAmount uint64, sign int64) (positionChangeResult, error) {
 	var (
 		old         accounttypes.AccountPosition
@@ -82,7 +82,7 @@ func (e Engine) applyPositionChange(ctx context.Context, accountIdx uint64, mark
 		sideFlipped = fill.SideFlipped
 
 		// Bounds check ahead of persistence so we never store a
-		// position the prover circuit would reject.
+		// position outside the canonical bit-width envelope.
 		if !isWithinPositionBounds(pos.BaseSize, pos.EntryQuote) {
 			return errPositionOutOfBounds
 		}
@@ -106,9 +106,9 @@ func (e Engine) applyPositionChange(ctx context.Context, accountIdx uint64, mark
 	}, nil
 }
 
-// isWithinPositionBounds enforces the prover circuit's hard limits
-// `|position| < 2^POSITION_SIZE_BITS` and `|entry_quote| < 2^ENTRY_QUOTE_BITS`.
-// `position.is_valid` checks the same envelope.
+// isWithinPositionBounds enforces the hard limits
+// `|position| < 2^POSITION_SIZE_BITS` and `|entry_quote| <
+// 2^ENTRY_QUOTE_BITS`.
 func isWithinPositionBounds(position, entryQuote math.Int) bool {
 	maxPos := math.NewIntFromUint64(perptypes.MaxPositionSize)
 	maxEntryQuote := math.NewIntFromUint64(perptypes.MaxEntryQuote)

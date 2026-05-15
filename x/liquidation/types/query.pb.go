@@ -110,199 +110,6 @@ func (m *QueryParamsResponse) GetParams() Params {
 	return Params{}
 }
 
-type QueryLiquidationFlagRequest struct {
-	AccountIndex uint64 `protobuf:"varint,1,opt,name=account_index,json=accountIndex,proto3" json:"account_index,omitempty"`
-	MarketIndex  uint32 `protobuf:"varint,2,opt,name=market_index,json=marketIndex,proto3" json:"market_index,omitempty"`
-}
-
-func (m *QueryLiquidationFlagRequest) Reset()         { *m = QueryLiquidationFlagRequest{} }
-func (m *QueryLiquidationFlagRequest) String() string { return proto.CompactTextString(m) }
-func (*QueryLiquidationFlagRequest) ProtoMessage()    {}
-func (*QueryLiquidationFlagRequest) Descriptor() ([]byte, []int) {
-	return fileDescriptor_eca7601e3ca4d856, []int{2}
-}
-func (m *QueryLiquidationFlagRequest) XXX_Unmarshal(b []byte) error {
-	return m.Unmarshal(b)
-}
-func (m *QueryLiquidationFlagRequest) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	if deterministic {
-		return xxx_messageInfo_QueryLiquidationFlagRequest.Marshal(b, m, deterministic)
-	} else {
-		b = b[:cap(b)]
-		n, err := m.MarshalToSizedBuffer(b)
-		if err != nil {
-			return nil, err
-		}
-		return b[:n], nil
-	}
-}
-func (m *QueryLiquidationFlagRequest) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_QueryLiquidationFlagRequest.Merge(m, src)
-}
-func (m *QueryLiquidationFlagRequest) XXX_Size() int {
-	return m.Size()
-}
-func (m *QueryLiquidationFlagRequest) XXX_DiscardUnknown() {
-	xxx_messageInfo_QueryLiquidationFlagRequest.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_QueryLiquidationFlagRequest proto.InternalMessageInfo
-
-func (m *QueryLiquidationFlagRequest) GetAccountIndex() uint64 {
-	if m != nil {
-		return m.AccountIndex
-	}
-	return 0
-}
-
-func (m *QueryLiquidationFlagRequest) GetMarketIndex() uint32 {
-	if m != nil {
-		return m.MarketIndex
-	}
-	return 0
-}
-
-type QueryLiquidationFlagResponse struct {
-	// present is false when the (account, market) pair is not flagged.
-	Present bool            `protobuf:"varint,1,opt,name=present,proto3" json:"present,omitempty"`
-	Flag    LiquidationFlag `protobuf:"bytes,2,opt,name=flag,proto3" json:"flag"`
-}
-
-func (m *QueryLiquidationFlagResponse) Reset()         { *m = QueryLiquidationFlagResponse{} }
-func (m *QueryLiquidationFlagResponse) String() string { return proto.CompactTextString(m) }
-func (*QueryLiquidationFlagResponse) ProtoMessage()    {}
-func (*QueryLiquidationFlagResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_eca7601e3ca4d856, []int{3}
-}
-func (m *QueryLiquidationFlagResponse) XXX_Unmarshal(b []byte) error {
-	return m.Unmarshal(b)
-}
-func (m *QueryLiquidationFlagResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	if deterministic {
-		return xxx_messageInfo_QueryLiquidationFlagResponse.Marshal(b, m, deterministic)
-	} else {
-		b = b[:cap(b)]
-		n, err := m.MarshalToSizedBuffer(b)
-		if err != nil {
-			return nil, err
-		}
-		return b[:n], nil
-	}
-}
-func (m *QueryLiquidationFlagResponse) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_QueryLiquidationFlagResponse.Merge(m, src)
-}
-func (m *QueryLiquidationFlagResponse) XXX_Size() int {
-	return m.Size()
-}
-func (m *QueryLiquidationFlagResponse) XXX_DiscardUnknown() {
-	xxx_messageInfo_QueryLiquidationFlagResponse.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_QueryLiquidationFlagResponse proto.InternalMessageInfo
-
-func (m *QueryLiquidationFlagResponse) GetPresent() bool {
-	if m != nil {
-		return m.Present
-	}
-	return false
-}
-
-func (m *QueryLiquidationFlagResponse) GetFlag() LiquidationFlag {
-	if m != nil {
-		return m.Flag
-	}
-	return LiquidationFlag{}
-}
-
-type QueryLiquidationFlagsRequest struct {
-	AccountIndex uint64 `protobuf:"varint,1,opt,name=account_index,json=accountIndex,proto3" json:"account_index,omitempty"`
-}
-
-func (m *QueryLiquidationFlagsRequest) Reset()         { *m = QueryLiquidationFlagsRequest{} }
-func (m *QueryLiquidationFlagsRequest) String() string { return proto.CompactTextString(m) }
-func (*QueryLiquidationFlagsRequest) ProtoMessage()    {}
-func (*QueryLiquidationFlagsRequest) Descriptor() ([]byte, []int) {
-	return fileDescriptor_eca7601e3ca4d856, []int{4}
-}
-func (m *QueryLiquidationFlagsRequest) XXX_Unmarshal(b []byte) error {
-	return m.Unmarshal(b)
-}
-func (m *QueryLiquidationFlagsRequest) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	if deterministic {
-		return xxx_messageInfo_QueryLiquidationFlagsRequest.Marshal(b, m, deterministic)
-	} else {
-		b = b[:cap(b)]
-		n, err := m.MarshalToSizedBuffer(b)
-		if err != nil {
-			return nil, err
-		}
-		return b[:n], nil
-	}
-}
-func (m *QueryLiquidationFlagsRequest) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_QueryLiquidationFlagsRequest.Merge(m, src)
-}
-func (m *QueryLiquidationFlagsRequest) XXX_Size() int {
-	return m.Size()
-}
-func (m *QueryLiquidationFlagsRequest) XXX_DiscardUnknown() {
-	xxx_messageInfo_QueryLiquidationFlagsRequest.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_QueryLiquidationFlagsRequest proto.InternalMessageInfo
-
-func (m *QueryLiquidationFlagsRequest) GetAccountIndex() uint64 {
-	if m != nil {
-		return m.AccountIndex
-	}
-	return 0
-}
-
-type QueryLiquidationFlagsResponse struct {
-	Flags []LiquidationFlag `protobuf:"bytes,1,rep,name=flags,proto3" json:"flags"`
-}
-
-func (m *QueryLiquidationFlagsResponse) Reset()         { *m = QueryLiquidationFlagsResponse{} }
-func (m *QueryLiquidationFlagsResponse) String() string { return proto.CompactTextString(m) }
-func (*QueryLiquidationFlagsResponse) ProtoMessage()    {}
-func (*QueryLiquidationFlagsResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_eca7601e3ca4d856, []int{5}
-}
-func (m *QueryLiquidationFlagsResponse) XXX_Unmarshal(b []byte) error {
-	return m.Unmarshal(b)
-}
-func (m *QueryLiquidationFlagsResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	if deterministic {
-		return xxx_messageInfo_QueryLiquidationFlagsResponse.Marshal(b, m, deterministic)
-	} else {
-		b = b[:cap(b)]
-		n, err := m.MarshalToSizedBuffer(b)
-		if err != nil {
-			return nil, err
-		}
-		return b[:n], nil
-	}
-}
-func (m *QueryLiquidationFlagsResponse) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_QueryLiquidationFlagsResponse.Merge(m, src)
-}
-func (m *QueryLiquidationFlagsResponse) XXX_Size() int {
-	return m.Size()
-}
-func (m *QueryLiquidationFlagsResponse) XXX_DiscardUnknown() {
-	xxx_messageInfo_QueryLiquidationFlagsResponse.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_QueryLiquidationFlagsResponse proto.InternalMessageInfo
-
-func (m *QueryLiquidationFlagsResponse) GetFlags() []LiquidationFlag {
-	if m != nil {
-		return m.Flags
-	}
-	return nil
-}
-
 type QueryADLQueueRequest struct {
 	MarketIndex uint32 `protobuf:"varint,1,opt,name=market_index,json=marketIndex,proto3" json:"market_index,omitempty"`
 	// opposite_is_long picks the side of the queue. Set true when the
@@ -317,7 +124,7 @@ func (m *QueryADLQueueRequest) Reset()         { *m = QueryADLQueueRequest{} }
 func (m *QueryADLQueueRequest) String() string { return proto.CompactTextString(m) }
 func (*QueryADLQueueRequest) ProtoMessage()    {}
 func (*QueryADLQueueRequest) Descriptor() ([]byte, []int) {
-	return fileDescriptor_eca7601e3ca4d856, []int{6}
+	return fileDescriptor_eca7601e3ca4d856, []int{2}
 }
 func (m *QueryADLQueueRequest) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -375,7 +182,7 @@ func (m *QueryADLQueueResponse) Reset()         { *m = QueryADLQueueResponse{} }
 func (m *QueryADLQueueResponse) String() string { return proto.CompactTextString(m) }
 func (*QueryADLQueueResponse) ProtoMessage()    {}
 func (*QueryADLQueueResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_eca7601e3ca4d856, []int{7}
+	return fileDescriptor_eca7601e3ca4d856, []int{3}
 }
 func (m *QueryADLQueueResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -426,7 +233,7 @@ func (m *ADLCandidate) Reset()         { *m = ADLCandidate{} }
 func (m *ADLCandidate) String() string { return proto.CompactTextString(m) }
 func (*ADLCandidate) ProtoMessage()    {}
 func (*ADLCandidate) Descriptor() ([]byte, []int) {
-	return fileDescriptor_eca7601e3ca4d856, []int{8}
+	return fileDescriptor_eca7601e3ca4d856, []int{4}
 }
 func (m *ADLCandidate) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -465,10 +272,6 @@ func (m *ADLCandidate) GetAccountIndex() uint64 {
 func init() {
 	proto.RegisterType((*QueryParamsRequest)(nil), "perpdex.liquidation.v1.QueryParamsRequest")
 	proto.RegisterType((*QueryParamsResponse)(nil), "perpdex.liquidation.v1.QueryParamsResponse")
-	proto.RegisterType((*QueryLiquidationFlagRequest)(nil), "perpdex.liquidation.v1.QueryLiquidationFlagRequest")
-	proto.RegisterType((*QueryLiquidationFlagResponse)(nil), "perpdex.liquidation.v1.QueryLiquidationFlagResponse")
-	proto.RegisterType((*QueryLiquidationFlagsRequest)(nil), "perpdex.liquidation.v1.QueryLiquidationFlagsRequest")
-	proto.RegisterType((*QueryLiquidationFlagsResponse)(nil), "perpdex.liquidation.v1.QueryLiquidationFlagsResponse")
 	proto.RegisterType((*QueryADLQueueRequest)(nil), "perpdex.liquidation.v1.QueryADLQueueRequest")
 	proto.RegisterType((*QueryADLQueueResponse)(nil), "perpdex.liquidation.v1.QueryADLQueueResponse")
 	proto.RegisterType((*ADLCandidate)(nil), "perpdex.liquidation.v1.ADLCandidate")
@@ -479,52 +282,42 @@ func init() {
 }
 
 var fileDescriptor_eca7601e3ca4d856 = []byte{
-	// 713 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x94, 0x55, 0xcd, 0x6e, 0xd3, 0x4c,
-	0x14, 0x8d, 0xdb, 0xa4, 0x5f, 0xbf, 0xdb, 0xa4, 0x54, 0x43, 0x8a, 0xa2, 0xd0, 0xba, 0xc5, 0x20,
-	0x88, 0x80, 0xda, 0x24, 0xa5, 0x12, 0x12, 0xb0, 0x68, 0x52, 0x21, 0x15, 0xb2, 0x68, 0xd3, 0x1d,
-	0x9b, 0xc8, 0xb5, 0x07, 0x77, 0x54, 0x67, 0xc6, 0xf1, 0xd8, 0x55, 0x7f, 0xd4, 0x0d, 0x3b, 0x76,
-	0x48, 0x3c, 0x01, 0xef, 0x80, 0xd8, 0xb3, 0xeb, 0xb2, 0x12, 0x1b, 0xc4, 0xa2, 0x42, 0x2d, 0x4f,
-	0xc0, 0x13, 0x20, 0x8f, 0xed, 0x36, 0x75, 0xe3, 0x92, 0xac, 0x12, 0xdf, 0x9c, 0x73, 0xcf, 0x39,
-	0xd7, 0x73, 0x27, 0xa0, 0x38, 0xd8, 0x75, 0x4c, 0xbc, 0xab, 0xd9, 0xa4, 0xeb, 0x13, 0x53, 0xf7,
-	0x08, 0xa3, 0xda, 0x4e, 0x55, 0xeb, 0xfa, 0xd8, 0xdd, 0x53, 0x1d, 0x97, 0x79, 0x0c, 0xdd, 0x8a,
-	0x30, 0x6a, 0x0f, 0x46, 0xdd, 0xa9, 0x96, 0x8b, 0x16, 0xb3, 0x98, 0x80, 0x68, 0xc1, 0xb7, 0x10,
-	0x5d, 0x9e, 0xb1, 0x18, 0xb3, 0x6c, 0xac, 0xe9, 0x0e, 0xd1, 0x74, 0x4a, 0x99, 0x27, 0xf0, 0x3c,
-	0xfa, 0xb5, 0x92, 0xa2, 0xd7, 0xdb, 0x5a, 0x20, 0x95, 0x22, 0xa0, 0xf5, 0xc0, 0xc4, 0x9a, 0xee,
-	0xea, 0x1d, 0xde, 0xc2, 0x5d, 0x1f, 0x73, 0x4f, 0xd9, 0x80, 0x9b, 0x97, 0xaa, 0xdc, 0x61, 0x94,
-	0x63, 0xf4, 0x02, 0xc6, 0x1c, 0x51, 0x29, 0x49, 0xf3, 0x52, 0x65, 0xa2, 0x26, 0xab, 0xfd, 0x3d,
-	0xab, 0x21, 0xaf, 0x9e, 0x3d, 0x3a, 0x99, 0xcb, 0xb4, 0x22, 0x8e, 0x82, 0xe1, 0xb6, 0x68, 0xda,
-	0xbc, 0xc0, 0xbe, 0xb2, 0x75, 0x2b, 0xd2, 0x44, 0x77, 0xa1, 0xa0, 0x1b, 0x06, 0xf3, 0xa9, 0xd7,
-	0x26, 0xd4, 0xc4, 0xbb, 0x42, 0x23, 0xdb, 0xca, 0x47, 0xc5, 0xd5, 0xa0, 0x86, 0xee, 0x40, 0xbe,
-	0xa3, 0xbb, 0xdb, 0x38, 0xc6, 0x8c, 0xcc, 0x4b, 0x95, 0x42, 0x6b, 0x22, 0xac, 0x09, 0x88, 0x72,
-	0x00, 0x33, 0xfd, 0x65, 0xa2, 0x10, 0x25, 0xf8, 0xcf, 0x71, 0x31, 0xc7, 0xd4, 0x13, 0x0a, 0xe3,
-	0xad, 0xf8, 0x11, 0x2d, 0x43, 0xf6, 0x9d, 0xad, 0x5b, 0xa2, 0xe9, 0x44, 0xed, 0x41, 0x5a, 0xb8,
-	0x44, 0xe3, 0x28, 0xa5, 0xa0, 0x2a, 0x8d, 0xfe, 0xe2, 0x7c, 0x98, 0x90, 0x8a, 0x09, 0xb3, 0x29,
-	0x4d, 0xa2, 0x08, 0x0d, 0xc8, 0x05, 0x6a, 0xc1, 0x6b, 0x18, 0x1d, 0xde, 0x69, 0xc8, 0x55, 0xf6,
-	0xa0, 0x28, 0x54, 0x96, 0x57, 0x9a, 0xeb, 0x3e, 0xf6, 0x71, 0x6c, 0x31, 0x39, 0x62, 0xe9, 0xca,
-	0x88, 0x51, 0x05, 0xa6, 0x98, 0xe3, 0x30, 0x4e, 0x3c, 0xdc, 0x26, 0xbc, 0x6d, 0x33, 0x1a, 0x0e,
-	0x6d, 0xbc, 0x35, 0x19, 0xd7, 0x57, 0x79, 0x93, 0x51, 0x0b, 0x15, 0x21, 0x67, 0x93, 0x0e, 0xf1,
-	0x4a, 0xa3, 0xa2, 0x4b, 0xf8, 0xa0, 0x18, 0x30, 0x9d, 0x90, 0x8e, 0x82, 0xbd, 0x06, 0x30, 0x74,
-	0x6a, 0x06, 0x9e, 0x71, 0x9c, 0xee, 0x5e, 0x5a, 0xba, 0xe5, 0x95, 0x66, 0x23, 0x06, 0x47, 0xd1,
-	0x7a, 0xd8, 0xca, 0x1f, 0x09, 0xf2, 0xbd, 0x90, 0xc1, 0x0e, 0x58, 0x1d, 0x0a, 0x22, 0x00, 0x61,
-	0xb4, 0xcd, 0xc9, 0x3e, 0x16, 0xb9, 0xfe, 0xaf, 0xcf, 0x06, 0xed, 0x7f, 0x9e, 0xcc, 0x4d, 0x1b,
-	0x8c, 0x77, 0x18, 0xe7, 0xe6, 0xb6, 0x4a, 0x98, 0xd6, 0xd1, 0xbd, 0x2d, 0x75, 0x95, 0x7a, 0xad,
-	0x7c, 0xcc, 0xd9, 0x20, 0xfb, 0x18, 0xad, 0xc0, 0xa4, 0x4f, 0x5d, 0xac, 0xdb, 0x64, 0x1f, 0x9b,
-	0x6d, 0x87, 0xda, 0x22, 0xfd, 0x3f, 0x9b, 0x14, 0x2e, 0x48, 0x6b, 0xd4, 0x46, 0x8b, 0x90, 0xe3,
-	0x06, 0x73, 0x71, 0x29, 0x3b, 0x08, 0x39, 0xc4, 0xd6, 0xbe, 0xe4, 0x20, 0x27, 0x46, 0x8b, 0x3e,
-	0x48, 0x30, 0x16, 0xae, 0x21, 0x7a, 0x98, 0x36, 0xc1, 0xab, 0x9b, 0x5f, 0x7e, 0x34, 0x10, 0x36,
-	0x7c, 0x5d, 0xca, 0xfd, 0xf7, 0xdf, 0x7f, 0x7f, 0x1a, 0x99, 0x47, 0xb2, 0x96, 0x72, 0xdf, 0x84,
-	0x9b, 0x8f, 0xbe, 0x49, 0x70, 0x23, 0x71, 0x16, 0xd1, 0xe2, 0xb5, 0x42, 0xfd, 0xef, 0x88, 0xf2,
-	0xd3, 0xe1, 0x48, 0x91, 0xcd, 0x86, 0xb0, 0xf9, 0x12, 0x3d, 0x4f, 0xb3, 0x19, 0x2c, 0x84, 0x76,
-	0x70, 0xe9, 0x70, 0x1c, 0x6a, 0x07, 0xbd, 0x5b, 0x70, 0x88, 0xbe, 0x4a, 0x30, 0x95, 0x5c, 0x48,
-	0x34, 0x94, 0x9f, 0xf3, 0x19, 0x2f, 0x0d, 0xc9, 0x8a, 0x62, 0x2c, 0x89, 0x18, 0x1a, 0x5a, 0xb8,
-	0x2e, 0x06, 0x4f, 0xe6, 0x40, 0x9f, 0x25, 0x18, 0x8f, 0x17, 0x0d, 0x3d, 0xbe, 0x56, 0x3a, 0x71,
-	0x15, 0x94, 0x17, 0x06, 0x44, 0x47, 0x06, 0x9f, 0x09, 0x83, 0x35, 0xf4, 0x24, 0xcd, 0xa0, 0x6e,
-	0xda, 0xed, 0x6e, 0x40, 0x49, 0x0c, 0xb7, 0xfe, 0xe6, 0xe8, 0x54, 0x96, 0x8e, 0x4f, 0x65, 0xe9,
-	0xd7, 0xa9, 0x2c, 0x7d, 0x3c, 0x93, 0x33, 0xc7, 0x67, 0x72, 0xe6, 0xc7, 0x99, 0x9c, 0x79, 0x5b,
-	0xb5, 0x88, 0xb7, 0xe5, 0x6f, 0xaa, 0x06, 0xeb, 0x9c, 0x77, 0x8d, 0x3e, 0x17, 0xec, 0xaa, 0x76,
-	0x59, 0xc2, 0xdb, 0x73, 0x30, 0xdf, 0x1c, 0x13, 0xff, 0x6c, 0x8b, 0x7f, 0x03, 0x00, 0x00, 0xff,
-	0xff, 0xfd, 0xe7, 0xcf, 0xe3, 0x75, 0x07, 0x00, 0x00,
+	// 556 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x8c, 0x53, 0x31, 0x6f, 0xd3, 0x40,
+	0x18, 0x8d, 0xd3, 0x24, 0x2a, 0x97, 0xa4, 0x42, 0x47, 0x8a, 0xa2, 0x08, 0xdc, 0x60, 0x10, 0x8a,
+	0x80, 0xda, 0x24, 0x5d, 0x18, 0x58, 0x1a, 0xb2, 0x04, 0x32, 0xb4, 0xee, 0xc6, 0x62, 0x5d, 0xed,
+	0x93, 0x7b, 0xaa, 0x7d, 0x77, 0xf1, 0x9d, 0xab, 0x26, 0x88, 0x85, 0x8d, 0x0d, 0x89, 0x5f, 0xc0,
+	0xaf, 0xe0, 0x2f, 0x74, 0xac, 0xc4, 0x82, 0x18, 0x2a, 0x94, 0xf0, 0x0b, 0xf8, 0x05, 0xc8, 0x67,
+	0x07, 0xdc, 0x42, 0x68, 0xa6, 0xc4, 0xcf, 0xef, 0xbd, 0xef, 0xbd, 0xbb, 0xcf, 0xc0, 0xe0, 0x38,
+	0xe2, 0x1e, 0x3e, 0xb5, 0x02, 0x32, 0x8e, 0x89, 0x87, 0x24, 0x61, 0xd4, 0x3a, 0xe9, 0x5a, 0xe3,
+	0x18, 0x47, 0x13, 0x93, 0x47, 0x4c, 0x32, 0x78, 0x3b, 0xe3, 0x98, 0x39, 0x8e, 0x79, 0xd2, 0x6d,
+	0x35, 0x7c, 0xe6, 0x33, 0x45, 0xb1, 0x92, 0x7f, 0x29, 0xbb, 0x75, 0xc7, 0x67, 0xcc, 0x0f, 0xb0,
+	0x85, 0x38, 0xb1, 0x10, 0xa5, 0x4c, 0x2a, 0xbe, 0xc8, 0xde, 0x76, 0x96, 0xcc, 0xcb, 0x5b, 0x2b,
+	0xa6, 0xd1, 0x00, 0x70, 0x3f, 0x09, 0xb1, 0x87, 0x22, 0x14, 0x0a, 0x1b, 0x8f, 0x63, 0x2c, 0xa4,
+	0x71, 0x00, 0x6e, 0x5d, 0x42, 0x05, 0x67, 0x54, 0x60, 0xf8, 0x1c, 0x54, 0xb8, 0x42, 0x9a, 0x5a,
+	0x5b, 0xeb, 0x54, 0x7b, 0xba, 0xf9, 0xef, 0xcc, 0x66, 0xaa, 0xeb, 0x97, 0xce, 0x2e, 0xb6, 0x0a,
+	0x76, 0xa6, 0x31, 0x26, 0xa0, 0xa1, 0x4c, 0x77, 0x07, 0xa3, 0xfd, 0x18, 0xc7, 0x38, 0x1b, 0x06,
+	0xef, 0x81, 0x5a, 0x88, 0xa2, 0x63, 0x2c, 0x1d, 0x42, 0x3d, 0x7c, 0xaa, 0xbc, 0xeb, 0x76, 0x35,
+	0xc5, 0x86, 0x09, 0x04, 0x3b, 0xe0, 0x26, 0xe3, 0x9c, 0x09, 0x22, 0xb1, 0x43, 0x84, 0x13, 0x30,
+	0xea, 0x37, 0x8b, 0x6d, 0xad, 0xb3, 0x6e, 0x6f, 0x2c, 0xf0, 0xa1, 0x18, 0x31, 0xea, 0xc3, 0x06,
+	0x28, 0x07, 0x24, 0x24, 0xb2, 0xb9, 0xa6, 0x5c, 0xd2, 0x07, 0xc3, 0x05, 0x9b, 0x57, 0x46, 0x67,
+	0x8d, 0x5e, 0x02, 0xe0, 0x22, 0xea, 0x25, 0xd1, 0x71, 0xd2, 0x6a, 0xad, 0x53, 0xed, 0x3d, 0x58,
+	0xd6, 0x6a, 0x77, 0x30, 0x7a, 0xb1, 0x20, 0x67, 0xdd, 0x72, 0x6a, 0xe3, 0xa7, 0x06, 0x6a, 0x79,
+	0x0a, 0xbc, 0x0f, 0xea, 0xc8, 0x75, 0x59, 0x4c, 0xf3, 0xcd, 0x4a, 0x76, 0x2d, 0x03, 0xd3, 0x6a,
+	0x7d, 0x50, 0x57, 0x05, 0x08, 0xa3, 0x8e, 0x20, 0x53, 0xac, 0x7a, 0xdd, 0xe8, 0xdf, 0x4d, 0xec,
+	0xbf, 0x5d, 0x6c, 0x6d, 0xba, 0x4c, 0x84, 0x4c, 0x08, 0xef, 0xd8, 0x24, 0xcc, 0x0a, 0x91, 0x3c,
+	0x32, 0x87, 0x54, 0xda, 0xb5, 0x85, 0xe6, 0x80, 0x4c, 0x31, 0x1c, 0x80, 0x8d, 0x98, 0x46, 0x18,
+	0x05, 0x64, 0x8a, 0x3d, 0x87, 0xd3, 0x40, 0xb5, 0xbf, 0xd6, 0xa4, 0xfe, 0x47, 0xb4, 0x47, 0x03,
+	0xb8, 0x03, 0xca, 0xc2, 0x65, 0x11, 0x6e, 0x96, 0x56, 0x11, 0xa7, 0xdc, 0xde, 0xe7, 0x22, 0x28,
+	0xab, 0xa3, 0x85, 0xef, 0x35, 0x50, 0x49, 0xef, 0x1d, 0x3e, 0x5a, 0x76, 0x82, 0x7f, 0xaf, 0x5a,
+	0xeb, 0xf1, 0x4a, 0xdc, 0xf4, 0xba, 0x8c, 0x87, 0xef, 0xbe, 0xfc, 0xf8, 0x58, 0x6c, 0x43, 0xdd,
+	0x5a, 0xb2, 0xe0, 0xe9, 0xaa, 0xc1, 0x4f, 0x1a, 0x58, 0x5f, 0xdc, 0x35, 0x7c, 0xf2, 0xdf, 0x09,
+	0x57, 0xb6, 0xb1, 0xb5, 0xbd, 0x22, 0x3b, 0x4b, 0xf4, 0x4c, 0x25, 0xea, 0xc1, 0xa7, 0xcb, 0x12,
+	0x21, 0x2f, 0x70, 0xc6, 0x89, 0xc4, 0x7a, 0x93, 0xdf, 0xf2, 0xb7, 0xfd, 0x57, 0x67, 0x33, 0x5d,
+	0x3b, 0x9f, 0xe9, 0xda, 0xf7, 0x99, 0xae, 0x7d, 0x98, 0xeb, 0x85, 0xf3, 0xb9, 0x5e, 0xf8, 0x3a,
+	0xd7, 0x0b, 0xaf, 0xbb, 0x3e, 0x91, 0x47, 0xf1, 0xa1, 0xe9, 0xb2, 0xf0, 0xb7, 0x6b, 0xf6, 0xbb,
+	0x1d, 0x74, 0xad, 0xcb, 0x23, 0xe4, 0x84, 0x63, 0x71, 0x58, 0x51, 0x5f, 0xf3, 0xce, 0xaf, 0x00,
+	0x00, 0x00, 0xff, 0xff, 0x00, 0xe2, 0x27, 0x6c, 0x69, 0x04, 0x00, 0x00,
 }
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -540,13 +333,6 @@ const _ = grpc.SupportPackageIsVersion4
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://godoc.org/google.golang.org/grpc#ClientConn.NewStream.
 type QueryClient interface {
 	Params(ctx context.Context, in *QueryParamsRequest, opts ...grpc.CallOption) (*QueryParamsResponse, error)
-	// LiquidationFlag returns the flag for a single (account, market). The
-	// EndBlocker writes flags every block while an account remains
-	// unhealthy and clears them once it returns to HEALTHY.
-	LiquidationFlag(ctx context.Context, in *QueryLiquidationFlagRequest, opts ...grpc.CallOption) (*QueryLiquidationFlagResponse, error)
-	// LiquidationFlags lists every flag currently set for the given
-	// account. Useful for keeper bots scanning a victim's positions.
-	LiquidationFlags(ctx context.Context, in *QueryLiquidationFlagsRequest, opts ...grpc.CallOption) (*QueryLiquidationFlagsResponse, error)
 	// ADLQueue returns counterparties on the requested side of `market_index`
 	// ranked by `profit_ratio * leverage` descending. Keeper bots use it
 	// to pre-select counterparties before submitting MsgDeleverage. The
@@ -572,24 +358,6 @@ func (c *queryClient) Params(ctx context.Context, in *QueryParamsRequest, opts .
 	return out, nil
 }
 
-func (c *queryClient) LiquidationFlag(ctx context.Context, in *QueryLiquidationFlagRequest, opts ...grpc.CallOption) (*QueryLiquidationFlagResponse, error) {
-	out := new(QueryLiquidationFlagResponse)
-	err := c.cc.Invoke(ctx, "/perpdex.liquidation.v1.Query/LiquidationFlag", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *queryClient) LiquidationFlags(ctx context.Context, in *QueryLiquidationFlagsRequest, opts ...grpc.CallOption) (*QueryLiquidationFlagsResponse, error) {
-	out := new(QueryLiquidationFlagsResponse)
-	err := c.cc.Invoke(ctx, "/perpdex.liquidation.v1.Query/LiquidationFlags", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *queryClient) ADLQueue(ctx context.Context, in *QueryADLQueueRequest, opts ...grpc.CallOption) (*QueryADLQueueResponse, error) {
 	out := new(QueryADLQueueResponse)
 	err := c.cc.Invoke(ctx, "/perpdex.liquidation.v1.Query/ADLQueue", in, out, opts...)
@@ -602,13 +370,6 @@ func (c *queryClient) ADLQueue(ctx context.Context, in *QueryADLQueueRequest, op
 // QueryServer is the server API for Query service.
 type QueryServer interface {
 	Params(context.Context, *QueryParamsRequest) (*QueryParamsResponse, error)
-	// LiquidationFlag returns the flag for a single (account, market). The
-	// EndBlocker writes flags every block while an account remains
-	// unhealthy and clears them once it returns to HEALTHY.
-	LiquidationFlag(context.Context, *QueryLiquidationFlagRequest) (*QueryLiquidationFlagResponse, error)
-	// LiquidationFlags lists every flag currently set for the given
-	// account. Useful for keeper bots scanning a victim's positions.
-	LiquidationFlags(context.Context, *QueryLiquidationFlagsRequest) (*QueryLiquidationFlagsResponse, error)
 	// ADLQueue returns counterparties on the requested side of `market_index`
 	// ranked by `profit_ratio * leverage` descending. Keeper bots use it
 	// to pre-select counterparties before submitting MsgDeleverage. The
@@ -623,12 +384,6 @@ type UnimplementedQueryServer struct {
 
 func (*UnimplementedQueryServer) Params(ctx context.Context, req *QueryParamsRequest) (*QueryParamsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Params not implemented")
-}
-func (*UnimplementedQueryServer) LiquidationFlag(ctx context.Context, req *QueryLiquidationFlagRequest) (*QueryLiquidationFlagResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method LiquidationFlag not implemented")
-}
-func (*UnimplementedQueryServer) LiquidationFlags(ctx context.Context, req *QueryLiquidationFlagsRequest) (*QueryLiquidationFlagsResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method LiquidationFlags not implemented")
 }
 func (*UnimplementedQueryServer) ADLQueue(ctx context.Context, req *QueryADLQueueRequest) (*QueryADLQueueResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ADLQueue not implemented")
@@ -652,42 +407,6 @@ func _Query_Params_Handler(srv interface{}, ctx context.Context, dec func(interf
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(QueryServer).Params(ctx, req.(*QueryParamsRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Query_LiquidationFlag_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(QueryLiquidationFlagRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(QueryServer).LiquidationFlag(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/perpdex.liquidation.v1.Query/LiquidationFlag",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(QueryServer).LiquidationFlag(ctx, req.(*QueryLiquidationFlagRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Query_LiquidationFlags_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(QueryLiquidationFlagsRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(QueryServer).LiquidationFlags(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/perpdex.liquidation.v1.Query/LiquidationFlags",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(QueryServer).LiquidationFlags(ctx, req.(*QueryLiquidationFlagsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -718,14 +437,6 @@ var _Query_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Params",
 			Handler:    _Query_Params_Handler,
-		},
-		{
-			MethodName: "LiquidationFlag",
-			Handler:    _Query_LiquidationFlag_Handler,
-		},
-		{
-			MethodName: "LiquidationFlags",
-			Handler:    _Query_LiquidationFlags_Handler,
 		},
 		{
 			MethodName: "ADLQueue",
@@ -789,147 +500,6 @@ func (m *QueryParamsResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	}
 	i--
 	dAtA[i] = 0xa
-	return len(dAtA) - i, nil
-}
-
-func (m *QueryLiquidationFlagRequest) Marshal() (dAtA []byte, err error) {
-	size := m.Size()
-	dAtA = make([]byte, size)
-	n, err := m.MarshalToSizedBuffer(dAtA[:size])
-	if err != nil {
-		return nil, err
-	}
-	return dAtA[:n], nil
-}
-
-func (m *QueryLiquidationFlagRequest) MarshalTo(dAtA []byte) (int, error) {
-	size := m.Size()
-	return m.MarshalToSizedBuffer(dAtA[:size])
-}
-
-func (m *QueryLiquidationFlagRequest) MarshalToSizedBuffer(dAtA []byte) (int, error) {
-	i := len(dAtA)
-	_ = i
-	var l int
-	_ = l
-	if m.MarketIndex != 0 {
-		i = encodeVarintQuery(dAtA, i, uint64(m.MarketIndex))
-		i--
-		dAtA[i] = 0x10
-	}
-	if m.AccountIndex != 0 {
-		i = encodeVarintQuery(dAtA, i, uint64(m.AccountIndex))
-		i--
-		dAtA[i] = 0x8
-	}
-	return len(dAtA) - i, nil
-}
-
-func (m *QueryLiquidationFlagResponse) Marshal() (dAtA []byte, err error) {
-	size := m.Size()
-	dAtA = make([]byte, size)
-	n, err := m.MarshalToSizedBuffer(dAtA[:size])
-	if err != nil {
-		return nil, err
-	}
-	return dAtA[:n], nil
-}
-
-func (m *QueryLiquidationFlagResponse) MarshalTo(dAtA []byte) (int, error) {
-	size := m.Size()
-	return m.MarshalToSizedBuffer(dAtA[:size])
-}
-
-func (m *QueryLiquidationFlagResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
-	i := len(dAtA)
-	_ = i
-	var l int
-	_ = l
-	{
-		size, err := m.Flag.MarshalToSizedBuffer(dAtA[:i])
-		if err != nil {
-			return 0, err
-		}
-		i -= size
-		i = encodeVarintQuery(dAtA, i, uint64(size))
-	}
-	i--
-	dAtA[i] = 0x12
-	if m.Present {
-		i--
-		if m.Present {
-			dAtA[i] = 1
-		} else {
-			dAtA[i] = 0
-		}
-		i--
-		dAtA[i] = 0x8
-	}
-	return len(dAtA) - i, nil
-}
-
-func (m *QueryLiquidationFlagsRequest) Marshal() (dAtA []byte, err error) {
-	size := m.Size()
-	dAtA = make([]byte, size)
-	n, err := m.MarshalToSizedBuffer(dAtA[:size])
-	if err != nil {
-		return nil, err
-	}
-	return dAtA[:n], nil
-}
-
-func (m *QueryLiquidationFlagsRequest) MarshalTo(dAtA []byte) (int, error) {
-	size := m.Size()
-	return m.MarshalToSizedBuffer(dAtA[:size])
-}
-
-func (m *QueryLiquidationFlagsRequest) MarshalToSizedBuffer(dAtA []byte) (int, error) {
-	i := len(dAtA)
-	_ = i
-	var l int
-	_ = l
-	if m.AccountIndex != 0 {
-		i = encodeVarintQuery(dAtA, i, uint64(m.AccountIndex))
-		i--
-		dAtA[i] = 0x8
-	}
-	return len(dAtA) - i, nil
-}
-
-func (m *QueryLiquidationFlagsResponse) Marshal() (dAtA []byte, err error) {
-	size := m.Size()
-	dAtA = make([]byte, size)
-	n, err := m.MarshalToSizedBuffer(dAtA[:size])
-	if err != nil {
-		return nil, err
-	}
-	return dAtA[:n], nil
-}
-
-func (m *QueryLiquidationFlagsResponse) MarshalTo(dAtA []byte) (int, error) {
-	size := m.Size()
-	return m.MarshalToSizedBuffer(dAtA[:size])
-}
-
-func (m *QueryLiquidationFlagsResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
-	i := len(dAtA)
-	_ = i
-	var l int
-	_ = l
-	if len(m.Flags) > 0 {
-		for iNdEx := len(m.Flags) - 1; iNdEx >= 0; iNdEx-- {
-			{
-				size, err := m.Flags[iNdEx].MarshalToSizedBuffer(dAtA[:i])
-				if err != nil {
-					return 0, err
-				}
-				i -= size
-				i = encodeVarintQuery(dAtA, i, uint64(size))
-			}
-			i--
-			dAtA[i] = 0xa
-		}
-	}
 	return len(dAtA) - i, nil
 }
 
@@ -1102,62 +672,6 @@ func (m *QueryParamsResponse) Size() (n int) {
 	return n
 }
 
-func (m *QueryLiquidationFlagRequest) Size() (n int) {
-	if m == nil {
-		return 0
-	}
-	var l int
-	_ = l
-	if m.AccountIndex != 0 {
-		n += 1 + sovQuery(uint64(m.AccountIndex))
-	}
-	if m.MarketIndex != 0 {
-		n += 1 + sovQuery(uint64(m.MarketIndex))
-	}
-	return n
-}
-
-func (m *QueryLiquidationFlagResponse) Size() (n int) {
-	if m == nil {
-		return 0
-	}
-	var l int
-	_ = l
-	if m.Present {
-		n += 2
-	}
-	l = m.Flag.Size()
-	n += 1 + l + sovQuery(uint64(l))
-	return n
-}
-
-func (m *QueryLiquidationFlagsRequest) Size() (n int) {
-	if m == nil {
-		return 0
-	}
-	var l int
-	_ = l
-	if m.AccountIndex != 0 {
-		n += 1 + sovQuery(uint64(m.AccountIndex))
-	}
-	return n
-}
-
-func (m *QueryLiquidationFlagsResponse) Size() (n int) {
-	if m == nil {
-		return 0
-	}
-	var l int
-	_ = l
-	if len(m.Flags) > 0 {
-		for _, e := range m.Flags {
-			l = e.Size()
-			n += 1 + l + sovQuery(uint64(l))
-		}
-	}
-	return n
-}
-
 func (m *QueryADLQueueRequest) Size() (n int) {
 	if m == nil {
 		return 0
@@ -1324,350 +838,6 @@ func (m *QueryParamsResponse) Unmarshal(dAtA []byte) error {
 				return io.ErrUnexpectedEOF
 			}
 			if err := m.Params.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
-				return err
-			}
-			iNdEx = postIndex
-		default:
-			iNdEx = preIndex
-			skippy, err := skipQuery(dAtA[iNdEx:])
-			if err != nil {
-				return err
-			}
-			if (skippy < 0) || (iNdEx+skippy) < 0 {
-				return ErrInvalidLengthQuery
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
-}
-func (m *QueryLiquidationFlagRequest) Unmarshal(dAtA []byte) error {
-	l := len(dAtA)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowQuery
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := dAtA[iNdEx]
-			iNdEx++
-			wire |= uint64(b&0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: QueryLiquidationFlagRequest: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: QueryLiquidationFlagRequest: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		case 1:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field AccountIndex", wireType)
-			}
-			m.AccountIndex = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowQuery
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.AccountIndex |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 2:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field MarketIndex", wireType)
-			}
-			m.MarketIndex = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowQuery
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.MarketIndex |= uint32(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		default:
-			iNdEx = preIndex
-			skippy, err := skipQuery(dAtA[iNdEx:])
-			if err != nil {
-				return err
-			}
-			if (skippy < 0) || (iNdEx+skippy) < 0 {
-				return ErrInvalidLengthQuery
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
-}
-func (m *QueryLiquidationFlagResponse) Unmarshal(dAtA []byte) error {
-	l := len(dAtA)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowQuery
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := dAtA[iNdEx]
-			iNdEx++
-			wire |= uint64(b&0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: QueryLiquidationFlagResponse: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: QueryLiquidationFlagResponse: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		case 1:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Present", wireType)
-			}
-			var v int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowQuery
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				v |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			m.Present = bool(v != 0)
-		case 2:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Flag", wireType)
-			}
-			var msglen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowQuery
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				msglen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if msglen < 0 {
-				return ErrInvalidLengthQuery
-			}
-			postIndex := iNdEx + msglen
-			if postIndex < 0 {
-				return ErrInvalidLengthQuery
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			if err := m.Flag.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
-				return err
-			}
-			iNdEx = postIndex
-		default:
-			iNdEx = preIndex
-			skippy, err := skipQuery(dAtA[iNdEx:])
-			if err != nil {
-				return err
-			}
-			if (skippy < 0) || (iNdEx+skippy) < 0 {
-				return ErrInvalidLengthQuery
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
-}
-func (m *QueryLiquidationFlagsRequest) Unmarshal(dAtA []byte) error {
-	l := len(dAtA)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowQuery
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := dAtA[iNdEx]
-			iNdEx++
-			wire |= uint64(b&0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: QueryLiquidationFlagsRequest: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: QueryLiquidationFlagsRequest: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		case 1:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field AccountIndex", wireType)
-			}
-			m.AccountIndex = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowQuery
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.AccountIndex |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		default:
-			iNdEx = preIndex
-			skippy, err := skipQuery(dAtA[iNdEx:])
-			if err != nil {
-				return err
-			}
-			if (skippy < 0) || (iNdEx+skippy) < 0 {
-				return ErrInvalidLengthQuery
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
-}
-func (m *QueryLiquidationFlagsResponse) Unmarshal(dAtA []byte) error {
-	l := len(dAtA)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowQuery
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := dAtA[iNdEx]
-			iNdEx++
-			wire |= uint64(b&0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: QueryLiquidationFlagsResponse: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: QueryLiquidationFlagsResponse: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		case 1:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Flags", wireType)
-			}
-			var msglen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowQuery
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				msglen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if msglen < 0 {
-				return ErrInvalidLengthQuery
-			}
-			postIndex := iNdEx + msglen
-			if postIndex < 0 {
-				return ErrInvalidLengthQuery
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Flags = append(m.Flags, LiquidationFlag{})
-			if err := m.Flags[len(m.Flags)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex

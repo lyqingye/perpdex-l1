@@ -84,11 +84,11 @@ type Fill struct {
 	// side. Used by Deleverage to opt the LLP / Insurance Fund out
 	// of post-trade health validation when they take over a victim's
 	// position: pool-side absorbers are explicitly allowed to take
-	// on residual exposure, mirroring `internal_deleverage.rs` where
-	// `is_valid_risk_change` is asserted on bankrupt (maker in our
-	// convention) but NOT on the deleverager when it is the
-	// insurance fund. perpdex's user-ADL path keeps both flags off —
-	// defense-in-depth check on the counterparty's health.
+	// on residual exposure, so the post-trade risk regression assert
+	// runs on the bankrupt (maker in our convention) but NOT on the
+	// pool / IF deleverager. perpdex's user-ADL path keeps both
+	// flags off — defense-in-depth check on the counterparty's
+	// health.
 	SkipTakerRiskCheck bool
 	// ZeroPrice + LiquidationFeeBps + LiquidationFeeRecipient
 	// describe the "improvement-over-zero-price" liquidation fee.
@@ -106,11 +106,10 @@ type Fill struct {
 	// equal-to-floor fill produces fee=0, matching the keeper-driven
 	// IoC close-out that fills at exactly the zero price.
 	//
-	// Mirrors the `matching_engine.rs` `taker_fee` upper bound
+	// Applies a taker fee upper bound of
 	// `min(market.liquidation_fee, (|maker - pending| * FEE_TICK) /
-	// maker_price)` while applying the resulting rate to the trade
-	// notional. Caller MUST set MakerFee/TakerFee to 0 — those are
-	// disjoint fee paths.
+	// maker_price)` to the trade notional. Caller MUST set
+	// MakerFee/TakerFee to 0 — those are disjoint fee paths.
 	//
 	// `fee` is debited from the victim (the side being closed) and
 	// credited to LiquidationFeeRecipient (LLP / Insurance Fund).
@@ -120,26 +119,25 @@ type Fill struct {
 }
 
 // Apply applies a perp fill to both maker and taker positions.
-// Implements the 8-step pipeline from 14-trade.md §3 with full
-// `is_valid_perps_trade` semantics:
+// Implements the 8-step pipeline from 14-trade.md §3:
 //  1. settle pending funding for both sides
 //  2. snapshot pre-state risk
 //  3. compute position deltas (4 scenarios) + bounds-check
 //     `|position|` and `|entry_quote|` against POSITION_SIZE_BITS /
-//     ENTRY_QUOTE_BITS (`is_new_position_valid`)
+//     ENTRY_QUOTE_BITS
 //  4. route realized PnL: isolated → allocated_margin, cross → collateral
 //  5. apply taker/maker fees + treasury (and liquidation improvement
 //     fee when present)
 //  6. for isolated positions, auto-allocate `margin_delta` from cross
-//     collateral (`calculate_isolated_margin_change`) and pre-check
-//     `available_cross_collateral >= margin_delta`
+//     collateral and pre-check `available_cross_collateral >=
+//     margin_delta`
 //  7. update OI using `|position|` deltas (both sides, divided by 2)
 //  8. validate IsValidRiskChangeFrom for BOTH taker and maker
 //
-// Each per-side failure is wrapped into the corresponding maker / taker
-// sentinel so the matching loop can evict the bad maker (and continue)
-// or stop the bad taker (preserving prior fills) per the
-// `cancel_maker_order` / `cancel_taker_order` semantics.
+// Each per-side failure is wrapped into the corresponding maker /
+// taker sentinel so the matching loop can evict the bad maker (and
+// continue) or stop the bad taker (preserving prior fills) — the
+// "cancel maker" / "cancel taker" recovery split.
 func (e Engine) Apply(ctx context.Context, f Fill) error {
 	if err := e.fundingKeeper.SettlePositionFunding(ctx, f.MakerAccountIndex, f.MarketIndex); err != nil {
 		return err
@@ -361,13 +359,13 @@ func (e Engine) applyAccount(ctx context.Context, res *positionChangeResult, fee
 // where `price` is the actual fill price (the maker's resting price)
 // and `notional = BaseAmount * Price`.
 //
-// `matching_engine.rs` upper-bounds the per-trade taker fee at
-// `min(market.liquidation_fee, price_diff_rate)`, where `price_diff_rate
-// = (|maker_price - pending_price| * FEE_TICK) / maker_price`. We
-// match that exact ceiling and then turn the bound into an absolute
-// fee by scaling the notional with the same rate (`notional * rate /
-// FeeTick`), giving the fee the same "fraction of trade quote" shape
-// as the matching engine's enforcement.
+// The per-trade taker fee is upper-bounded at
+// `min(market.LiquidationFee, price_diff_rate)`, where
+// `price_diff_rate = (|maker_price - pending_price| * FeeTick) /
+// maker_price`. We honour that ceiling and turn the bound into an
+// absolute fee by scaling the notional with the same rate
+// (`notional * rate / FeeTick`), giving the fee a "fraction of
+// trade quote" shape.
 //
 // `takerSide` flips the improvement sign so that a fill BETTER than
 // the victim's zero price yields a positive fee regardless of whether
@@ -377,10 +375,9 @@ func (e Engine) applyAccount(ctx context.Context, res *positionChangeResult, fee
 // keeper-driven IoC close-out path that fills exactly at the zero
 // price.
 //
-// No hard-coded notional cap is applied: the spec leaves the upper
-// bound to `market.LiquidationFee` (a governance-configured
-// tick-fraction) and to `price_diff_rate`, both of which are honoured
-// directly.
+// No hard-coded notional cap is applied: the upper bound is left to
+// `market.LiquidationFee` (a governance-configured tick-fraction)
+// and to `price_diff_rate`, both of which are honoured directly.
 func liquidationImprovementFee(f Fill, notional math.Int) math.Int {
 	if f.LiquidationFeeBps == 0 || f.BaseAmount == 0 || f.Price == 0 {
 		return math.ZeroInt()
@@ -401,7 +398,6 @@ func liquidationImprovementFee(f Fill, notional math.Int) math.Int {
 		return math.ZeroInt()
 	}
 	// price_diff_rate = (|improvement| * FeeTick) / price.
-	// See matching_engine.rs `price_diff_rate` block.
 	feeTick := math.NewIntFromUint64(perptypes.FeeTick)
 	priceDiffRate := improvement.Mul(feeTick).Quo(priceInt)
 	feeBpsInt := math.NewIntFromUint64(uint64(f.LiquidationFeeBps))

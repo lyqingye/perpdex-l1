@@ -22,74 +22,6 @@ var _ = math.Inf
 // proto package needs to be updated.
 const _ = proto.GoGoProtoPackageIsVersion3 // please upgrade the proto package
 
-type LiquidationFlag struct {
-	AccountIndex   uint64 `protobuf:"varint,1,opt,name=account_index,json=accountIndex,proto3" json:"account_index,omitempty"`
-	MarketIndex    uint32 `protobuf:"varint,2,opt,name=market_index,json=marketIndex,proto3" json:"market_index,omitempty"`
-	FlaggedAtBlock int64  `protobuf:"varint,3,opt,name=flagged_at_block,json=flaggedAtBlock,proto3" json:"flagged_at_block,omitempty"`
-	FlaggedAtTime  int64  `protobuf:"varint,4,opt,name=flagged_at_time,json=flaggedAtTime,proto3" json:"flagged_at_time,omitempty"`
-}
-
-func (m *LiquidationFlag) Reset()         { *m = LiquidationFlag{} }
-func (m *LiquidationFlag) String() string { return proto.CompactTextString(m) }
-func (*LiquidationFlag) ProtoMessage()    {}
-func (*LiquidationFlag) Descriptor() ([]byte, []int) {
-	return fileDescriptor_355eeec9cda6bf86, []int{0}
-}
-func (m *LiquidationFlag) XXX_Unmarshal(b []byte) error {
-	return m.Unmarshal(b)
-}
-func (m *LiquidationFlag) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	if deterministic {
-		return xxx_messageInfo_LiquidationFlag.Marshal(b, m, deterministic)
-	} else {
-		b = b[:cap(b)]
-		n, err := m.MarshalToSizedBuffer(b)
-		if err != nil {
-			return nil, err
-		}
-		return b[:n], nil
-	}
-}
-func (m *LiquidationFlag) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_LiquidationFlag.Merge(m, src)
-}
-func (m *LiquidationFlag) XXX_Size() int {
-	return m.Size()
-}
-func (m *LiquidationFlag) XXX_DiscardUnknown() {
-	xxx_messageInfo_LiquidationFlag.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_LiquidationFlag proto.InternalMessageInfo
-
-func (m *LiquidationFlag) GetAccountIndex() uint64 {
-	if m != nil {
-		return m.AccountIndex
-	}
-	return 0
-}
-
-func (m *LiquidationFlag) GetMarketIndex() uint32 {
-	if m != nil {
-		return m.MarketIndex
-	}
-	return 0
-}
-
-func (m *LiquidationFlag) GetFlaggedAtBlock() int64 {
-	if m != nil {
-		return m.FlaggedAtBlock
-	}
-	return 0
-}
-
-func (m *LiquidationFlag) GetFlaggedAtTime() int64 {
-	if m != nil {
-		return m.FlaggedAtTime
-	}
-	return 0
-}
-
 type Params struct {
 	// max_adl_attempts_per_block caps how many counterparty fills the
 	// EndBlocker auto-ADL loop is allowed to push through in one block.
@@ -104,7 +36,7 @@ func (m *Params) Reset()         { *m = Params{} }
 func (m *Params) String() string { return proto.CompactTextString(m) }
 func (*Params) ProtoMessage()    {}
 func (*Params) Descriptor() ([]byte, []int) {
-	return fileDescriptor_355eeec9cda6bf86, []int{1}
+	return fileDescriptor_355eeec9cda6bf86, []int{0}
 }
 func (m *Params) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -148,7 +80,6 @@ func (m *Params) GetMaxAdlCandidatesPerVictim() uint32 {
 }
 
 func init() {
-	proto.RegisterType((*LiquidationFlag)(nil), "perpdex.liquidation.v1.LiquidationFlag")
 	proto.RegisterType((*Params)(nil), "perpdex.liquidation.v1.Params")
 }
 
@@ -157,71 +88,22 @@ func init() {
 }
 
 var fileDescriptor_355eeec9cda6bf86 = []byte{
-	// 330 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x54, 0x91, 0xc1, 0x4e, 0xea, 0x40,
-	0x14, 0x86, 0x99, 0x0b, 0x61, 0x31, 0x17, 0xc4, 0x74, 0x41, 0xd0, 0xc4, 0x06, 0x31, 0x31, 0xdd,
-	0x48, 0xd3, 0xb8, 0x73, 0x25, 0x98, 0x98, 0x18, 0x5d, 0x10, 0x62, 0x5c, 0xb8, 0x69, 0x0e, 0x9d,
-	0x63, 0x9d, 0x30, 0xd3, 0x8e, 0xc3, 0x40, 0xea, 0x0b, 0xb8, 0xf6, 0x3d, 0x7c, 0x11, 0x97, 0x2c,
-	0x5d, 0x1a, 0x78, 0x11, 0x43, 0x3b, 0x60, 0x5d, 0x35, 0xfd, 0xce, 0xf7, 0xe7, 0xcc, 0xc9, 0x4f,
-	0x3d, 0x85, 0x5a, 0x31, 0xcc, 0x7c, 0xc1, 0x5f, 0xe6, 0x9c, 0x81, 0xe1, 0x69, 0xe2, 0x2f, 0x82,
-	0xf2, 0x6f, 0x5f, 0xe9, 0xd4, 0xa4, 0x4e, 0xdb, 0x9a, 0xfd, 0xf2, 0x68, 0x11, 0xf4, 0x3e, 0x08,
-	0x6d, 0xdd, 0xfd, 0xa2, 0x6b, 0x01, 0xb1, 0x73, 0x42, 0x9b, 0x10, 0x45, 0xe9, 0x3c, 0x31, 0x21,
-	0x4f, 0x18, 0x66, 0x1d, 0xd2, 0x25, 0x5e, 0x6d, 0xdc, 0xb0, 0xf0, 0x66, 0xc3, 0x9c, 0x63, 0xda,
-	0x90, 0xa0, 0xa7, 0xb8, 0x75, 0xfe, 0x75, 0x89, 0xd7, 0x1c, 0xff, 0x2f, 0x58, 0xa1, 0x78, 0x74,
-	0xff, 0x49, 0x40, 0x1c, 0x23, 0x0b, 0xc1, 0x84, 0x13, 0x91, 0x46, 0xd3, 0x4e, 0xb5, 0x4b, 0xbc,
-	0xea, 0x78, 0xcf, 0xf2, 0x81, 0x19, 0x6e, 0xa8, 0x73, 0x4a, 0x5b, 0x25, 0xd3, 0x70, 0x89, 0x9d,
-	0x5a, 0x2e, 0x36, 0x77, 0xe2, 0x3d, 0x97, 0xd8, 0x7b, 0x23, 0xb4, 0x3e, 0x02, 0x0d, 0x72, 0xe6,
-	0x5c, 0xd0, 0x43, 0x09, 0x59, 0x08, 0x4c, 0x84, 0x60, 0x0c, 0x4a, 0x65, 0x66, 0xa1, 0x42, 0x6d,
-	0xd7, 0x90, 0xfc, 0x35, 0x6d, 0x09, 0xd9, 0x80, 0x89, 0x81, 0x9d, 0x8f, 0x50, 0x17, 0xeb, 0x2e,
-	0xe9, 0xd1, 0x36, 0x1b, 0x41, 0xc2, 0x36, 0xb7, 0x63, 0x91, 0x5e, 0xf0, 0xc8, 0x70, 0x69, 0x8f,
-	0x39, 0x28, 0xe2, 0x57, 0x3b, 0x65, 0x84, 0xfa, 0x21, 0x17, 0x86, 0xb7, 0x9f, 0x2b, 0x97, 0x2c,
-	0x57, 0x2e, 0xf9, 0x5e, 0xb9, 0xe4, 0x7d, 0xed, 0x56, 0x96, 0x6b, 0xb7, 0xf2, 0xb5, 0x76, 0x2b,
-	0x8f, 0x41, 0xcc, 0xcd, 0xf3, 0x7c, 0xd2, 0x8f, 0x52, 0xe9, 0x6f, 0xdb, 0xb1, 0xdf, 0x33, 0x11,
-	0xf8, 0x7f, 0xab, 0x32, 0xaf, 0x0a, 0x67, 0x93, 0x7a, 0x5e, 0xd1, 0xf9, 0x4f, 0x00, 0x00, 0x00,
-	0xff, 0xff, 0xa0, 0xa3, 0xd6, 0xc8, 0xce, 0x01, 0x00, 0x00,
-}
-
-func (m *LiquidationFlag) Marshal() (dAtA []byte, err error) {
-	size := m.Size()
-	dAtA = make([]byte, size)
-	n, err := m.MarshalToSizedBuffer(dAtA[:size])
-	if err != nil {
-		return nil, err
-	}
-	return dAtA[:n], nil
-}
-
-func (m *LiquidationFlag) MarshalTo(dAtA []byte) (int, error) {
-	size := m.Size()
-	return m.MarshalToSizedBuffer(dAtA[:size])
-}
-
-func (m *LiquidationFlag) MarshalToSizedBuffer(dAtA []byte) (int, error) {
-	i := len(dAtA)
-	_ = i
-	var l int
-	_ = l
-	if m.FlaggedAtTime != 0 {
-		i = encodeVarintLiquidation(dAtA, i, uint64(m.FlaggedAtTime))
-		i--
-		dAtA[i] = 0x20
-	}
-	if m.FlaggedAtBlock != 0 {
-		i = encodeVarintLiquidation(dAtA, i, uint64(m.FlaggedAtBlock))
-		i--
-		dAtA[i] = 0x18
-	}
-	if m.MarketIndex != 0 {
-		i = encodeVarintLiquidation(dAtA, i, uint64(m.MarketIndex))
-		i--
-		dAtA[i] = 0x10
-	}
-	if m.AccountIndex != 0 {
-		i = encodeVarintLiquidation(dAtA, i, uint64(m.AccountIndex))
-		i--
-		dAtA[i] = 0x8
-	}
-	return len(dAtA) - i, nil
+	// 227 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xe2, 0xd2, 0x28, 0x48, 0x2d, 0x2a,
+	0x48, 0x49, 0xad, 0xd0, 0xcf, 0xc9, 0x2c, 0x2c, 0xcd, 0x4c, 0x49, 0x2c, 0xc9, 0xcc, 0xcf, 0xd3,
+	0x2f, 0x33, 0x44, 0xe6, 0xea, 0x15, 0x14, 0xe5, 0x97, 0xe4, 0x0b, 0x89, 0x41, 0x55, 0xea, 0x21,
+	0x4b, 0x95, 0x19, 0x2a, 0xb5, 0x31, 0x72, 0xb1, 0x05, 0x24, 0x16, 0x25, 0xe6, 0x16, 0x0b, 0x59,
+	0x71, 0x49, 0xe5, 0x26, 0x56, 0xc4, 0x27, 0xa6, 0xe4, 0xc4, 0x27, 0x96, 0x94, 0xa4, 0xe6, 0x16,
+	0x94, 0x14, 0xc7, 0x17, 0xa4, 0x16, 0xc5, 0x27, 0xe5, 0xe4, 0x27, 0x67, 0x4b, 0x30, 0x2a, 0x30,
+	0x6a, 0xf0, 0x06, 0x89, 0xe5, 0x26, 0x56, 0x38, 0xa6, 0xe4, 0x38, 0x42, 0xe5, 0x03, 0x52, 0x8b,
+	0x9c, 0x40, 0xb2, 0x42, 0x0e, 0x5c, 0xb2, 0x30, 0xbd, 0xc9, 0x89, 0x79, 0x29, 0x20, 0x0b, 0x52,
+	0x21, 0xba, 0xcb, 0x32, 0x93, 0x4b, 0x32, 0x73, 0x25, 0x98, 0xc0, 0xda, 0x25, 0x21, 0xda, 0x9d,
+	0xe1, 0x4a, 0x02, 0x52, 0x8b, 0xc2, 0xc0, 0x0a, 0x9c, 0xbc, 0x4f, 0x3c, 0x92, 0x63, 0xbc, 0xf0,
+	0x48, 0x8e, 0xf1, 0xc1, 0x23, 0x39, 0xc6, 0x09, 0x8f, 0xe5, 0x18, 0x2e, 0x3c, 0x96, 0x63, 0xb8,
+	0xf1, 0x58, 0x8e, 0x21, 0xca, 0x30, 0x3d, 0xb3, 0x24, 0xa3, 0x34, 0x49, 0x2f, 0x39, 0x3f, 0x57,
+	0x1f, 0xe6, 0x5f, 0x28, 0xad, 0x9b, 0x63, 0xa8, 0x8f, 0xea, 0xf9, 0x92, 0xca, 0x82, 0xd4, 0xe2,
+	0x24, 0x36, 0xb0, 0xa7, 0x8d, 0x01, 0x01, 0x00, 0x00, 0xff, 0xff, 0x56, 0x8a, 0x57, 0x18, 0x20,
+	0x01, 0x00, 0x00,
 }
 
 func (m *Params) Marshal() (dAtA []byte, err error) {
@@ -268,27 +150,6 @@ func encodeVarintLiquidation(dAtA []byte, offset int, v uint64) int {
 	dAtA[offset] = uint8(v)
 	return base
 }
-func (m *LiquidationFlag) Size() (n int) {
-	if m == nil {
-		return 0
-	}
-	var l int
-	_ = l
-	if m.AccountIndex != 0 {
-		n += 1 + sovLiquidation(uint64(m.AccountIndex))
-	}
-	if m.MarketIndex != 0 {
-		n += 1 + sovLiquidation(uint64(m.MarketIndex))
-	}
-	if m.FlaggedAtBlock != 0 {
-		n += 1 + sovLiquidation(uint64(m.FlaggedAtBlock))
-	}
-	if m.FlaggedAtTime != 0 {
-		n += 1 + sovLiquidation(uint64(m.FlaggedAtTime))
-	}
-	return n
-}
-
 func (m *Params) Size() (n int) {
 	if m == nil {
 		return 0
@@ -309,132 +170,6 @@ func sovLiquidation(x uint64) (n int) {
 }
 func sozLiquidation(x uint64) (n int) {
 	return sovLiquidation(uint64((x << 1) ^ uint64((int64(x) >> 63))))
-}
-func (m *LiquidationFlag) Unmarshal(dAtA []byte) error {
-	l := len(dAtA)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowLiquidation
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := dAtA[iNdEx]
-			iNdEx++
-			wire |= uint64(b&0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: LiquidationFlag: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: LiquidationFlag: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		case 1:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field AccountIndex", wireType)
-			}
-			m.AccountIndex = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowLiquidation
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.AccountIndex |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 2:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field MarketIndex", wireType)
-			}
-			m.MarketIndex = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowLiquidation
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.MarketIndex |= uint32(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 3:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field FlaggedAtBlock", wireType)
-			}
-			m.FlaggedAtBlock = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowLiquidation
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.FlaggedAtBlock |= int64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 4:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field FlaggedAtTime", wireType)
-			}
-			m.FlaggedAtTime = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowLiquidation
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.FlaggedAtTime |= int64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		default:
-			iNdEx = preIndex
-			skippy, err := skipLiquidation(dAtA[iNdEx:])
-			if err != nil {
-				return err
-			}
-			if (skippy < 0) || (iNdEx+skippy) < 0 {
-				return ErrInvalidLengthLiquidation
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
 }
 func (m *Params) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
