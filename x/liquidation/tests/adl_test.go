@@ -77,7 +77,7 @@ func TestAutoADL_RequiresZeroPriceAlignment(t *testing.T) {
 
 	// ADL should have happened against 202 only, at the
 	// victim-favourable midpoint of 100 and 105. victim is long here,
-	// so `zeroPriceMid` rounds UP: (100 + 105 + 1) / 2 = 103.
+	// so `ZeroPriceMid` rounds UP: (100 + 105 + 1) / 2 = 103.
 	require.NotEmpty(t, tk.calls)
 	for _, f := range tk.calls {
 		require.NotEqual(t, uint64(201), f.TakerAccountIndex,

@@ -184,7 +184,7 @@ func (k Keeper) Liquidate(ctx context.Context, victim uint64, marketIdx uint32, 
 // `EventTypeDeleverage`. Default is `source="msg"`; the LLP absorb
 // path passes `WithDeleverageSource(DeleverageSourceLLP)`. autoADL
 // does NOT route through here — it issues its own ADL trade at
-// `zeroPriceMid(victimZP, candZP)` directly against the trade engine.
+// `ZeroPriceMid(victimZP, candZP)` directly against the trade engine.
 func (k Keeper) Deleverage(
 	ctx context.Context,
 	victim uint64, marketIdx uint32, deleverager uint64, baseAmount uint64,

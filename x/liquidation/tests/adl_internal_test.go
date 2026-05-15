@@ -1,4 +1,9 @@
-package keeper
+// Unit tests for the exported ADL helpers (`ZeroPriceMid`,
+// `ComputeLeverage`). These helpers are kept package-private in spirit
+// — only the `keeper` package calls them in production — but are
+// exported so this external test package can pin their edge cases
+// without resorting to a separate in-package test file.
+package tests
 
 import (
 	"testing"
@@ -7,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	liqkeeper "github.com/perpdex/perpdex-l1/x/liquidation/keeper"
 	risktypes "github.com/perpdex/perpdex-l1/x/risk/types"
 )
 
@@ -33,7 +39,7 @@ func TestZeroPriceMid_Rounding(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			require.Equal(t, tc.want, zeroPriceMid(tc.a, tc.b, tc.victimIsLong))
+			require.Equal(t, tc.want, liqkeeper.ZeroPriceMid(tc.a, tc.b, tc.victimIsLong))
 		})
 	}
 }
@@ -81,8 +87,9 @@ func TestComputeLeverage_Edges(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			require.True(t, tc.want.Equal(computeLeverage(tc.rp)),
-				"want=%s got=%s", tc.want.String(), computeLeverage(tc.rp).String())
+			got := liqkeeper.ComputeLeverage(tc.rp)
+			require.True(t, tc.want.Equal(got),
+				"want=%s got=%s", tc.want.String(), got.String())
 		})
 	}
 }
@@ -94,5 +101,5 @@ func TestComputeLeverage_PanicsOnNilCollateral(t *testing.T) {
 		InitialMarginRequirement: math.NewInt(1),
 	}
 	require.True(t, rp.Collateral.IsNil())
-	require.Panics(t, func() { _ = computeLeverage(rp) })
+	require.Panics(t, func() { _ = liqkeeper.ComputeLeverage(rp) })
 }

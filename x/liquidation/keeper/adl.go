@@ -99,7 +99,7 @@ func (k Keeper) BuildADLQueue(
 		if !uPnL.IsPositive() {
 			return false
 		}
-		leverage := computeLeverage(snap.CrossRisk)
+		leverage := ComputeLeverage(snap.CrossRisk)
 		// uPnL_ratio = uPnL / max(|entry_quote|, 1).
 		entryAbs := pos.EntryQuote.Abs()
 		if !entryAbs.IsPositive() {
@@ -134,12 +134,15 @@ func (k Keeper) BuildADLQueue(
 	return out, nil
 }
 
-// computeLeverage returns `IM * MarginTick / Collateral` as a leverage
+// ComputeLeverage returns `IM * MarginTick / Collateral` as a leverage
 // proxy used only for ADL ranking. `Collateral.IsNil()` is a risk
 // keeper invariant violation and panics. `Collateral <= 0` (residual
 // debt, fully wiped account) clamps to 1 so the candidate ranks at
 // the front of the queue. `IM == 0` returns a neutral 1.
-func computeLeverage(rp risktypes.RiskParameters) math.Int {
+//
+// Exported solely so the external `tests/` package can unit-test the
+// edge cases; production callers all live in this package.
+func ComputeLeverage(rp risktypes.RiskParameters) math.Int {
 	if rp.Collateral.IsNil() {
 		panic("liquidation: RiskParameters.Collateral is nil; upstream invariant violated")
 	}
@@ -231,7 +234,7 @@ func (k Keeper) autoADL(
 		// Round the midpoint toward the victim-favourable side
 		// (long victim → ceil, short victim → floor) to remove the
 		// 1-ulp floor bias.
-		settlePrice := zeroPriceMid(victimZP, c.ZeroPrice, !oppositeIsLong)
+		settlePrice := ZeroPriceMid(victimZP, c.ZeroPrice, !oppositeIsLong)
 		size := c.PositionSize.Abs()
 		if size.GT(remaining) {
 			size = remaining
@@ -298,11 +301,14 @@ func (k Keeper) autoADL(
 	return nil
 }
 
-// zeroPriceMid returns the integer midpoint of two zero prices,
+// ZeroPriceMid returns the integer midpoint of two zero prices,
 // rounded toward the victim-favourable side (long victim → ceil,
 // short victim → floor) to remove the 1-ulp bias plain floor division
 // would compound across many ADL fills.
-func zeroPriceMid(a, b uint32, victimIsLong bool) uint32 {
+//
+// Exported solely so the external `tests/` package can unit-test the
+// rounding edges; production callers all live in this package.
+func ZeroPriceMid(a, b uint32, victimIsLong bool) uint32 {
 	sum := uint64(a) + uint64(b)
 	if victimIsLong {
 		return uint32((sum + 1) / 2)
