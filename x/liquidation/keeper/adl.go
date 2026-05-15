@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strconv"
 
@@ -12,7 +13,6 @@ import (
 	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
 	"github.com/perpdex/perpdex-l1/x/liquidation/types"
 	risktypes "github.com/perpdex/perpdex-l1/x/risk/types"
-	tradekeeper "github.com/perpdex/perpdex-l1/x/trade/keeper"
 )
 
 // ADLCandidate is a counterparty considered for auto-deleveraging on a
@@ -57,6 +57,27 @@ type ADLCandidate struct {
 // snapshot's ZeroPrice was anchored to. ADL ranking deliberately uses
 // `snap.CrossRisk` even when the candidate's targeted position is
 // isolated.
+//
+// Isolated positions are NOT filtered out. ADL operates symmetrically
+// on cross and isolated counterparties:
+//
+//   - Ranking always uses the candidate's CROSS aggregate leverage
+//     (`snap.CrossRisk`), so a high-leverage cross account with an
+//     isolated winner still ranks via its cross leverage. This keeps
+//     the ranking signal consistent with how the spec describes the
+//     ADL queue ("rank by leverage AND profit").
+//   - Execution settles via `Deleverage` which, on the deleverager
+//     side, routes through `preCheckCollateral` (see
+//     [liquidate.go](liquidate.go)). That helper splits on the
+//     position's MarginMode: isolated candidates have their cushion
+//     checked against `pos.AllocatedMargin` (the isolated envelope),
+//     cross candidates against `account.Collateral`.
+//
+// Net effect: an isolated counterparty can absorb ADL flow as long as
+// its allocated margin can swallow the realized loss; it does NOT
+// pull collateral from the candidate's cross account, and a cross
+// account's other isolated envelopes are not touched. There is no
+// special-case path — both modes share the same Deleverage entry.
 func (k Keeper) BuildADLQueue(
 	ctx context.Context,
 	marketIdx uint32,
@@ -134,13 +155,34 @@ func (k Keeper) BuildADLQueue(
 // MarginTick / IMF), so the ratio collapses to IM/Collateral scaled by
 // MarginTick. Both numerator and denominator scale by the same
 // constant for the same account — fine for ranking purposes.
+//
+// Edge cases:
+//
+//   - `rp.Collateral.IsNil()` is an invariant violation by the risk
+//     keeper: `ComputeCrossRisk` / `ComputeIsolatedRisk` always
+//     populate Collateral from `account.Collateral` (which is never
+//     nil for an existing account). Reaching this branch means an
+//     uninitialised `RiskParameters{}` propagated through —
+//     deliberately panic so the upstream bug surfaces immediately
+//     instead of silently degrading ADL rank to leverage=1.
+//   - `rp.Collateral <= 0` is a legitimate-but-extreme state (the
+//     account's USDC cash has been wiped, e.g. residual debt). We
+//     clamp Collateral to 1 so the ratio collapses to `IM * MarginTick`
+//     — i.e. the candidate ranks at the front of the ADL queue,
+//     which is the intended ordering for "no cushion left".
+//   - `rp.InitialMarginRequirement.IsZero()` means the account has
+//     no open positions whose IM contributes to cross — leverage is
+//     not meaningful, return 1 so the score multiplier is neutral.
 func computeLeverage(rp risktypes.RiskParameters) math.Int {
-	collateral := rp.Collateral
-	if collateral.IsNil() || !collateral.IsPositive() {
-		collateral = math.OneInt()
+	if rp.Collateral.IsNil() {
+		panic("liquidation: computeLeverage saw RiskParameters.Collateral == nil; upstream risk keeper invariant violated")
 	}
 	if rp.InitialMarginRequirement.IsZero() {
 		return math.OneInt()
+	}
+	collateral := rp.Collateral
+	if !collateral.IsPositive() {
+		collateral = math.OneInt()
 	}
 	return rp.InitialMarginRequirement.Mul(math.NewInt(int64(perptypes.MarginTick))).Quo(collateral)
 }
@@ -202,7 +244,6 @@ func (k Keeper) autoADL(
 	}
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	remaining := pos.BaseSize.Abs()
-	takerIsAsk := pos.OpeningIsAsk()
 	for _, c := range cands {
 		if *attemptsLeft == 0 || remaining.IsZero() {
 			break
@@ -225,7 +266,12 @@ func (k Keeper) autoADL(
 				continue
 			}
 		}
-		settlePrice := zeroPriceMid(victimZP, c.ZeroPrice)
+		// `oppositeIsLong` is the cand's side, so victim is its
+		// opposite. Pass victim's direction into the midpoint
+		// rounding so floor truncation tilts toward the side that
+		// keeps victim's TAV intact (long victim → ceiling; short
+		// victim → floor).
+		settlePrice := zeroPriceMid(victimZP, c.ZeroPrice, !oppositeIsLong)
 		size := c.PositionSize.Abs()
 		if size.GT(remaining) {
 			size = remaining
@@ -233,50 +279,37 @@ func (k Keeper) autoADL(
 		if !size.IsPositive() {
 			continue
 		}
-		fill := tradekeeper.PerpFill{
-			MakerAccountIndex: victim,
-			TakerAccountIndex: c.AccountIndex,
-			MarketIndex:       marketIdx,
-			Price:             settlePrice,
-			BaseAmount:        size.Uint64(),
-			IsTakerAsk:        takerIsAsk,
-			NoFee:             true,
-			// User-ADL: defense-in-depth — both bankrupt (maker)
-			// and counterparty (taker) go through
-			// IsValidRiskChangeFrom. The bankrupt check is the
-			// standard post-trade risk regression assert; the
-			// counterparty check is perpdex-stricter than a
-			// pure collateral-sufficiency assert. The settlement
-			// at zeroPriceMid guarantees the counterparty's
-			// TAV/MMR cannot regress, so the check passes in
-			// normal flow but still catches pathological pricing.
-			// Both flags default to false here because we DO want
-			// both risk checks under user-ADL.
-		}
-		// Pre-trade collateral assert on the counterparty side only
-		// (mirrors the guard inside Deleverage's user-ADL branch).
-		// autoADL fills go through the engine directly because the
-		// settle price differs from the victim's zero price
-		// (`zeroPriceMid` covers the overlap of both sides' zero
-		// prices), so we can't reuse Deleverage as a wrapper.
-		// Replicating the assert keeps both deleverage codepaths
-		// consistently funding-aware. The bankrupt side is not
-		// asserted — see Deleverage docstring for rationale.
-		if err := k.preCheckCollateral(
-			ctx, c.AccountIndex, marketIdx, size.Uint64(), settlePrice,
-			true /*isTakerSide*/, takerIsAsk, "counterparty",
+		// Drive the fill through `Deleverage` with a settle-price
+		// override so MsgDeleverage and autoADL share one
+		// preCheckCollateral / risk-check / event emission path.
+		// `ErrInsufficientCollateral` is the documented
+		// "counterparty cannot absorb this fill" signal — we treat
+		// it as a graceful skip and advance to the next candidate,
+		// matching the pre-collapse autoADL behaviour. Other
+		// errors are logged and skipped (preserving the
+		// "EndBlocker keeps making progress" contract).
+		if err := k.Deleverage(
+			ctx, victim, marketIdx, c.AccountIndex, size.Uint64(),
+			WithSettlePrice(settlePrice),
+			WithDeleverageSource(DeleverageSourceAutoADL),
 		); err != nil {
-			sdkCtx.Logger().Info("liquidation: auto-adl skipped (insufficient counterparty collateral)",
-				"victim", victim, "market", marketIdx,
-				"counterparty", c.AccountIndex, "err", err)
-			continue
-		}
-		if err := k.tradeKeeper.ApplyPerpsMatching(ctx, fill); err != nil {
+			if errors.Is(err, types.ErrInsufficientCollateral) {
+				sdkCtx.Logger().Info("liquidation: auto-adl skipped (insufficient counterparty collateral)",
+					"victim", victim, "market", marketIdx,
+					"counterparty", c.AccountIndex, "err", err)
+				continue
+			}
 			sdkCtx.Logger().Error("liquidation: auto-adl fill failed",
 				"victim", victim, "market", marketIdx,
 				"counterparty", c.AccountIndex, "err", err)
 			continue
 		}
+		// `EventTypeAutoADL` is the ADL-specific audit event (it
+		// carries victim/cand zero prices that downstream indexers
+		// use for spread analysis). `EventTypeDeleverage` is also
+		// emitted inside `Deleverage` with `source=auto_adl`, so a
+		// single deleverage stream is sufficient for callers that
+		// only care about the unified entry-point view.
 		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
 			types.EventTypeAutoADL,
 			sdk.NewAttribute(types.AttributeKeyVictim, strconv.FormatUint(victim, 10)),
@@ -293,10 +326,23 @@ func (k Keeper) autoADL(
 	return nil
 }
 
-// zeroPriceMid returns the integer midpoint of two zero prices. Both
-// arguments are uint32 prices; the midpoint never overflows uint32.
-func zeroPriceMid(a, b uint32) uint32 {
-	// (a + b) / 2 with uint64 widening to avoid wrap-around even in
-	// the (theoretical) MaxOrderPrice + MaxOrderPrice case.
-	return uint32((uint64(a) + uint64(b)) / 2)
+// zeroPriceMid returns the integer midpoint of two zero prices,
+// rounded toward the side that protects the victim's TAV. Integer
+// floor division on its own systematically tilts the midpoint by up to
+// 1 ulp; across many ADL fills the bias compounds against the victim.
+// We instead round based on the victim's direction:
+//
+//   - victim long  → settle price closer to the higher endpoint is
+//     more favourable to victim, so we round UP (ceiling).
+//   - victim short → settle price closer to the lower endpoint is
+//     more favourable to victim, so we round DOWN (floor).
+//
+// Both arguments are uint32 prices; the midpoint never overflows
+// uint32 (uint64 widening guards even MaxOrderPrice + MaxOrderPrice).
+func zeroPriceMid(a, b uint32, victimIsLong bool) uint32 {
+	sum := uint64(a) + uint64(b)
+	if victimIsLong {
+		return uint32((sum + 1) / 2)
+	}
+	return uint32(sum / 2)
 }

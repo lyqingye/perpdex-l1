@@ -106,7 +106,10 @@ func (k Keeper) tryLLPAbsorb(
 		return false, nil
 	}
 
-	if err := k.Deleverage(ctx, victim, marketIdx, perptypes.InsuranceFundOperatorAccountIdx, size.Uint64()); err != nil {
+	if err := k.Deleverage(
+		ctx, victim, marketIdx, perptypes.InsuranceFundOperatorAccountIdx, size.Uint64(),
+		WithDeleverageSource(DeleverageSourceLLP),
+	); err != nil {
 		if errors.Is(err, types.ErrInsufficientCollateral) {
 			// Defensive: `Deleverage` skips the deleverager
 			// pre-trade collateral assert when the deleverager is
