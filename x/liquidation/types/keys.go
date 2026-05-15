@@ -7,7 +7,5 @@ const (
 )
 
 var (
-	ParamsKey             = []byte{0x00}
-	LiquidationFlagKey    = []byte{0x01}
-	FlagsByMarketIndexKey = []byte{0x02}
+	ParamsKey = []byte{0x00}
 )

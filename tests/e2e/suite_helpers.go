@@ -273,17 +273,6 @@ func (s *PerpdexTestSuite) QueryHealthStatus(accIdx uint64) uint32 {
 	return h
 }
 
-// QueryLiquidationFlag returns (flag, present) for the (account, market)
-// pair. `present=false` means the EndBlocker has not raised a flag (or
-// it was already cleared).
-func (s *PerpdexTestSuite) QueryLiquidationFlag(
-	accIdx uint64, marketIdx uint32,
-) (liquidationtypes.LiquidationFlag, bool) {
-	flag, ok, err := query.LiquidationFlag(s.App, s.Ctx, accIdx, marketIdx)
-	s.Require().NoError(err)
-	return flag, ok
-}
-
 // ---------- public pool shims ----------
 
 // CreatePublicPool spawns a regular PUBLIC_POOL sub-account under the

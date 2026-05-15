@@ -1,7 +1,6 @@
 package keeper
 
 import (
-	"context"
 	"fmt"
 
 	"cosmossdk.io/collections"
@@ -14,7 +13,7 @@ import (
 
 // Keeper implements the liquidations & LLP waterfall:
 //
-//  1. PRE_LIQUIDATION  - flag-only; no engine action. The matching gate
+//  1. PRE_LIQUIDATION  - no engine action. The matching gate
 //     (x/matching) restricts the user to reduce-only orders.
 //  2. PARTIAL_LIQUIDATION - keeper-bot driven MsgLiquidate. The engine
 //     cancels the victim's open orders, then submits a victim-owned
@@ -45,6 +44,11 @@ import (
 //     ledger; the chain does NOT silently move it to the IF. IF
 //     "absorption" is realised by the IF taking the position via
 //     `Deleverage`, never via a silent post-trade top-up.
+//
+// Off-chain keeper bots track which (account, market) pairs need
+// MsgLiquidate by reading health directly via x/risk's queries; the
+// chain does not maintain a "flag" mirror because that would only
+// duplicate state already derivable from risk parameters.
 type Keeper struct {
 	cdc            codec.BinaryCodec
 	storeService   store.KVStoreService
@@ -58,17 +62,6 @@ type Keeper struct {
 
 	Schema collections.Schema
 	Params collections.Item[types.Params]
-	// Flags is the primary index of (account_index, market_index) →
-	// LiquidationFlag, optimised for "given an account, list its
-	// flagged markets" queries.
-	Flags collections.Map[collections.Pair[uint64, uint32], types.LiquidationFlag]
-	// FlagsByMarket is the secondary index of (market_index,
-	// account_index) → ∅, optimised for "given a market, list all
-	// flagged accounts" queries (keeper-bot use case). It is
-	// maintained transactionally in lock-step with `Flags` via the
-	// `setFlag` / `removeFlag` helpers; never write to `Flags`
-	// directly outside those helpers.
-	FlagsByMarket collections.KeySet[collections.Pair[uint32, uint64]]
 }
 
 func NewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, authority string,
@@ -88,11 +81,6 @@ func NewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, authori
 		fundingKeeper:  fk,
 
 		Params: collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
-		Flags:  collections.NewMap(sb, types.LiquidationFlagKey, "flags", collections.PairKeyCodec(collections.Uint64Key, collections.Uint32Key), codec.CollValue[types.LiquidationFlag](cdc)),
-		FlagsByMarket: collections.NewKeySet(
-			sb, types.FlagsByMarketIndexKey, "flags_by_market",
-			collections.PairKeyCodec(collections.Uint32Key, collections.Uint64Key),
-		),
 	}
 	schema, err := sb.Build()
 	if err != nil {
@@ -103,29 +91,3 @@ func NewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, authori
 }
 
 func (k Keeper) Authority() string { return k.authority }
-
-// setFlag writes `flag` into the primary `Flags` map and mirrors it
-// into the `FlagsByMarket` secondary index. Callers MUST go through
-// this helper rather than touching the collections directly so the
-// two indices cannot drift.
-func (k Keeper) setFlag(ctx context.Context, flag types.LiquidationFlag) error {
-	primary := collections.Join(flag.AccountIndex, flag.MarketIndex)
-	if err := k.Flags.Set(ctx, primary, flag); err != nil {
-		return err
-	}
-	secondary := collections.Join(flag.MarketIndex, flag.AccountIndex)
-	return k.FlagsByMarket.Set(ctx, secondary)
-}
-
-// removeFlag clears (accountIdx, marketIdx) from both the primary
-// `Flags` map and the `FlagsByMarket` secondary index. Missing
-// entries are silently tolerated so callers can issue idempotent
-// "drop the flag if any" calls.
-func (k Keeper) removeFlag(ctx context.Context, accountIdx uint64, marketIdx uint32) error {
-	primary := collections.Join(accountIdx, marketIdx)
-	if err := k.Flags.Remove(ctx, primary); err != nil {
-		return err
-	}
-	secondary := collections.Join(marketIdx, accountIdx)
-	return k.FlagsByMarket.Remove(ctx, secondary)
-}

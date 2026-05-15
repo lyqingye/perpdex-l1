@@ -236,41 +236,6 @@ func (s *LiquidationSuite) TestBankruptcyDeleverage() {
 		"deleverager must end flat after absorbing the close (post=%s)", postPosCounter.String())
 }
 
-// TestEndBlockerFlagsLifecycle exercises the EndBlocker that maintains
-// LiquidationFlag entries: an unhealthy account must be flagged on every
-// market it holds a position in, and the flag must be cleared once the
-// account either closes the position out or recovers to HEALTHY via a
-// price move back.
-func (s *LiquidationSuite) TestEndBlockerFlagsLifecycle() {
-	entry, _ := s.openHurtablePosition()
-	s.SetOraclePrice(s.MarketIndex, entry, entry)
-	s.AdvanceBlock()
-
-	// At entry price the victim is HEALTHY and no flag should exist.
-	_, present := s.QueryLiquidationFlag(s.Users[0].AccountIndex, s.MarketIndex)
-	s.Require().False(present, "healthy account must not have a liquidation flag")
-
-	// Drop the oracle to put the victim into PARTIAL/FULL.
-	s.SetOraclePrice(s.MarketIndex, 41_000, 41_000)
-	s.AdvanceBlock()
-
-	flag, present := s.QueryLiquidationFlag(s.Users[0].AccountIndex, s.MarketIndex)
-	s.Require().True(present, "EndBlocker must flag an unhealthy account's market")
-	s.Require().Equal(s.Users[0].AccountIndex, flag.AccountIndex)
-	s.Require().Equal(s.MarketIndex, flag.MarketIndex)
-	s.Require().Greater(flag.FlaggedAtBlock, int64(0))
-	s.Require().Greater(flag.FlaggedAtTime, int64(0))
-
-	// Recover the price; EndBlocker should clear the flag on the next
-	// block.
-	s.SetOraclePrice(s.MarketIndex, entry, entry)
-	s.AdvanceBlock()
-
-	_, present = s.QueryLiquidationFlag(s.Users[0].AccountIndex, s.MarketIndex)
-	s.Require().False(present,
-		"EndBlocker must drop the flag once the account returns to HEALTHY")
-}
-
 // pushVictimToBankruptcy is a helper for the ADL tests that re-creates
 // the openHurtablePosition setup and then drops the oracle to the
 // wipe-out price so the victim lands in BANKRUPTCY. It returns the

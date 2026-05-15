@@ -3,7 +3,6 @@ package types
 const (
 	EventTypeLiquidate          = "liquidate"
 	EventTypeMarketExitPosition = "market_exit_position"
-	EventTypeLiquidationFlagged = "liquidation_flagged"
 	EventTypeAutoADL            = "auto_adl"
 )
 
@@ -14,8 +13,6 @@ const (
 	AttributeKeyZeroPrice       = "zero_price"
 	AttributeKeyClosePrice      = "close_price"
 	AttributeKeyClosedPositions = "closed_positions"
-	AttributeKeyAccountIndex    = "account_index"
-	AttributeKeyStatus          = "status"
 	AttributeKeyCounterparty    = "counterparty"
 	AttributeKeyPrice           = "price"
 	AttributeKeyVictimZeroPrice = "victim_zero_price"

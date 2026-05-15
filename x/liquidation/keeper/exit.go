@@ -63,7 +63,6 @@ func (k Keeper) ApplyExitPosition(ctx context.Context, marketIdx uint32) error {
 			)
 			return false
 		}
-		_ = k.removeFlag(ctx, a.AccountIndex, marketIdx)
 		closed++
 		return false
 	}); err != nil {

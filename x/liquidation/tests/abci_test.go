@@ -1,33 +1,30 @@
 // EndBlocker scheduling for x/liquidation.
 //
-// The EndBlocker drives the LLP→ADL waterfall, the flag lifecycle, and
-// the cross-aggregate refresh that protects multi-market accounts from
-// stale snapshots. This file covers:
+// The EndBlocker drives the LLP→ADL waterfall and the cross-aggregate
+// refresh that protects multi-market accounts from stale snapshots.
+// This file covers:
 //
 //   - Happy-path FULL_LIQUIDATION: LLP absorbs the worst-uPnL position
 //     first; no ADL fill is generated when the LLP accepts.
 //   - Bankruptcy fall-through to ADL when the LLP refuses on IMR.
-//   - PRE_LIQUIDATION/healthy short-circuit: no fills and no flags.
+//   - PRE_LIQUIDATION/healthy short-circuit: no fills.
 //   - Bankrupt-residue retention when LLP refuses AND the ADL queue is
 //     empty (no silent IF top-up).
 //   - ADL candidate-skip: an under-collateralised first candidate must
 //     not stop the loop; the next candidate takes over.
 //   - Cross-aggregate freshness across markets: a mid-iteration heal
-//     must be observed before the next market's trigger fires, and
-//     no LiquidationFlagged event should leak for a healed account.
+//     must be observed before the next market's trigger fires.
 package tests
 
 import (
 	"testing"
 
-	"cosmossdk.io/collections"
 	"cosmossdk.io/math"
 
 	"github.com/stretchr/testify/require"
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
 	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
-	liqtypes "github.com/perpdex/perpdex-l1/x/liquidation/types"
 	risktypes "github.com/perpdex/perpdex-l1/x/risk/types"
 	tradekeeper "github.com/perpdex/perpdex-l1/x/trade/keeper"
 )
@@ -380,25 +377,4 @@ func TestEndBlocker_CrossAggregateRefreshedAcrossMarkets(t *testing.T) {
 	require.Equal(t, uint32(0), tk.calls[0].MarketIndex)
 	require.GreaterOrEqual(t, rk.snapshotCalls, 1,
 		"market 0's LLP path must build at least one fresh risk snapshot before the fill")
-	// processAccount must leave NO cross flag for this account once
-	// the iteration ends with a HEALTHY post-state, regardless of
-	// whether the flag was written before (market 0, written then
-	// the LLP fill rescued the account) or after (market 1, written
-	// by the per-loop branch and removed once refreshHealth caught
-	// the heal). The end-of-iteration sweep covers the former; the
-	// per-loop refreshHealth branch covers the latter.
-	for _, market := range []uint32{0, 1} {
-		has, err := k.Flags.Has(ctx, collections.Join[uint64, uint32](100, market))
-		require.NoError(t, err)
-		require.False(t, has,
-			"no cross flag should remain for market %d once the account ended HEALTHY", market)
-	}
-	// processAccount must re-read the cross status before emitting
-	// LiquidationFlagged. The account started FULL_LIQ but a fill
-	// healed it to HEALTHY; the event must NOT carry the stale
-	// pre-iteration status (or fire at all).
-	for _, e := range ctx.EventManager().Events() {
-		require.NotEqual(t, liqtypes.EventTypeLiquidationFlagged, e.Type,
-			"no LiquidationFlagged event should be emitted for an account that healed mid-iteration")
-	}
 }

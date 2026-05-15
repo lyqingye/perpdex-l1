@@ -2,9 +2,6 @@ package keeper
 
 import (
 	"context"
-	"errors"
-
-	"cosmossdk.io/collections"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -24,77 +21,6 @@ func (q Querier) Params(ctx context.Context, _ *types.QueryParamsRequest) (*type
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	return &types.QueryParamsResponse{Params: p}, nil
-}
-
-func (q Querier) LiquidationFlag(ctx context.Context, req *types.QueryLiquidationFlagRequest) (*types.QueryLiquidationFlagResponse, error) {
-	if req == nil {
-		return nil, status.Error(codes.InvalidArgument, "empty request")
-	}
-	flag, err := q.k.Flags.Get(ctx, collections.Join(req.AccountIndex, req.MarketIndex))
-	if err != nil {
-		if errors.Is(err, collections.ErrNotFound) {
-			return &types.QueryLiquidationFlagResponse{Present: false}, nil
-		}
-		return nil, status.Error(codes.Internal, err.Error())
-	}
-	return &types.QueryLiquidationFlagResponse{Present: true, Flag: flag}, nil
-}
-
-func (q Querier) LiquidationFlags(ctx context.Context, req *types.QueryLiquidationFlagsRequest) (*types.QueryLiquidationFlagsResponse, error) {
-	if req == nil {
-		return nil, status.Error(codes.InvalidArgument, "empty request")
-	}
-	rng := collections.NewPrefixedPairRange[uint64, uint32](req.AccountIndex)
-	iter, err := q.k.Flags.Iterate(ctx, rng)
-	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
-	}
-	defer iter.Close()
-	out := []types.LiquidationFlag{}
-	for ; iter.Valid(); iter.Next() {
-		v, err := iter.Value()
-		if err != nil {
-			return nil, status.Error(codes.Internal, err.Error())
-		}
-		out = append(out, v)
-	}
-	return &types.QueryLiquidationFlagsResponse{Flags: out}, nil
-}
-
-// LiquidationFlagsByMarket lists every flag currently set on
-// `market_index`, using the `FlagsByMarket` secondary index to
-// avoid the full-table scan that the primary `Flags` map would
-// otherwise require. The response is intentionally non-paginated:
-// the per-market flag count is bounded by the number of accounts
-// with a non-zero position in that market, which keeper bots are
-// expected to handle in one shot.
-func (q Querier) LiquidationFlagsByMarket(ctx context.Context, req *types.QueryLiquidationFlagsByMarketRequest) (*types.QueryLiquidationFlagsByMarketResponse, error) {
-	if req == nil {
-		return nil, status.Error(codes.InvalidArgument, "empty request")
-	}
-	rng := collections.NewPrefixedPairRange[uint32, uint64](req.MarketIndex)
-	iter, err := q.k.FlagsByMarket.Iterate(ctx, rng)
-	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
-	}
-	defer iter.Close()
-	out := []types.LiquidationFlag{}
-	for ; iter.Valid(); iter.Next() {
-		key, err := iter.Key()
-		if err != nil {
-			return nil, status.Error(codes.Internal, err.Error())
-		}
-		marketIdx, accountIdx := key.K1(), key.K2()
-		flag, err := q.k.Flags.Get(ctx, collections.Join(accountIdx, marketIdx))
-		if err != nil {
-			if errors.Is(err, collections.ErrNotFound) {
-				continue
-			}
-			return nil, status.Error(codes.Internal, err.Error())
-		}
-		out = append(out, flag)
-	}
-	return &types.QueryLiquidationFlagsByMarketResponse{Flags: out}, nil
 }
 
 func (q Querier) ADLQueue(ctx context.Context, req *types.QueryADLQueueRequest) (*types.QueryADLQueueResponse, error) {
