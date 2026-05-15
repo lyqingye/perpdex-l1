@@ -73,8 +73,7 @@ func TestLiquidate_ZeroBaseRejected(t *testing.T) {
 
 // TestLiquidate_RejectsFullLiquidationStatus verifies that MsgLiquidate
 // only services PARTIAL_LIQUIDATION; FULL/BANKRUPTCY accounts must
-// fall through to the EndBlocker LLP→ADL waterfall
-// (`InternalDeleverageTx` path).
+// fall through to the EndBlocker LLP→ADL deleverage waterfall.
 func TestLiquidate_RejectsFullLiquidationStatus(t *testing.T) {
 	ak := newStubAccount()
 	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.ZeroInt()}
@@ -100,10 +99,9 @@ func TestLiquidate_RejectsFullLiquidationStatus(t *testing.T) {
 		"BANKRUPTCY must also reject the partial-liquidation route")
 }
 
-// TestLiquidate_CancelsVictimOpenOrders verifies the spec rule "first
+// TestLiquidate_CancelsVictimOpenOrders verifies the rule "first
 // cancel all open orders of the user" before submitting the
-// liquidation IOC to the matching keeper, matching
-// `InternalCancelAllOrdersTx → InternalLiquidatePositionTx`.
+// liquidation IOC to the matching keeper.
 func TestLiquidate_CancelsVictimOpenOrders(t *testing.T) {
 	ak := newStubAccount()
 	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.ZeroInt()}
@@ -165,12 +163,11 @@ func TestLiquidate_DelegatesToMatchingKeeperWithLLPRecipient(t *testing.T) {
 
 // TestLiquidate_DoesNotTopUpFromIF is the positive assertion that the
 // partial-liquidation path NEVER pulls collateral from the Insurance
-// Fund as a post-trade safety net.
-// `internal_liquidate_position.rs` only inserts a `LIQUIDATION_ORDER +
-// IOC + reduce_only` and lets the matching engine settle improvements
-// above zero_price; the chain has no "absorbNegativeCollateral" sweep
-// that could silently transfer the deficit to the IF without an IMR
-// gate.
+// Fund as a post-trade safety net. The path only inserts a
+// `LIQUIDATION_ORDER + IOC + reduce_only` and lets the matching
+// engine settle improvements above zero_price; the chain has no
+// "absorbNegativeCollateral" sweep that could silently transfer the
+// deficit to the IF without an IMR gate.
 //
 // To make the assertion concrete we deliberately seed the victim with
 // a pre-existing negative collateral value and assert that both the

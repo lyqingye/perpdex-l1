@@ -73,8 +73,8 @@ func TestApplyPerpsMatching_OIRoundTrip(t *testing.T) {
 //
 // The cap drops out of the `min(LiquidationFeeBps, price_diff_rate)`
 // rate, scaled across notional rather than across improvement — the
-// per-trade taker fee bound enforced in `matching_engine.rs`
-// `_compute_liquidation_taker_fee`.
+// per-trade taker fee bound enforced by
+// `liquidationImprovementFee` in the trade engine.
 func TestApplyPerpsMatching_LiquidationFeeRoutesToLLP(t *testing.T) {
 	ctx, ak, _, _, k := newSdkCtx(t)
 	const (

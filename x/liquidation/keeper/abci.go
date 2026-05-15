@@ -24,10 +24,10 @@ import (
 //     "post-takeover IF risk does not breach IF IMR". Positions the
 //     LLP cannot absorb (IMR breach) fall through to ADL, where the
 //     deleverager-side pre-trade collateral assert
-//     (`is_deleverager_has_enough_cross_collateral`) skips
-//     under-capitalised candidates and advances to the next
-//     counterparty. `internal_deleverage.rs` accepts both health
-//     states indistinctly. The chain caller bounds total work by
+//     (`preCheckCollateral`) skips under-capitalised candidates and
+//     advances to the next counterparty. The Deleverage path
+//     accepts FULL_LIQUIDATION and BANKRUPTCY indistinctly. The
+//     chain caller bounds total work by
 //     Params.MaxAdlAttemptsPerBlock.
 func (k Keeper) EndBlocker(ctx context.Context) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
@@ -105,7 +105,7 @@ func (k Keeper) processAccount(
 		}
 
 		if posStatus == perptypes.HealthHealthy || posStatus == perptypes.HealthPreLiquidation {
-			_ = k.Flags.Remove(ctx, collections.Join(a.AccountIndex, marketIdx))
+			_ = k.removeFlag(ctx, a.AccountIndex, marketIdx)
 			return false
 		}
 
@@ -115,7 +115,7 @@ func (k Keeper) processAccount(
 			FlaggedAtBlock: height,
 			FlaggedAtTime:  now,
 		}
-		if err := k.Flags.Set(ctx, collections.Join(a.AccountIndex, marketIdx), flag); err != nil {
+		if err := k.setFlag(ctx, flag); err != nil {
 			sdkCtx.Logger().Error("liquidation: set flag failed",
 				"account", a.AccountIndex, "market", marketIdx, "err", err)
 		}
@@ -141,7 +141,7 @@ func (k Keeper) processAccount(
 				// the envelope; do not quote a fill, and drop
 				// the flag we just wrote so keeper bots do not
 				// chase a recovered account for one extra block.
-				_ = k.Flags.Remove(ctx, collections.Join(a.AccountIndex, marketIdx))
+				_ = k.removeFlag(ctx, a.AccountIndex, marketIdx)
 				return false
 			}
 			absorbed, err := k.tryLLPAbsorb(ctx, a.AccountIndex, marketIdx, attemptsLeft)
@@ -246,7 +246,7 @@ func (k Keeper) clearCrossFlags(ctx context.Context, accIdx uint64) error {
 		if pos.MarginMode == perptypes.IsolatedMargin {
 			continue
 		}
-		if err := k.Flags.Remove(ctx, key); err != nil {
+		if err := k.removeFlag(ctx, accIdx, marketIdx); err != nil {
 			return err
 		}
 	}

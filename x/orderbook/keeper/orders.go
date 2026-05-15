@@ -404,8 +404,7 @@ func IsExpired(o types.Order, now int64) bool {
 // computeSpotLock returns (assetID, amount) the order should hold while
 // resting on the orderbook. For an ask the seller locks `remaining_base`
 // units of the base asset; for a bid the buyer locks `remaining_base *
-// price` units of the quote asset, mirroring
-// `get_locked_amount_and_ask_asset_index` in l2_create_order.rs.
+// price` units of the quote asset.
 func computeSpotLock(o types.Order, market markettypes.Market) (uint32, math.Int) {
 	if o.IsAsk {
 		return market.BaseAssetId, math.NewIntFromUint64(o.RemainingBaseAmount)

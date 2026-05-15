@@ -14,8 +14,8 @@ import (
 
 // MatchLiquidationOrder is the system-only entry point used by the
 // liquidation keeper to drive a partial-liquidation close-out through
-// the public orderbook (matches the `InternalLiquidatePositionTx` +
-// `LIQUIDATION_ORDER + IOC + reduce_only` flow).
+// the public orderbook via a `LIQUIDATION_ORDER + IOC + reduce_only`
+// fill against open makers.
 //
 // The synthetic taker is owned by the victim. It is constructed in-
 // memory only — never persisted via `OpenOrder`, never indexed against
@@ -26,8 +26,7 @@ import (
 // The caller is expected to have already cancelled every resting
 // order owned by the victim (via `CancelAllOpenOrdersForAccount`)
 // before invoking this entry point so a victim's own bids cannot
-// front-run the close-out fill (matching the
-// `InternalCancelAllOrdersTx → InternalLiquidatePositionTx` ordering).
+// front-run the close-out fill.
 //
 // Side direction is derived from the victim's current position:
 // long victim → sell to close (IsAsk=true), short victim → buy to
@@ -127,8 +126,8 @@ func (k Keeper) MatchLiquidationOrder(
 // health (cross or per-market isolated, matching the liquidation
 // keeper's `victimHealthForPosition` rule) and breaks early when the
 // account is no longer in PARTIAL/FULL liquidation. This is the
-// `is_not_in_liquidation_and_is_liquidation_order` short-circuit: a
-// liquidation order keeps consuming the book only as long as the
+// "stop consuming the book once the victim recovers" short-circuit:
+// a liquidation order keeps consuming makers only as long as the
 // victim still needs deleveraging.
 //
 // A recoverable taker-side regression (errTakerRejected; the victim's
@@ -231,12 +230,11 @@ func (k Keeper) matchLiquidation(
 //     (Insurance Fund / LLP).
 //
 //   - Risk checks: both maker and taker are validated post-trade
-//     (`matching_engine.rs:1801,1843` runs `is_valid_risk_change` on
-//     both sides for a LIQUIDATION_ORDER + IOC fill). Recoverable
-//     rejections are wrapped into errMakerRejected / errTakerRejected
-//     by `applyPerpFill`; the enclosing `matchLiquidation` loop
-//     evicts a bad maker and gracefully stops on a bad taker
-//     (preserving prior fills).
+//     via `IsValidRiskChangeFrom` for a LIQUIDATION_ORDER + IOC
+//     fill. Recoverable rejections are wrapped into errMakerRejected
+//     / errTakerRejected by `applyPerpFill`; the enclosing
+//     `matchLiquidation` loop evicts a bad maker and gracefully
+//     stops on a bad taker (preserving prior fills).
 //
 //     The taker side (victim) almost always passes by construction
 //     (filling at >= zero price strictly improves TAV/MMR), but
@@ -276,21 +274,17 @@ func (k Keeper) applyLiquidationFill(
 // per-market isolated health, since each isolated position is its
 // own risk envelope.
 //
-// Used exclusively by `matchLiquidation` to implement the
-// `is_not_in_liquidation_and_is_liquidation_order` short-circuit. It
-// is intentionally NOT called from `matchOrder` so the user-path
+// Used exclusively by `matchLiquidation` to implement the "stop
+// once the victim recovers" short-circuit. It is intentionally NOT
+// called from `matchOrder` so the user-path
 // matching loop pays no per-fill risk-keeper read.
 //
-// The accepted health-status set mirrors the `is_in_liquidation`
-// predicate (risk_info.rs:362):
-//
-//	is_in_liquidation = (TALT.sign == -1) ∨ (TALT.abs < MMR)
-//
-// In perpdex's single-asset USDC mode (no non-USDC margined assets)
-// `total_account_liquidation_threshold` collapses onto
-// `total_account_value`, so the predicate reduces to `TAV < MMR`,
-// which spans PARTIAL_LIQUIDATION ∪ FULL_LIQUIDATION ∪ BANKRUPTCY.
-// BANKRUPTCY is included for spec parity even though entry to the
+// The accepted health-status set follows the "in liquidation"
+// predicate. In perpdex's single-asset USDC mode (no non-USDC
+// margined assets) the total-account-liquidation-threshold
+// collapses onto total account value, so the predicate reduces to
+// `TAV < MMR`, which spans PARTIAL_LIQUIDATION ∪ FULL_LIQUIDATION
+// ∪ BANKRUPTCY. BANKRUPTCY is included even though entry to the
 // IOC loop requires PARTIAL and fills only improve TAV — funding
 // accruals between fills could in theory push an account from
 // PARTIAL through FULL into BANKRUPTCY mid-loop.

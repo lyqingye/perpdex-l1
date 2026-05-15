@@ -72,10 +72,11 @@ func (m MsgServer) CreateOrder(ctx context.Context, msg *types.MsgCreateOrder) (
 	} else if !ok {
 		return nil, types.ErrUnauthorized
 	}
-	// Public pools and the Insurance Fund cannot place orders directly;
-	// their fills come exclusively from the liquidation / ADL paths
-	// (l2_create_order rejects PUBLIC_POOL_ACCOUNT_TYPE and
-	// INSURANCE_FUND_ACCOUNT_TYPE up front).
+	// Public pools and the Insurance Fund cannot place orders
+	// directly; their fills come exclusively from the liquidation /
+	// ADL paths. The order-creation path rejects
+	// PUBLIC_POOL_ACCOUNT_TYPE and INSURANCE_FUND_ACCOUNT_TYPE up
+	// front.
 	if acc, err := m.accountKeeper.GetAccount(ctx, msg.AccountIndex); err == nil {
 		if acc.IsPoolType() {
 			return nil, types.ErrPoolCannotPlaceOrder
@@ -228,10 +229,8 @@ func (m MsgServer) CreateOrder(ctx context.Context, msg *types.MsgCreateOrder) (
 	// full (Available < required), force-cancel the residue rather
 	// than letting OpenOrder fail with ErrInsufficientFunds (which
 	// would revert the whole Msg and lose already-committed fills).
-	// l2_create_order verify rejects the order, but any
-	// already-applied trades from the matching pass survive because
-	// they live in earlier transactions; here, fills already landed
-	// via writeCache, so only the residue must be cancelled.
+	// Already-landed fills from the matching pass survive (they
+	// reside in writeCache); only the residue must be cancelled here.
 	if (order.Status == perptypes.OrderStatusOpen || order.Status == perptypes.OrderStatusPartiallyFilled) &&
 		market.MarketType == perptypes.MarketTypeSpot &&
 		order.RemainingBaseAmount > 0 {

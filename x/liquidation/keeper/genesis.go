@@ -3,8 +3,6 @@ package keeper
 import (
 	"context"
 
-	"cosmossdk.io/collections"
-
 	"github.com/perpdex/perpdex-l1/x/liquidation/types"
 )
 
@@ -13,7 +11,7 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 		return err
 	}
 	for _, f := range gs.Flags {
-		if err := k.Flags.Set(ctx, collections.Join(f.AccountIndex, f.MarketIndex), f); err != nil {
+		if err := k.setFlag(ctx, f); err != nil {
 			return err
 		}
 	}

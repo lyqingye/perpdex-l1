@@ -49,7 +49,7 @@ func (k Keeper) MatchOrder(ctx context.Context, taker *orderbooktypes.Order, max
 		if errors.Is(err, errTakerRejected) {
 			// Recoverable taker error: prior writeCache fills are
 			// retained; the residue is force-cancelled rather than
-			// rested on the book — matches `cancel_taker_order`.
+			// rested on the book — the "cancel taker" recovery rule.
 			return totalFilled, perptypes.OrderStatusCancelled, nil
 		}
 		if err != nil {

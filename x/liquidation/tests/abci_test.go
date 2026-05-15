@@ -83,7 +83,7 @@ func TestEndBlocker_FullLiquidationPrefersLLPThenADL(t *testing.T) {
 }
 
 // TestEndBlocker_BankruptcyFallsThroughToADLWhenLLPBreachesIMR
-// verifies the spec rule: a deeply bankrupt account whose absorption
+// verifies the rule: a deeply bankrupt account whose absorption
 // would breach the LLP's IMR is closed via ADL instead, leaving the
 // LLP untouched.
 func TestEndBlocker_BankruptcyFallsThroughToADLWhenLLPBreachesIMR(t *testing.T) {

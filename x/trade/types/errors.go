@@ -2,15 +2,14 @@ package types
 
 import "cosmossdk.io/errors"
 
-// Sentinel errors for x/trade. These are split into "soft" / recoverable
-// errors that the matching engine can use to skip a specific maker (or
-// abort just the current taker, preserving prior fills) and "hard" errors
-// that must revert the entire transaction.
+// Sentinel errors for x/trade. These are split into "soft" /
+// recoverable errors that the matching engine can use to skip a
+// specific maker (or abort just the current taker, preserving prior
+// fills) and "hard" errors that must revert the entire transaction.
 //
-// `is_valid_perps_trade` / `is_valid_spot_trade` set
-// `cancel_taker_order` / `cancel_maker_order` rather than reverting
-// the whole block. We mirror that with sentinels that the matching
-// loop inspects via errors.Is.
+// Soft per-side rejections cancel only the offending order
+// ("cancel taker" / "cancel maker") rather than reverting the whole
+// block. The matching loop inspects each sentinel via errors.Is.
 var (
 	// ErrMakerRiskRegression: maker side fails IsValidRiskChangeFrom
 	// after the would-be fill (e.g. maker drained collateral after
@@ -34,10 +33,9 @@ var (
 	ErrTakerInsufficientBalance = errors.Register(ModuleName, 5, "taker insufficient balance for fill")
 
 	// ErrMakerInvalidPosition: maker post-trade position size or
-	// entry_quote would overflow the perp circuit width
+	// entry_quote would overflow the perp bit-width envelope
 	// (POSITION_SIZE_BITS / ENTRY_QUOTE_BITS). Soft: evict maker and
-	// continue. Mirrors the `is_new_maker_position_invalid` branch in
-	// `is_valid_perps_trade`.
+	// continue.
 	ErrMakerInvalidPosition = errors.Register(ModuleName, 6, "maker post-trade position out of bounds")
 
 	// ErrTakerInvalidPosition: taker post-trade position size or
@@ -47,8 +45,7 @@ var (
 	// ErrMakerInsufficientCollateral: maker isolated position grows
 	// (or flips) and the auto-allocated `margin_delta` exceeds the
 	// account's available cross collateral. Soft: evict maker and
-	// continue. Mirrors the `is_maker_has_enough_cross_collateral`
-	// branch in `is_valid_perps_trade`.
+	// continue.
 	ErrMakerInsufficientCollateral = errors.Register(ModuleName, 8, "maker insufficient cross collateral for isolated margin allocation")
 
 	// ErrTakerInsufficientCollateral: taker side of the isolated

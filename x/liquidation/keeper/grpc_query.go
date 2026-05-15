@@ -61,6 +61,42 @@ func (q Querier) LiquidationFlags(ctx context.Context, req *types.QueryLiquidati
 	return &types.QueryLiquidationFlagsResponse{Flags: out}, nil
 }
 
+// LiquidationFlagsByMarket lists every flag currently set on
+// `market_index`, using the `FlagsByMarket` secondary index to
+// avoid the full-table scan that the primary `Flags` map would
+// otherwise require. The response is intentionally non-paginated:
+// the per-market flag count is bounded by the number of accounts
+// with a non-zero position in that market, which keeper bots are
+// expected to handle in one shot.
+func (q Querier) LiquidationFlagsByMarket(ctx context.Context, req *types.QueryLiquidationFlagsByMarketRequest) (*types.QueryLiquidationFlagsByMarketResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "empty request")
+	}
+	rng := collections.NewPrefixedPairRange[uint32, uint64](req.MarketIndex)
+	iter, err := q.k.FlagsByMarket.Iterate(ctx, rng)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	defer iter.Close()
+	out := []types.LiquidationFlag{}
+	for ; iter.Valid(); iter.Next() {
+		key, err := iter.Key()
+		if err != nil {
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+		marketIdx, accountIdx := key.K1(), key.K2()
+		flag, err := q.k.Flags.Get(ctx, collections.Join(accountIdx, marketIdx))
+		if err != nil {
+			if errors.Is(err, collections.ErrNotFound) {
+				continue
+			}
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+		out = append(out, flag)
+	}
+	return &types.QueryLiquidationFlagsByMarketResponse{Flags: out}, nil
+}
+
 func (q Querier) ADLQueue(ctx context.Context, req *types.QueryADLQueueRequest) (*types.QueryADLQueueResponse, error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "empty request")

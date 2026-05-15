@@ -118,11 +118,11 @@ const (
 	MaxClientOrderIndex = uint64(281_474_976_710_655)
 )
 
-// Perp position bit-width bounds. The prover circuit constrains
-// `POSITION_SIZE_BITS = 56` and `ENTRY_QUOTE_BITS = 56`; we mirror the
-// limits here so trade application can refuse fills that would push
-// |position| or |entry_quote| beyond what the prover would accept,
-// classifying the failure as a recoverable maker / taker error.
+// Perp position bit-width bounds. POSITION_SIZE_BITS = 56 and
+// ENTRY_QUOTE_BITS = 56 cap the absolute value of a position size
+// and entry quote respectively. Trade application refuses fills
+// that would push |position| or |entry_quote| beyond these bounds
+// and classifies the failure as a recoverable maker / taker error.
 const (
 	PositionSizeBits = uint8(56)
 	EntryQuoteBits   = uint8(56)
@@ -150,9 +150,9 @@ const (
 	AccountTradingModeUnified = uint32(1)
 )
 
-// Public pool constants, mirroring circuit/src/types/constants.rs
-// `INITIAL_POOL_SHARE_VALUE`, `NB_STRATEGIES`, `SHARES_LIST_SIZE` and the
-// PUBLIC_POOL status enum.
+// Public pool constants: per-pool strategy slot count, share list
+// size, initial share value (USDC 6-decimal precision) and the
+// public-pool status enum.
 const (
 	NbStrategies               = 8
 	SharesListSize             = 16

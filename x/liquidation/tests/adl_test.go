@@ -30,9 +30,8 @@ import (
 // counterparties whose zero prices do NOT overlap with the victim's,
 // which prevents the close-out from worsening the counterparty.
 //
-// The bankrupt is given a small but non-trivial collateral cushion so
-// the pre-trade collateral assert
-// (`is_bankrupt_has_enough_cross_collateral`) passes at the candidate
+// The bankrupt is given a small but non-trivial collateral cushion
+// so that any bankrupt-side collateral check passes at the candidate
 // settle price; the test's interest is purely the ZP alignment
 // filter, not the collateral guard.
 func TestAutoADL_RequiresZeroPriceAlignment(t *testing.T) {
@@ -223,9 +222,9 @@ func TestAutoADL_RefusesHealedVictimViaSelfAssert(t *testing.T) {
 // arm: even though the LLP / IF participates as the deleverage
 // counterparty, any residual negative collateral that may exist on
 // the victim's ledger after the trade settles must NOT be silently
-// transferred to the IF. `internal_deleverage.rs` settles at
-// `zero_quote` and lets the bankrupt's ledger reflect the truth; it
-// has no equivalent of a post-block IF top-up sweep.
+// transferred to the IF. The deleverage path settles at the
+// victim's zero price and lets the bankrupt's ledger reflect the
+// truth; there is no post-block IF top-up sweep.
 func TestDeleverage_LeavesResidualOnVictim(t *testing.T) {
 	ak := newStubAccount()
 	ak.accounts[perptypes.InsuranceFundOperatorAccountIdx] = accounttypes.Account{
@@ -330,9 +329,10 @@ func TestDeleverage_BankruptRiskRegressionRejected(t *testing.T) {
 
 // TestDeleverage_InsufficientDeleveragerCollateral_UserADL covers Gap C
 // deleverager branch: under user-ADL the deleverager's own collateral
-// is also asserted (perpdex defense-in-depth for
-// `is_deleverager_has_enough_cross_collateral`). Insufficient
-// collateral on the user-ADL deleverager rejects the trade.
+// is also asserted (perpdex defense-in-depth: the deleverager must
+// have enough cross collateral to absorb the predicted realized
+// loss). Insufficient collateral on the user-ADL deleverager
+// rejects the trade.
 //
 // IF / pool deleveragers are NOT subject to this assert; that case is
 // covered by the absence of an `ErrInsufficientCollateral` failure in

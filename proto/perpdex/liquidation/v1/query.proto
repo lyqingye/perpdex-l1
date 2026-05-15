@@ -22,6 +22,13 @@ service Query {
   rpc LiquidationFlags(QueryLiquidationFlagsRequest) returns (QueryLiquidationFlagsResponse) {
     option (google.api.http).get = "/perpdex/liquidation/v1/flags/{account_index}";
   }
+  // LiquidationFlagsByMarket lists every flag currently set on the
+  // given market, indexed by the secondary `FlagsByMarket` set.
+  // Keeper bots that watch a single market use this instead of the
+  // per-account view to avoid full-table scans of `Flags`.
+  rpc LiquidationFlagsByMarket(QueryLiquidationFlagsByMarketRequest) returns (QueryLiquidationFlagsByMarketResponse) {
+    option (google.api.http).get = "/perpdex/liquidation/v1/flags_by_market/{market_index}";
+  }
   // ADLQueue returns counterparties on the requested side of `market_index`
   // ranked by `profit_ratio * leverage` descending. Keeper bots use it
   // to pre-select counterparties before submitting MsgDeleverage. The
@@ -49,6 +56,13 @@ message QueryLiquidationFlagsRequest {
   uint64 account_index = 1;
 }
 message QueryLiquidationFlagsResponse {
+  repeated LiquidationFlag flags = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryLiquidationFlagsByMarketRequest {
+  uint32 market_index = 1;
+}
+message QueryLiquidationFlagsByMarketResponse {
   repeated LiquidationFlag flags = 1 [(gogoproto.nullable) = false];
 }
 

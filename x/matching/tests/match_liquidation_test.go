@@ -9,10 +9,9 @@
 //     (maker price, not zero price), zero-price floor pass-through,
 //     liquidation fee + recipient routing, and both-side risk-check
 //     wiring.
-//   - The `is_not_in_liquidation_and_is_liquidation_order` short-circuit
-//     when the victim recovers to HEALTHY mid-loop, plus the spec
-//     parity case where BANKRUPTCY stays inside the liquidation
-//     predicate.
+//   - The "stop once the victim recovers" short-circuit when the
+//     victim transitions to HEALTHY mid-loop, plus the case where
+//     BANKRUPTCY stays inside the in-liquidation predicate.
 //   - The zero-price floor guard: an IOC that cannot reach the floor
 //     immediately terminates with zero fills and zero residue, never
 //     persisting the synthetic taker to the orderbook indexes.
@@ -45,14 +44,13 @@ import (
 //   - ZeroPrice         = forwarded from MatchLiquidationOrder arg
 //   - LiquidationFeeBps = forwarded from MatchLiquidationOrder arg
 //   - LiquidationFeeRecipient = forwarded from MatchLiquidationOrder arg
-//   - NoRiskCheck       = false; both sides go through IsValidRiskChangeFrom
-//     post-trade (`matching_engine.rs:1801,1843` for liquidation
-//     orders). Recoverable rejections flow through errMakerRejected /
+//   - NoRiskCheck       = false; both sides go through
+//     IsValidRiskChangeFrom post-trade for liquidation orders.
+//     Recoverable rejections flow through errMakerRejected /
 //     errTakerRejected.
 //
-// This is the matching-keeper-side contract for the
-// "PARTIAL_LIQUIDATION goes through the orderbook IOC" alignment with
-// the spec.
+// This is the matching-keeper-side contract for "PARTIAL_LIQUIDATION
+// goes through the orderbook IOC".
 func TestMatchLiquidation_PerpFillCarriesLiquidationFields(t *testing.T) {
 	e := newMatchEnv(t)
 	e.k.SetRiskKeeper(newStubRisk())
@@ -110,11 +108,11 @@ func TestMatchLiquidation_PerpFillCarriesLiquidationFields(t *testing.T) {
 		"liquidation fill must validate taker risk change")
 }
 
-// TestMatchLiquidation_HealthShortCircuit covers the
-// `is_not_in_liquidation_and_is_liquidation_order` short-circuit:
-// after the first fill the victim's health recovers, so the loop
-// must STOP consuming the book even though there is still a second
-// maker willing to trade and the IOC still has remaining base.
+// TestMatchLiquidation_HealthShortCircuit covers the "stop once
+// the victim recovers" short-circuit: after the first fill the
+// victim's health recovers, so the loop must STOP consuming the
+// book even though there is still a second maker willing to trade
+// and the IOC still has remaining base.
 func TestMatchLiquidation_HealthShortCircuit(t *testing.T) {
 	e := newMatchEnv(t)
 	rk := newStubRisk()
@@ -204,7 +202,7 @@ func TestMatchLiquidation_PriceUnreachableBreaksImmediately(t *testing.T) {
 // TestMatchLiquidation_HealthShortCircuit_Bankruptcy ensures a victim
 // who progresses from PARTIAL into BANKRUPTCY between fills is NOT
 // short-circuited by `needsLiquidation` — the loop must keep matching
-// because BANKRUPTCY is part of the `is_in_liquidation` set.
+// because BANKRUPTCY is part of the "in liquidation" health set.
 // Without Gap A's BANKRUPTCY arm, the second maker would be
 // erroneously skipped the moment the victim's health reading flipped
 // to BANKRUPTCY mid-loop (e.g., from a funding accrual).
@@ -260,9 +258,8 @@ func TestMatchLiquidation_HealthShortCircuit_Bankruptcy(t *testing.T) {
 // regression (e.g., `ErrTakerInsufficientCollateral`) must abort the
 // matching loop *gracefully*, preserving any prior committed fills
 // and dropping the IOC residue without persisting the synthetic
-// taker. This is the same semantics as
-// `internal_liquidation.rs` aborting the IOC on victim post-trade
-// regression while keeping prior partial fills.
+// taker. This mirrors the general "abort the IOC on victim
+// post-trade regression while keeping prior partial fills" rule.
 func TestMatchLiquidation_VictimRiskRegression_StopsGracefully(t *testing.T) {
 	// First fill commits cleanly; the second fill simulates the
 	// victim flunking the post-trade taker risk check (the engine

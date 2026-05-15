@@ -243,16 +243,15 @@ func (k Keeper) autoADL(
 			NoFee:             true,
 			// User-ADL: defense-in-depth — both bankrupt (maker)
 			// and counterparty (taker) go through
-			// IsValidRiskChangeFrom. The bankrupt check mirrors
-			// `is_valid_risk_change` on bankrupt; the
-			// counterparty check is perpdex-stricter than the
-			// spec (which does only a collateral-sufficiency
-			// assert on ADL deleveragers). The settlement at
-			// zeroPriceMid guarantees the counterparty's TAV/MMR
-			// cannot regress, so the check passes in normal flow
-			// but still catches pathological pricing. Both flags
-			// default to false here because we DO want both risk
-			// checks under user-ADL.
+			// IsValidRiskChangeFrom. The bankrupt check is the
+			// standard post-trade risk regression assert; the
+			// counterparty check is perpdex-stricter than a
+			// pure collateral-sufficiency assert. The settlement
+			// at zeroPriceMid guarantees the counterparty's
+			// TAV/MMR cannot regress, so the check passes in
+			// normal flow but still catches pathological pricing.
+			// Both flags default to false here because we DO want
+			// both risk checks under user-ADL.
 		}
 		// Pre-trade collateral assert on the counterparty side only
 		// (mirrors the guard inside Deleverage's user-ADL branch).
