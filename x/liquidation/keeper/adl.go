@@ -177,6 +177,17 @@ func ComputeLeverage(rp risktypes.RiskParameters) math.Int {
 // the trade engine does not enforce victim health on the deleverage
 // path, so this routine is the canonical "no ADL on a recovered
 // account" gate.
+//
+// The victim snapshot is ALSO re-read after every successful fill in
+// the loop below. Each fill mutates the victim's BaseSize / EntryQuote
+// / Collateral, which shifts both TAV and MMR and therefore the
+// zero price; reusing the entry-time `victimZP` for subsequent
+// overlap checks and settle prices would feed stale state into the
+// next iteration and let `IsValidRiskChangeFrom` reject fills that a
+// fresh ZP would have routed away. The refresh also lets the loop
+// exit early when an earlier fill already restored the victim to
+// HEALTHY / PRE / PARTIAL, preserving the "no ADL on a recovered
+// account" gate intra-loop.
 func (k Keeper) autoADL(
 	ctx context.Context,
 	victim uint64,
@@ -295,8 +306,29 @@ func (k Keeper) autoADL(
 			sdk.NewAttribute(types.AttributeKeyPrice, strconv.FormatUint(uint64(settlePrice), 10)),
 			sdk.NewAttribute(types.AttributeKeySource, DeleverageSourceAutoADL),
 		))
-		remaining = remaining.Sub(size)
 		*attemptsLeft--
+
+		// Refresh the victim snapshot. The fill we just emitted
+		// shifted the victim's BaseSize / EntryQuote / Collateral,
+		// so the entry-time `victimZP` and locally-decremented
+		// `remaining` are now stale. Subsequent overlap checks and
+		// `ZeroPriceMid` settle prices MUST observe the post-fill
+		// state, and the loop must short-circuit if the victim has
+		// already been closed out or recovered above the ADL
+		// envelope.
+		snap, err = k.riskKeeper.GetLiquidationRiskSnapshot(ctx, victim, marketIdx)
+		if err != nil {
+			return err
+		}
+		if snap.Position.BaseSize.IsZero() {
+			return nil
+		}
+		if status := snap.Risk.HealthStatus(); status != perptypes.HealthFullLiquidation &&
+			status != perptypes.HealthBankruptcy {
+			return nil
+		}
+		victimZP = snap.ZeroPrice
+		remaining = snap.Position.BaseSize.Abs()
 	}
 	return nil
 }
