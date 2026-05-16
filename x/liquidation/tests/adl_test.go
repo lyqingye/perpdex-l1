@@ -24,6 +24,7 @@ import (
 	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
 	liqtypes "github.com/perpdex/perpdex-l1/x/liquidation/types"
 	risktypes "github.com/perpdex/perpdex-l1/x/risk/types"
+	tradekeeper "github.com/perpdex/perpdex-l1/x/trade/keeper"
 )
 
 // TestAutoADL_RequiresZeroPriceAlignment verifies that ADL skips
@@ -217,6 +218,117 @@ func TestAutoADL_RefusesHealedVictimViaSelfAssert(t *testing.T) {
 	require.NoError(t, k.EndBlocker(ctx))
 	require.Empty(t, tk.calls,
 		"autoADL must self-refuse a victim whose own snapshot says HEALTHY, regardless of the trigger that brought us here")
+}
+
+// TestAutoADL_RefreshesVictimZPBetweenFills pins the per-fill victim
+// snapshot refresh: each ADL fill mutates the victim's BaseSize /
+// EntryQuote / Collateral and therefore the TAV/MMR ratio that drives
+// `pureComputeZeroPrice`. Reusing the entry-time `victimZP` for
+// subsequent overlap checks and `ZeroPriceMid` settle prices feeds
+// stale state into the loop and can wrongly skip counterparties whose
+// ZP falls between the pre-fill and post-fill victim ZP.
+//
+// Setup (victim long, bankrupt):
+//
+//   - candA (high-leverage short, ZP=215): ranks first by score and
+//     passes overlap against the entry-time victim ZP=210.
+//   - candB (low-leverage short, ZP=207): ranks second by score; passes
+//     overlap ONLY against a post-fill victim ZP <= 207.
+//
+// The `tk.onCall` hook simulates the real engine's post-fill state by
+// shrinking victim BaseSize from 10 to 5 and pushing victim ZP down
+// to 205 after candA's fill. With the refresh, autoADL re-reads the
+// snapshot and candB's overlap check (205 <= 207) now passes — both
+// counterparties get filled. Without the refresh autoADL would skip
+// candB and close only 5 of the victim's 10 units this block.
+func TestAutoADL_RefreshesVictimZPBetweenFills(t *testing.T) {
+	ak := newStubAccount()
+	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.NewInt(200)}
+	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
+		AccountIndex: 100, MarketIndex: 0,
+		BaseSize: math.NewInt(10), EntryQuote: math.NewInt(2_000),
+		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
+	}
+	// candA: high-leverage short. EntryQuote = -1500 (avg = 300) →
+	// uPnL at mark=100 is +1000. The real account `Collateral` is
+	// generous so `preCheckCollateral` does not filter candA out
+	// before the trade engine runs; the score-driving leverage is
+	// supplied via `rk.cross[201]` below.
+	ak.accounts[201] = accounttypes.Account{
+		AccountIndex: 201, AccountType: perptypes.MasterAccountType,
+		Collateral: math.NewInt(1_000_000),
+	}
+	ak.pos[[2]uint64{201, 0}] = accounttypes.AccountPosition{
+		AccountIndex: 201, MarketIndex: 0,
+		BaseSize: math.NewInt(-5), EntryQuote: math.NewInt(-1_500),
+		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
+	}
+	// candB: low-leverage short, otherwise identical position so the
+	// score ranking is decided purely by leverage. candA must rank
+	// first or this test does not exercise the refresh path.
+	ak.accounts[202] = accounttypes.Account{
+		AccountIndex: 202, AccountType: perptypes.MasterAccountType,
+		Collateral: math.NewInt(1_000_000),
+	}
+	ak.pos[[2]uint64{202, 0}] = accounttypes.AccountPosition{
+		AccountIndex: 202, MarketIndex: 0,
+		BaseSize: math.NewInt(-5), EntryQuote: math.NewInt(-1_500),
+		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
+	}
+	rk := newStubRisk()
+	rk.status = perptypes.HealthBankruptcy
+	rk.zero[[2]uint64{100, 0}] = 210
+	rk.zero[[2]uint64{201, 0}] = 215
+	rk.zero[[2]uint64{202, 0}] = 207
+	// Seed the candidates' CrossRisk with explicit IM/Collateral so
+	// `ComputeLeverage` orders them deterministically (candA ≫ candB).
+	rk.cross[201] = risktypes.RiskParameters{
+		Collateral:                   math.NewInt(100),
+		TotalAccountValue:            math.NewInt(100),
+		InitialMarginRequirement:     math.NewInt(1_000),
+		MaintenanceMarginRequirement: math.NewInt(500),
+		CloseOutMarginRequirement:    math.NewInt(250),
+	}
+	rk.cross[202] = risktypes.RiskParameters{
+		Collateral:                   math.NewInt(10_000),
+		TotalAccountValue:            math.NewInt(10_000),
+		InitialMarginRequirement:     math.NewInt(1_000),
+		MaintenanceMarginRequirement: math.NewInt(500),
+		CloseOutMarginRequirement:    math.NewInt(250),
+	}
+	tk := &stubTrade{}
+	// Simulate the trade engine's post-fill mutation: candA's fill
+	// reduces victim BaseSize by 5 and shifts victim ZP from 210 to
+	// 205. autoADL must observe the new ZP via its post-fill snapshot
+	// refresh; without the refresh the candB overlap check would
+	// still see 210 > 207 and skip.
+	tk.onCall = func(f tradekeeper.PerpFill) {
+		if f.TakerAccountIndex == 201 {
+			cur := ak.pos[[2]uint64{100, 0}]
+			cur.BaseSize = cur.BaseSize.Sub(math.NewInt(int64(f.BaseAmount)))
+			ak.pos[[2]uint64{100, 0}] = cur
+			rk.zero[[2]uint64{100, 0}] = 205
+		}
+	}
+	matchk := newStubMatching()
+	k, ctx := newKeeper(t, ak, rk, tk, matchk)
+
+	require.NoError(t, k.EndBlocker(ctx))
+
+	require.Len(t, tk.calls, 2,
+		"refresh must let candB pass overlap once victim ZP shifts to 205")
+	require.Equal(t, uint64(201), tk.calls[0].TakerAccountIndex,
+		"candA (higher leverage) must be filled first")
+	require.Equal(t, uint64(202), tk.calls[1].TakerAccountIndex,
+		"candB must be filled after the refresh exposes the post-fill victim ZP")
+	// Sanity-check the settle prices reflect the pre-fill and
+	// post-fill victim ZP respectively, not a single cached value:
+	//   fill #1: ZeroPriceMid(210, 215, victimIsLong=true) = (210+215+1)/2 = 213
+	//   fill #2: ZeroPriceMid(205, 207, victimIsLong=true) = (205+207+1)/2 = 206
+	require.Equal(t, uint32(213), tk.calls[0].Price,
+		"fill #1 must settle at the pre-fill midpoint")
+	require.Equal(t, uint32(206), tk.calls[1].Price,
+		"fill #2 must settle at the post-fill midpoint, proving the refresh propagated")
 }
 
 // TestDeleverage_LeavesResidualOnVictim covers the FULL/BANKRUPTCY
