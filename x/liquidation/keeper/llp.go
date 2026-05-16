@@ -123,10 +123,9 @@ func (k Keeper) tryLLPAbsorb(
 // without re-reading the victim's position table per market:
 //   - MarketIndex: which market the row refers to (waterfall target).
 //   - MarginMode:  picks the right health envelope (cross vs isolated)
-//     in `statusFor`; mixing cross and isolated rows in one ranked
-//     list is safe because isolated positions never share collateral
-//     with each other or with the cross bucket, so closing one cannot
-//     mutate another's health envelope.
+//     in `healthEnvelopeFor`. Cross and isolated rows are co-ranked
+//     in a single uPnL-ascending list (see rankVictimPositionsByUPnL
+//     docstring for the rationale and limitations).
 //   - UnrealizedPnL: sort key (ascending).
 type rankedPosition struct {
 	MarketIndex   uint32
@@ -136,35 +135,51 @@ type rankedPosition struct {
 
 // rankVictimPositionsByUPnL returns the victim's non-zero positions
 // sorted by ascending unrealized PnL (worst first), as the spec
-// requires for LLP takeover. Mark prices are fetched once per distinct
-// MarketIndex encountered and reused; uPnL is derived directly from
-// the iterated position via `pos.UnrealizedPnL(markPrice)`.
+// requires for LLP takeover. uPnL is derived from `pos.UnrealizedPnL`
+// against the per-market mark price; ranking does NOT materialise a
+// risk snapshot, only the mark price is needed.
 //
-// Ranking does NOT materialise a full risk snapshot per position —
-// only the markPrice is needed to score uPnL, and a snapshot's extra cross
-// aggregation would be O(positions^2) for the same victim. The list
-// is the single source of truth for "next market to process" inside
-// `processAccount`; both cross and isolated positions are surfaced
-// because the EndBlocker waterfall handles them through the same
-// per-(account, market) loop.
+// # Cross + isolated mixed ordering
+//
+// Both cross and isolated positions are surfaced in the same list.
+// Per-position health is still read via the correct envelope through
+// `healthEnvelopeFor(..., MarginMode)` before any waterfall action,
+// so an isolated position cannot accidentally drive cross-bucket
+// decisions. Mixing the two in one uPnL sort is acceptable because
+// each ranked entry is handled in its own (account, market) waterfall
+// step that has no side effects on the OTHER bucket: a fill on a
+// cross position settles realised PnL into the cross collateral
+// only, and a fill on an isolated position settles realised PnL into
+// that isolated position's AllocatedMargin only. Spec language
+// ("LLP closes all of the user's positions by taking them over")
+// does NOT prescribe a cross-first / isolated-second order, so the
+// uPnL sort is sufficient.
+//
+// # Source of truth for EndBlocker iteration
+//
+// The returned list is the SINGLE iteration source `processAccount`
+// uses; any market dropped here is skipped by the waterfall for this
+// block. Mark price lookup failures therefore must NOT silently
+// drop the row — instead they are surfaced as errors so the outer
+// EndBlocker logs them and a follow-up block can retry.
 func (k Keeper) rankVictimPositionsByUPnL(ctx context.Context, victim uint64) ([]rankedPosition, error) {
 	out := []rankedPosition{}
-	marks := map[uint32]uint32{}
+	var iterErr error
 	if err := k.accountKeeper.IterateAccountPositions(ctx, victim, func(pos accounttypes.AccountPosition) bool {
 		if pos.BaseSize.IsZero() {
 			return false
 		}
-		markPrice, ok := marks[pos.MarketIndex]
-		if !ok {
-			m, _, err := k.marketKeeper.GetMarkPriceAndDetails(ctx, pos.MarketIndex)
-			if err != nil {
-				// Stale markPrice: skip this market in the ranking,
-				// the outer EndBlocker will surface the error
-				// separately.
-				return false
-			}
-			markPrice = m
-			marks[pos.MarketIndex] = markPrice
+		// `IterateAccountPositions` yields each (victim, market)
+		// tuple exactly once, so a per-call markPrice cache would
+		// always miss — direct lookup is correct AND simpler.
+		markPrice, _, err := k.marketKeeper.GetMarkPriceAndDetails(ctx, pos.MarketIndex)
+		if err != nil {
+			// Surface the error: this list is the EndBlocker's
+			// sole iteration source, silently dropping a market
+			// would hide a stalled oracle until residual debt
+			// alerts fire. Stop the walk and let the caller log.
+			iterErr = err
+			return true
 		}
 		out = append(out, rankedPosition{
 			MarketIndex:   pos.MarketIndex,
@@ -174,6 +189,9 @@ func (k Keeper) rankVictimPositionsByUPnL(ctx context.Context, victim uint64) ([
 		return false
 	}); err != nil {
 		return nil, err
+	}
+	if iterErr != nil {
+		return nil, iterErr
 	}
 	sort.Slice(out, func(i, j int) bool {
 		// Ascending uPnL (most negative first); deterministic

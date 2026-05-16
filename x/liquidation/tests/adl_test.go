@@ -202,8 +202,8 @@ func TestAutoADL_RefusesHealedVictimViaSelfAssert(t *testing.T) {
 	}
 	// Flip the victim to HEALTHY on the second snapshot call. Call
 	// #1 is tryLLPAbsorb; call #2 is autoADL. The flip happens
-	// AFTER refreshHealth has already locked in the trigger
-	// decision, so this isolates the self-assert path.
+	// AFTER processAccount's statusFor read has already locked in
+	// the trigger decision, so this isolates the self-assert path.
 	rk.onSnapshot = func(s *stubRisk, acc uint64, _ uint32) {
 		if acc == 100 && s.snapshotCalls == 2 {
 			s.statuses[100] = perptypes.HealthHealthy

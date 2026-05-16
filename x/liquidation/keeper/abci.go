@@ -75,9 +75,10 @@ func (k Keeper) processAccount(
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 
 	// Rank the victim's positions by ascending uPnL (worst first).
-	// `rankVictimPositionsByUPnL` skips zero-size rows and stale
-	// markPrice markets internally, and surfaces each row's
-	// MarginMode so we can pick the correct health envelope below.
+	// `rankVictimPositionsByUPnL` skips zero-size rows internally and
+	// surfaces a non-nil error if any market's mark price cannot be
+	// fetched (e.g. stalled oracle); see its docstring for why we
+	// refuse to silently drop a row from the waterfall iterator.
 	ranked, err := k.rankVictimPositionsByUPnL(ctx, a.AccountIndex)
 	if err != nil {
 		return err
@@ -93,10 +94,11 @@ func (k Keeper) processAccount(
 		// worse market that we just processed) can have mutated
 		// the cross aggregate, so cached statuses from earlier
 		// in this account's iteration MUST NOT drive the next
-		// market's decision. This single read replaces the
-		// duplicated status-then-refreshHealth pair from the
-		// previous implementation.
-		status, err := k.statusFor(ctx, a.AccountIndex, marketIdx, rp.MarginMode)
+		// market's decision. `healthEnvelopeFor` is the same
+		// helper Liquidate/Deleverage use — kept in liquidate.go
+		// so the cross-vs-isolated routing rule lives in one
+		// place.
+		status, err := k.healthEnvelopeFor(ctx, a.AccountIndex, marketIdx, rp.MarginMode)
 		if err != nil {
 			return err
 		}
@@ -124,18 +126,4 @@ func (k Keeper) processAccount(
 		// re-evaluated next block; there is no IF top-up sweep.
 	}
 	return nil
-}
-
-// statusFor reads the account's relevant health envelope (cross or
-// isolated) for `(accIdx, marketIdx)`. Called once per ranked
-// position inside processAccount so a fill on an earlier (worse)
-// market in the same iteration is reflected before the next
-// market's waterfall fires.
-func (k Keeper) statusFor(
-	ctx context.Context, accIdx uint64, marketIdx uint32, marginMode uint32,
-) (uint32, error) {
-	if marginMode == perptypes.IsolatedMargin {
-		return k.riskKeeper.GetIsolatedHealthStatus(ctx, accIdx, marketIdx)
-	}
-	return k.riskKeeper.GetHealthStatus(ctx, accIdx)
 }
