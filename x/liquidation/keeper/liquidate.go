@@ -74,7 +74,7 @@ func (k Keeper) Liquidate(ctx context.Context, victim uint64, marketIdx uint32, 
 	if pos.BaseSize.IsZero() {
 		return types.ErrNotLiquidatable.Wrap("victim has no position")
 	}
-	status, err := k.victimHealthForPosition(ctx, victim, marketIdx, pos)
+	status, err := k.healthEnvelopeFor(ctx, victim, marketIdx, pos.MarginMode)
 	if err != nil {
 		return err
 	}
@@ -203,7 +203,7 @@ func (k Keeper) Deleverage(
 	if pos.BaseSize.IsZero() {
 		return types.ErrNotLiquidatable.Wrap("victim has no position")
 	}
-	status, err := k.victimHealthForPosition(ctx, victim, marketIdx, pos)
+	status, err := k.healthEnvelopeFor(ctx, victim, marketIdx, pos.MarginMode)
 	if err != nil {
 		return err
 	}
@@ -305,17 +305,21 @@ func (k Keeper) Deleverage(
 	return nil
 }
 
-// victimHealthForPosition picks the right health-status getter for the
-// targeted (victim, market) pair. Cross positions read the cross
+// healthEnvelopeFor picks the right health-status getter for the
+// targeted (account, market) pair. Cross positions read the cross
 // account health; isolated positions read the per-market isolated
 // health, since each isolated position is a distinct risk envelope.
-func (k Keeper) victimHealthForPosition(
-	ctx context.Context, victim uint64, marketIdx uint32, pos accounttypes.AccountPosition,
+//
+// Used by both Liquidate/Deleverage (MsgLiquidate / MsgDeleverage entry
+// points) and processAccount (EndBlocker) so the cross-vs-isolated
+// routing rule is defined exactly once.
+func (k Keeper) healthEnvelopeFor(
+	ctx context.Context, accIdx uint64, marketIdx uint32, marginMode uint32,
 ) (uint32, error) {
-	if pos.MarginMode == perptypes.IsolatedMargin {
-		return k.riskKeeper.GetIsolatedHealthStatus(ctx, victim, marketIdx)
+	if marginMode == perptypes.IsolatedMargin {
+		return k.riskKeeper.GetIsolatedHealthStatus(ctx, accIdx, marketIdx)
 	}
-	return k.riskKeeper.GetHealthStatus(ctx, victim)
+	return k.riskKeeper.GetHealthStatus(ctx, accIdx)
 }
 
 // preCheckCollateral implements the "deleverager has enough cross

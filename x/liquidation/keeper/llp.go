@@ -16,17 +16,25 @@ import (
 
 // tryLLPAbsorb implements the "LLP picks up positions in ascending
 // order of unrealized PnL, only when doing so keeps the LLP TAV >= IMR"
-// rule. Called once per victim per FULL_LIQUIDATION cycle — it ranks
-// the victim's OWN positions by uPnL and offers the worst (most
-// negative) one to the LLP first.
+// rule for ONE (victim, market) tuple. The caller (processAccount) is
+// responsible for invoking this function in worst-uPnL-first order:
+// see `rankVictimPositionsByUPnL`. This keeper-level helper performs
+// NO ranking itself, so it cannot reject a position just because a
+// worse one exists in another market — that responsibility is owned
+// by the outer loop.
 //
 // Returns true iff the targeted position was fully absorbed; the
-// caller skips ADL on a true return. False return means the LLP would
-// have breached IMR, is frozen / nonexistent, or the targeted
-// position is not the worst one yet — caller falls back to ADL for
-// the residual size. A non-nil error indicates an upstream invariant
-// violation (e.g., LLP / IF position misconfigured as isolated); the
-// EndBlocker logs and still falls through to autoADL.
+// caller skips ADL on a true return. False return means one of:
+//   - LLP would have breached IMR on takeover (simulated post-state),
+//   - LLP / IF is frozen, in wind-down, or not provisioned,
+//   - LLP attempts are exhausted for this block, or
+//   - the snapshot reports a zero-size position (defensive guard;
+//     see the BaseSize.IsZero() short-circuit below).
+//
+// In all of these false-return cases the caller falls back to ADL
+// for the residual size. A non-nil error indicates an upstream
+// invariant violation (e.g., LLP / IF position misconfigured as
+// isolated); the EndBlocker logs and still falls through to autoADL.
 func (k Keeper) tryLLPAbsorb(
 	ctx context.Context,
 	victim uint64,
@@ -46,24 +54,6 @@ func (k Keeper) tryLLPAbsorb(
 		return false, nil
 	}
 
-	// Build the ranked queue of the VICTIM's positions (worst uPnL
-	// first). We only attempt the targeted `marketIdx` here; the
-	// outer loop walks every market in order and only invokes us
-	// when this one is FULL_LIQUIDATION. We still consult the rank
-	// to make sure we are not trying to absorb the BEST position
-	// before the WORST has been offered — which would let the LLP
-	// cherry-pick winners and leave bad positions for ADL.
-	worstFirst, err := k.rankVictimPositionsByUPnL(ctx, victim)
-	if err != nil {
-		return false, err
-	}
-	if len(worstFirst) > 0 && worstFirst[0].MarketIndex != marketIdx {
-		// A worse position exists in another market; defer this
-		// market until that one is processed (next EndBlocker cycle
-		// — accounts/markets are iterated deterministically).
-		return false, nil
-	}
-
 	// Snapshot the victim's targeted position fresh: any earlier
 	// LLP/ADL fill in this account's iteration may have shifted the
 	// cross aggregate, and the snapshot's ZeroPrice MUST come from
@@ -72,6 +62,14 @@ func (k Keeper) tryLLPAbsorb(
 	if err != nil {
 		return false, err
 	}
+	// Defensive zero-size guard. rankVictimPositionsByUPnL only
+	// emits non-zero rows, and a sibling-market fill within the
+	// same processAccount iteration cannot zero THIS market's base
+	// size (perp trades only mutate their own market). The guard
+	// remains as protection against future call sites that might
+	// invoke tryLLPAbsorb outside the ranked-iteration contract,
+	// and against any pre-snapshot side effect that closes the
+	// position before the snapshot is taken.
 	if snap.Position.BaseSize.IsZero() {
 		return false, nil
 	}
@@ -131,46 +129,81 @@ func (k Keeper) tryLLPAbsorb(
 	return true, nil
 }
 
+// rankedPosition is the per-position summary `rankVictimPositionsByUPnL`
+// emits for the EndBlocker. It carries everything `processAccount`
+// needs to drive the LLP/ADL waterfall in worst-uPnL-first order
+// without re-reading the victim's position table per market:
+//   - MarketIndex: which market the row refers to (waterfall target).
+//   - MarginMode:  picks the right health envelope (cross vs isolated)
+//     in `healthEnvelopeFor`. Cross and isolated rows are co-ranked
+//     in a single uPnL-ascending list (see rankVictimPositionsByUPnL
+//     docstring for the rationale and limitations).
+//   - UnrealizedPnL: sort key (ascending).
 type rankedPosition struct {
 	MarketIndex   uint32
+	MarginMode    uint32
 	UnrealizedPnL math.Int
 }
 
 // rankVictimPositionsByUPnL returns the victim's non-zero positions
 // sorted by ascending unrealized PnL (worst first), as the spec
-// requires for LLP takeover. Mark prices are fetched once per distinct
-// MarketIndex encountered and reused; uPnL is derived directly from
-// the iterated position via `pos.UnrealizedPnL(markPrice)`.
+// requires for LLP takeover. uPnL is derived from `pos.UnrealizedPnL`
+// against the per-market mark price; ranking does NOT materialise a
+// risk snapshot, only the mark price is needed.
 //
-// Ranking does NOT materialise a full risk snapshot per position —
-// only the markPrice is needed to score uPnL, and a snapshot's extra cross
-// aggregation would be O(positions^2) for the same victim.
+// # Cross + isolated mixed ordering
+//
+// Both cross and isolated positions are surfaced in the same list.
+// Per-position health is still read via the correct envelope through
+// `healthEnvelopeFor(..., MarginMode)` before any waterfall action,
+// so an isolated position cannot accidentally drive cross-bucket
+// decisions. Mixing the two in one uPnL sort is acceptable because
+// each ranked entry is handled in its own (account, market) waterfall
+// step that has no side effects on the OTHER bucket: a fill on a
+// cross position settles realised PnL into the cross collateral
+// only, and a fill on an isolated position settles realised PnL into
+// that isolated position's AllocatedMargin only. Spec language
+// ("LLP closes all of the user's positions by taking them over")
+// does NOT prescribe a cross-first / isolated-second order, so the
+// uPnL sort is sufficient.
+//
+// # Source of truth for EndBlocker iteration
+//
+// The returned list is the SINGLE iteration source `processAccount`
+// uses; any market dropped here is skipped by the waterfall for this
+// block. Mark price lookup failures therefore must NOT silently
+// drop the row — instead they are surfaced as errors so the outer
+// EndBlocker logs them and a follow-up block can retry.
 func (k Keeper) rankVictimPositionsByUPnL(ctx context.Context, victim uint64) ([]rankedPosition, error) {
 	out := []rankedPosition{}
-	marks := map[uint32]uint32{}
+	var iterErr error
 	if err := k.accountKeeper.IterateAccountPositions(ctx, victim, func(pos accounttypes.AccountPosition) bool {
 		if pos.BaseSize.IsZero() {
 			return false
 		}
-		markPrice, ok := marks[pos.MarketIndex]
-		if !ok {
-			m, _, err := k.marketKeeper.GetMarkPriceAndDetails(ctx, pos.MarketIndex)
-			if err != nil {
-				// Stale markPrice: skip this market in the ranking,
-				// the outer EndBlocker will surface the error
-				// separately.
-				return false
-			}
-			markPrice = m
-			marks[pos.MarketIndex] = markPrice
+		// `IterateAccountPositions` yields each (victim, market)
+		// tuple exactly once, so a per-call markPrice cache would
+		// always miss — direct lookup is correct AND simpler.
+		markPrice, _, err := k.marketKeeper.GetMarkPriceAndDetails(ctx, pos.MarketIndex)
+		if err != nil {
+			// Surface the error: this list is the EndBlocker's
+			// sole iteration source, silently dropping a market
+			// would hide a stalled oracle until residual debt
+			// alerts fire. Stop the walk and let the caller log.
+			iterErr = err
+			return true
 		}
 		out = append(out, rankedPosition{
 			MarketIndex:   pos.MarketIndex,
+			MarginMode:    pos.MarginMode,
 			UnrealizedPnL: pos.UnrealizedPnL(markPrice),
 		})
 		return false
 	}); err != nil {
 		return nil, err
+	}
+	if iterErr != nil {
+		return nil, iterErr
 	}
 	sort.Slice(out, func(i, j int) bool {
 		// Ascending uPnL (most negative first); deterministic
