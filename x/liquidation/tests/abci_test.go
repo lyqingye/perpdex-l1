@@ -373,3 +373,161 @@ func TestEndBlocker_CrossAggregateRefreshedAcrossMarkets(t *testing.T) {
 	require.GreaterOrEqual(t, rk.snapshotCalls, 1,
 		"market 0's LLP path must build at least one fresh risk snapshot before the fill")
 }
+
+// TestEndBlocker_LLPAbsorbsWorstUPnLMarketFirst is the F1 regression
+// test (issue #64). The previous implementation iterated the victim's
+// positions in market_index order and used an inner-ranking check
+// inside tryLLPAbsorb to refuse absorbing any market that wasn't the
+// worst — but on refusal it fell straight through to autoADL anyway,
+// silently demoting an LLP-eligible position to an ADL fill on the
+// counterparty side. The fix lifts the ranking to processAccount so
+// the LLP is offered the worst-uPnL market FIRST and a less-bad
+// market is reached only after the worst has been handled.
+//
+// Setup:
+//
+//   - Account 100 holds two cross-margin FULL_LIQUIDATION positions.
+//   - Market 0 has uPnL = -500 (less negative).
+//   - Market 1 has uPnL = -2000 (worst).
+//   - The IF can absorb both takeovers (postSim defaults pass IMR).
+//
+// Expectations:
+//
+//   - Exactly two fills, BOTH taken by the LLP.
+//   - The FIRST fill targets market 1 (the worst-uPnL market).
+//   - The SECOND fill targets market 0.
+//
+// Before the fix this test fails at `tk.calls[0].MarketIndex`: the
+// old code offered market 0 to the LLP first, tryLLPAbsorb refused
+// because market 1 was ranked worse, and processAccount sent market
+// 0 to autoADL — which has no counterparty in this fixture, so the
+// LLP only ends up absorbing market 1 (1 fill instead of 2).
+func TestEndBlocker_LLPAbsorbsWorstUPnLMarketFirst(t *testing.T) {
+	ak := newStubAccount()
+	ak.accounts[perptypes.InsuranceFundOperatorAccountIdx] = accounttypes.Account{
+		AccountIndex: perptypes.InsuranceFundOperatorAccountIdx,
+		AccountType:  perptypes.InsuranceFundAccountType,
+		Collateral:   math.NewInt(10_000_000),
+		PublicPoolInfo: &accounttypes.PublicPoolInfo{
+			Status:         perptypes.PublicPoolStatusActive,
+			TotalShares:    math.NewInt(1),
+			OperatorShares: math.NewInt(1),
+		},
+	}
+	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.NewInt(10)}
+	// Market 0: BaseSize=10, EntryQuote=1500, markPrice=100 → uPnL=-500.
+	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
+		AccountIndex: 100, MarketIndex: 0,
+		BaseSize: math.NewInt(10), EntryQuote: math.NewInt(1_500),
+		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
+	}
+	// Market 1: BaseSize=10, EntryQuote=3000, markPrice=100 → uPnL=-2000 (worst).
+	ak.pos[[2]uint64{100, 1}] = accounttypes.AccountPosition{
+		AccountIndex: 100, MarketIndex: 1,
+		BaseSize: math.NewInt(10), EntryQuote: math.NewInt(3_000),
+		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
+	}
+	rk := newStubRisk()
+	rk.statuses[100] = perptypes.HealthFullLiquidation
+	rk.zero[[2]uint64{100, 0}] = 100
+	rk.zero[[2]uint64{100, 1}] = 100
+	tk := &stubTrade{}
+	matchk := newStubMatching()
+	k, ctx := newKeeper(t, ak, rk, tk, matchk)
+
+	require.NoError(t, k.EndBlocker(ctx))
+
+	require.Len(t, tk.calls, 2,
+		"both FULL_LIQUIDATION markets must be absorbed by the LLP "+
+			"(2 fills); regression: pre-fix produced only 1 fill on market 1 because "+
+			"market 0 was demoted to autoADL with no counterparty")
+	require.Equal(t, uint32(1), tk.calls[0].MarketIndex,
+		"worst-uPnL market (1) MUST be LLP-absorbed first per spec; "+
+			"regression: pre-fix tried market 0 first and demoted it to autoADL")
+	require.Equal(t, perptypes.InsuranceFundOperatorAccountIdx, tk.calls[0].TakerAccountIndex,
+		"first fill must target the LLP/IF as taker")
+	require.Equal(t, uint32(0), tk.calls[1].MarketIndex,
+		"less-bad market (0) follows after the worst has been absorbed")
+	require.Equal(t, perptypes.InsuranceFundOperatorAccountIdx, tk.calls[1].TakerAccountIndex,
+		"second fill must also target the LLP/IF as taker")
+}
+
+// TestEndBlocker_RankingIgnoresPersistedMarketIndexOrder is a second
+// guardrail for F1: even when only one of two FULL_LIQUIDATION
+// markets has a viable LLP takeover, the ranking must pick the
+// market with the worst uPnL first, NOT the smallest market_index.
+//
+// Setup mirrors the canonical F1 race: market 0 (less bad) is
+// processed first by the persisted-position iterator. If the
+// ranking is correct, market 0 must be visited AFTER market 1
+// (worst). Here we make the LLP refuse via an IMR-breaching postSim,
+// so the absorb fails for both markets; without an ADL counterparty,
+// the EndBlocker should issue zero fills. The test asserts the order
+// in which the LLP path is consulted by checking that the FIRST
+// snapshot request issued by the LLP path is against market 1, not
+// market 0.
+//
+// Note: stubRisk records every GetLiquidationRiskSnapshot call, so we
+// drive the assertion from `rk.snapshotCalls` together with a trace
+// captured via onSnapshot. The previous implementation would consult
+// the LLP path for market 0 first (then refuse internally because
+// market 1 was ranked worse) — under the fix, market 1's snapshot
+// is taken first because the outer loop sees market 1's worse uPnL
+// at the head of the ranked list.
+func TestEndBlocker_RankingIgnoresPersistedMarketIndexOrder(t *testing.T) {
+	ak := newStubAccount()
+	ak.accounts[perptypes.InsuranceFundOperatorAccountIdx] = accounttypes.Account{
+		AccountIndex: perptypes.InsuranceFundOperatorAccountIdx,
+		AccountType:  perptypes.InsuranceFundAccountType,
+		Collateral:   math.NewInt(100),
+		PublicPoolInfo: &accounttypes.PublicPoolInfo{
+			Status: perptypes.PublicPoolStatusActive,
+		},
+	}
+	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.NewInt(10)}
+	// Market 0: uPnL=-500 (less worst).
+	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
+		AccountIndex: 100, MarketIndex: 0,
+		BaseSize: math.NewInt(10), EntryQuote: math.NewInt(1_500),
+		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
+	}
+	// Market 1: uPnL=-2000 (worst).
+	ak.pos[[2]uint64{100, 1}] = accounttypes.AccountPosition{
+		AccountIndex: 100, MarketIndex: 1,
+		BaseSize: math.NewInt(10), EntryQuote: math.NewInt(3_000),
+		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
+	}
+	rk := newStubRisk()
+	rk.statuses[100] = perptypes.HealthFullLiquidation
+	rk.zero[[2]uint64{100, 0}] = 100
+	rk.zero[[2]uint64{100, 1}] = 100
+	// LLP IMR breach so the absorb refuses; no ADL candidate exists.
+	rk.postSim[perptypes.InsuranceFundOperatorAccountIdx] = risktypes.RiskParameters{
+		Collateral:                   math.NewInt(100),
+		TotalAccountValue:            math.NewInt(50),
+		InitialMarginRequirement:     math.NewInt(500),
+		MaintenanceMarginRequirement: math.NewInt(250),
+		CloseOutMarginRequirement:    math.NewInt(125),
+	}
+	// Capture the order of victim-side snapshot calls — these
+	// correspond to the LLP path consulting each market in
+	// processAccount's ranked order.
+	var victimSnapshotMarkets []uint32
+	rk.onSnapshot = func(s *stubRisk, acc uint64, mkt uint32) {
+		if acc == 100 {
+			victimSnapshotMarkets = append(victimSnapshotMarkets, mkt)
+		}
+	}
+	tk := &stubTrade{}
+	matchk := newStubMatching()
+	k, ctx := newKeeper(t, ak, rk, tk, matchk)
+
+	require.NoError(t, k.EndBlocker(ctx))
+
+	require.Empty(t, tk.calls, "LLP refuses on IMR and ADL queue is empty: no fill expected")
+	require.NotEmpty(t, victimSnapshotMarkets, "the LLP path must have consulted at least one market")
+	require.Equal(t, uint32(1), victimSnapshotMarkets[0],
+		"the worst-uPnL market (1) MUST be consulted before market 0; "+
+			"regression: pre-fix consulted market 0 first because the persisted "+
+			"iterator went in market_index order")
+}
