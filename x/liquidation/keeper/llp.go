@@ -24,13 +24,17 @@ import (
 // by the outer loop.
 //
 // Returns true iff the targeted position was fully absorbed; the
-// caller skips ADL on a true return. False return means the LLP would
-// have breached IMR, is frozen / nonexistent, or the position has
-// already been closed out by an earlier sibling fill — caller falls
-// back to ADL for the residual size. A non-nil error indicates an
-// upstream invariant violation (e.g., LLP / IF position misconfigured
-// as isolated); the EndBlocker logs and still falls through to
-// autoADL.
+// caller skips ADL on a true return. False return means one of:
+//   - LLP would have breached IMR on takeover (simulated post-state),
+//   - LLP / IF is frozen, in wind-down, or not provisioned,
+//   - LLP attempts are exhausted for this block, or
+//   - the snapshot reports a zero-size position (defensive guard;
+//     see the BaseSize.IsZero() short-circuit below).
+//
+// In all of these false-return cases the caller falls back to ADL
+// for the residual size. A non-nil error indicates an upstream
+// invariant violation (e.g., LLP / IF position misconfigured as
+// isolated); the EndBlocker logs and still falls through to autoADL.
 func (k Keeper) tryLLPAbsorb(
 	ctx context.Context,
 	victim uint64,
@@ -58,6 +62,14 @@ func (k Keeper) tryLLPAbsorb(
 	if err != nil {
 		return false, err
 	}
+	// Defensive zero-size guard. rankVictimPositionsByUPnL only
+	// emits non-zero rows, and a sibling-market fill within the
+	// same processAccount iteration cannot zero THIS market's base
+	// size (perp trades only mutate their own market). The guard
+	// remains as protection against future call sites that might
+	// invoke tryLLPAbsorb outside the ranked-iteration contract,
+	// and against any pre-snapshot side effect that closes the
+	// position before the snapshot is taken.
 	if snap.Position.BaseSize.IsZero() {
 		return false, nil
 	}
