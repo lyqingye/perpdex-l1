@@ -11,26 +11,17 @@ import (
 	"github.com/perpdex/perpdex-l1/x/risk/types"
 )
 
-// cross.go owns the cross-margin half of the risk keeper: the aggregate
-// ComputeCrossRisk walk + the *pure read* helpers that surface its
-// outputs (GetHealthStatus / GetTotalAccountValue /
-// GetAvailableCollateral / GetAvailableUsdcCollateral). The
-// per-account half of IsValidRiskChangeFrom (isCrossRiskChangeValid)
-// lives here too because it consumes the same aggregates; the
-// cross + isolated driver IsValidRiskChangeFrom and SnapshotRisk live
-// in risk_change.go.
+// cross.go owns the cross-margin half of the risk keeper: the
+// ComputeCrossRisk aggregation, the pure-read accessors built on top
+// of it, and the cross-side of IsValidRiskChangeFrom. The cross +
+// isolated driver and SnapshotRisk live in risk_change.go.
 
-// ComputeCrossRisk iterates all CROSS positions of an account and aggregates
-// their risk contributions into a RiskParameters value.
-//
-// Per the spec, isolated positions are a separate accounting unit: the
-// allocated margin of an isolated position only collateralises that
-// position, and its uPnL is realised against AllocatedMargin (not the
-// shared cross collateral). Including isolated AllocatedMargin/uPnL in
-// the cross TAV — without also adding the corresponding IM/MM/CM — let
-// an isolated profit silently inflate cross health and dodge cross
-// liquidation. We therefore aggregate ONLY cross-margin positions here;
-// isolated positions are evaluated individually via ComputeIsolatedRisk.
+// ComputeCrossRisk aggregates the account's CROSS positions into a
+// RiskParameters value. Isolated positions are excluded — their
+// AllocatedMargin/uPnL are fenced from cross collateral, and mixing
+// them into TAV without their IM/MM/CM would let an isolated profit
+// silently dodge cross liquidation. Isolated risk goes through
+// ComputeIsolatedRisk.
 func (k Keeper) ComputeCrossRisk(ctx context.Context, accountIdx uint64) (types.RiskParameters, error) {
 	a, err := k.accountKeeper.GetAccount(ctx, accountIdx)
 	if err != nil {
@@ -57,15 +48,13 @@ func (k Keeper) ComputeCrossRisk(ctx context.Context, accountIdx uint64) (types.
 		if pos.BaseSize.IsZero() {
 			return false
 		}
-		// Skip isolated positions: they have an independent risk
-		// envelope that ComputeIsolatedRisk evaluates on demand.
+		// Isolated positions are evaluated independently.
 		if pos.MarginMode == perptypes.IsolatedMargin {
 			return false
 		}
-		// For any NON-ZERO position the gated markPrice read must succeed.
-		// Fail-closed: a missing or stale price MUST surface as an
-		// error, not silently zero the contribution, otherwise an
-		// oracle outage could hide risk regressions.
+		// Fail-closed on the mark read: silently zeroing the
+		// contribution on an oracle outage would hide risk
+		// regressions.
 		markPrice, md, err := k.marketKeeper.GetMarkPriceAndDetails(ctx, pos.MarketIndex)
 		if err != nil {
 			iterErr = errorsmod.Wrapf(err, "account=%d", accountIdx)
@@ -90,9 +79,8 @@ func (k Keeper) ComputeCrossRisk(ctx context.Context, accountIdx uint64) (types.
 	return cross, nil
 }
 
-// GetHealthStatus returns the CROSS health status. Isolated positions
-// have their own per-market health envelope; query
-// GetIsolatedHealthStatus for those.
+// GetHealthStatus returns the CROSS health. Isolated positions have
+// their own per-market envelope; use GetIsolatedHealthStatus for them.
 func (k Keeper) GetHealthStatus(ctx context.Context, accountIdx uint64) (uint32, error) {
 	rp, err := k.ComputeCrossRisk(ctx, accountIdx)
 	if err != nil {
@@ -101,10 +89,9 @@ func (k Keeper) GetHealthStatus(ctx context.Context, accountIdx uint64) (uint32,
 	return rp.HealthStatus(), nil
 }
 
-// GetTotalAccountValue returns TAV = collateral + sum(uPnL across CROSS
-// markets) for the account. Used by public-pool share-value math
-// (NAV = TAV / total_shares). Isolated positions are deliberately
-// excluded, mirroring the spec's "isolated is a sub-account" rule.
+// GetTotalAccountValue returns TAV = collateral + sum(uPnL) over
+// CROSS markets. Used by public-pool NAV math; isolated positions are
+// excluded (isolated is a sub-account by spec).
 func (k Keeper) GetTotalAccountValue(ctx context.Context, accountIdx uint64) (math.Int, error) {
 	rp, err := k.ComputeCrossRisk(ctx, accountIdx)
 	if err != nil {
@@ -122,20 +109,16 @@ func (k Keeper) GetAvailableCollateral(ctx context.Context, accountIdx uint64) (
 	return rp.TotalAccountValue.Sub(rp.InitialMarginRequirement), nil
 }
 
-// GetAvailableUsdcCollateral returns the amount of cross USDC collateral
-// that can be safely consumed by a new isolated margin allocation
-// without pushing the cross account out of HEALTHY. Mirrors
-// `get_available_usdc_collateral`:
+// GetAvailableUsdcCollateral returns the cross USDC headroom safe to
+// fund a new isolated margin allocation without dropping the cross
+// account out of HEALTHY:
 //
-//   - account must currently be HEALTHY (otherwise zero — no headroom)
-//   - collateral_with_funding must be non-negative (otherwise zero)
-//   - take min(TAV - IMR, collateral_with_funding) clamped to zero
+//   - account must be HEALTHY (else 0)
+//   - collateral_with_funding must be non-negative (else 0)
+//   - take min(TAV - IMR, collateral_with_funding) clamped to 0
 //
-// Used by trade keeper's isolated margin auto-allocation so a maker /
-// taker can be evicted (`ErrMakerInsufficientCollateral` /
-// `ErrTakerInsufficientCollateral`) when a prospective fill would
-// otherwise drain more cross collateral than the account currently has
-// to spare.
+// Used by trade keeper's isolated auto-allocation to evict makers /
+// stop takers via Maker/Taker InsufficientCollateral.
 func (k Keeper) GetAvailableUsdcCollateral(ctx context.Context, accountIdx uint64) (math.Int, error) {
 	rp, err := k.ComputeCrossRisk(ctx, accountIdx)
 	if err != nil {
@@ -158,11 +141,9 @@ func (k Keeper) GetAvailableUsdcCollateral(ctx context.Context, accountIdx uint6
 	return avail, nil
 }
 
-// isCrossRiskChangeValid is the cross-half of IsValidRiskChangeFrom
-// (in risk_change.go). It compares the post-state cross aggregate
-// against the caller-provided pre-state and defers the decision to
-// classifyChange. A nil `pre` is treated as "no pre-state" and
-// forces the post-state to be HEALTHY.
+// isCrossRiskChangeValid compares the post-state cross aggregate
+// against pre and delegates to classifyChange. A nil pre is treated
+// as "no pre-state" and forces the post-state to be HEALTHY.
 func (k Keeper) isCrossRiskChangeValid(ctx context.Context, accountIdx uint64, pre *types.RiskParameters) (bool, error) {
 	post, err := k.ComputeCrossRisk(ctx, accountIdx)
 	if err != nil {

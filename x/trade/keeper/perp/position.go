@@ -10,15 +10,11 @@ import (
 	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
 )
 
-// positionChangeResult bundles the inputs / outputs of one side's
-// position update so the surrounding Apply pipeline can chain through
-// the `realized_pnl → fee → margin_delta → risk` sequence on the
-// right account / market without re-loading state.
-//
-// `New` reflects the position AFTER size + entry_quote are written,
-// but BEFORE the realized-PnL / fee / margin_delta routing — the
-// helpers below mutate `New.AllocatedMargin` as they fold those flows
-// in (and re-persist via `SetPosition` whenever necessary).
+// positionChangeResult bundles one side's position update so the
+// Apply pipeline can chain realized_pnl → fee → margin_delta → risk
+// without re-loading state. New reflects post-size/entry_quote but
+// pre-routing; downstream helpers mutate New.AllocatedMargin as they
+// fold subsequent flows in.
 type positionChangeResult struct {
 	AccountIdx  uint64
 	MarketIdx   uint32
@@ -29,30 +25,17 @@ type positionChangeResult struct {
 	RealizedPnL math.Int
 }
 
-// errPositionOutOfBounds is the internal sentinel returned by
-// `applyPositionChange` when the post-trade `|position|` or
-// `|entry_quote|` would overflow `POSITION_SIZE_BITS` /
-// `ENTRY_QUOTE_BITS`.
-// `Apply` re-wraps it into `ErrMakerInvalidPosition` /
-// `ErrTakerInvalidPosition` so the matching loop can route the failure
-// through `IsRecoverable*Error`.
+// errPositionOutOfBounds signals that |position| or |entry_quote|
+// would overflow POSITION_SIZE_BITS / ENTRY_QUOTE_BITS. Apply
+// re-wraps it into Maker/Taker InvalidPosition for the matching loop.
 var errPositionOutOfBounds = errors.New("trade: post-trade position out of bounds")
 
-// applyPositionChange handles the four position-change scenarios from
-// 14-trade.md §3.2: open new, increase, decrease, flip. It computes the
-// new position size + entry_quote and the realized PnL but does NOT
-// route the realized PnL anywhere — `applyPositionFinancials` does
-// that based on the position's margin mode.
-//
-// The four-quadrant arithmetic itself lives in
-// `accounttypes.AccountPosition.ApplyFill`, shared with x/risk's
-// `SimulateRiskAfterTakeover`. This wrapper is responsible only for
-// driving the persisted RMW + bounds-check + OI delta around it.
-//
-// `errPositionOutOfBounds` is returned when the new size or entry
-// quote would overflow the bit-width bounds
-// (POSITION_SIZE_BITS / ENTRY_QUOTE_BITS); the caller wraps it into
-// the appropriate maker / taker sentinel.
+// applyPositionChange computes the new size / entry_quote / realized
+// PnL for one side (open / increase / decrease / flip). Does NOT
+// route the PnL — that is the margin-mode dispatcher's job. The
+// quadrant math itself lives in AccountPosition.ApplyFill (shared
+// with risk.SimulateRiskAfterTakeover); this wrapper drives the
+// persisted RMW, bounds check, and OI delta.
 func (e Engine) applyPositionChange(ctx context.Context, accountIdx uint64, marketIdx uint32, price uint32, baseAmount uint64, sign int64) (positionChangeResult, error) {
 	var (
 		old         accounttypes.AccountPosition
@@ -63,26 +46,21 @@ func (e Engine) applyPositionChange(ctx context.Context, accountIdx uint64, mark
 	)
 
 	updated, err := e.accountKeeper.UpdatePosition(ctx, accountIdx, marketIdx, func(pos *accounttypes.AccountPosition) error {
-		// `pos` is already nil-normalised by GetPosition (the RMW
-		// helper auto-vivifies a zero-valued record). Capture the
-		// pre-state by value so res.Old reflects the position as it
-		// was before this fill.
+		// Capture pre-state by value; GetPosition auto-vivifies a
+		// zero record, so pos is never nil.
 		old = *pos
 		curSize = pos.BaseSize
 		delta := math.NewIntFromUint64(baseAmount).MulRaw(sign)
 
 		fill := pos.ApplyFill(delta, price)
-		// ApplyFill is a pure function; we still need to mirror its
-		// new size / entry_quote into the persisted record before
-		// setPosition runs.
 		pos.BaseSize = fill.Position.BaseSize
 		pos.EntryQuote = fill.Position.EntryQuote
 		newSize = pos.BaseSize
 		realizedPnL = fill.RealizedPnL
 		sideFlipped = fill.SideFlipped
 
-		// Bounds check ahead of persistence so we never store a
-		// position outside the canonical bit-width envelope.
+		// Reject before persistence so we never store an out-of-bounds
+		// position.
 		if !isWithinPositionBounds(pos.BaseSize, pos.EntryQuote) {
 			return errPositionOutOfBounds
 		}
@@ -92,8 +70,7 @@ func (e Engine) applyPositionChange(ctx context.Context, accountIdx uint64, mark
 		return positionChangeResult{}, err
 	}
 
-	// OI contribution from this account: |new| - |old|. Positive when the
-	// account grows its exposure, negative when reducing / closing.
+	// OI contribution from this side: |new| - |old|.
 	oiDelta := newSize.Abs().Sub(curSize.Abs())
 	return positionChangeResult{
 		AccountIdx:  accountIdx,
@@ -106,9 +83,8 @@ func (e Engine) applyPositionChange(ctx context.Context, accountIdx uint64, mark
 	}, nil
 }
 
-// isWithinPositionBounds enforces the hard limits
-// `|position| < 2^POSITION_SIZE_BITS` and `|entry_quote| <
-// 2^ENTRY_QUOTE_BITS`.
+// isWithinPositionBounds enforces |position| < 2^POSITION_SIZE_BITS
+// and |entry_quote| < 2^ENTRY_QUOTE_BITS.
 func isWithinPositionBounds(position, entryQuote math.Int) bool {
 	maxPos := math.NewIntFromUint64(perptypes.MaxPositionSize)
 	maxEntryQuote := math.NewIntFromUint64(perptypes.MaxEntryQuote)

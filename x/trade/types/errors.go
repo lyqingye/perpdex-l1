@@ -2,68 +2,43 @@ package types
 
 import "cosmossdk.io/errors"
 
-// Sentinel errors for x/trade. These are split into "soft" /
-// recoverable errors that the matching engine can use to skip a
-// specific maker (or abort just the current taker, preserving prior
-// fills) and "hard" errors that must revert the entire transaction.
-//
-// Soft per-side rejections cancel only the offending order
-// ("cancel taker" / "cancel maker") rather than reverting the whole
-// block. The matching loop inspects each sentinel via errors.Is.
+// Sentinels for x/trade. "Soft" sentinels (Maker*/Taker*) let the
+// matching loop evict the offending side and continue; ErrInvalid*
+// are hard invariant violations that must revert the whole tx.
 var (
-	// ErrMakerRiskRegression: maker side fails IsValidRiskChangeFrom
-	// after the would-be fill (e.g. maker drained collateral after
-	// resting). Soft: matchOrder evicts the maker and continues with
-	// the next price level.
+	// Soft: maker fails post-trade IsValidRiskChangeFrom.
 	ErrMakerRiskRegression = errors.Register(ModuleName, 2, "maker post-trade risk regression")
 
-	// ErrMakerInsufficientBalance: maker side cannot satisfy a spot
-	// transfer (locked or available balance shortfall). Soft: evict
-	// maker and continue. Should be rare once spot lock-on-place is
-	// enforced, but kept as a defensive fallback.
+	// Soft: maker spot balance shortfall (locked or available).
+	// Defensive — should be rare with lock-on-place.
 	ErrMakerInsufficientBalance = errors.Register(ModuleName, 3, "maker insufficient balance for fill")
 
-	// ErrTakerRiskRegression: taker side fails IsValidRiskChangeFrom.
-	// Soft: matchOrder stops the taker (already-applied fills via
-	// writeCache are preserved); remaining base is cancelled.
+	// Soft: taker fails post-trade IsValidRiskChangeFrom. Prior fills
+	// in this taker are preserved via writeCache.
 	ErrTakerRiskRegression = errors.Register(ModuleName, 4, "taker post-trade risk regression")
 
-	// ErrTakerInsufficientBalance: taker spot transfer fails. Soft:
-	// stop taker, preserve prior fills.
+	// Soft: taker spot balance shortfall. Prior fills preserved.
 	ErrTakerInsufficientBalance = errors.Register(ModuleName, 5, "taker insufficient balance for fill")
 
-	// ErrMakerInvalidPosition: maker post-trade position size or
-	// entry_quote would overflow the perp bit-width envelope
-	// (POSITION_SIZE_BITS / ENTRY_QUOTE_BITS). Soft: evict maker and
-	// continue.
+	// Soft: maker post-trade |position| or |entry_quote| overflow.
 	ErrMakerInvalidPosition = errors.Register(ModuleName, 6, "maker post-trade position out of bounds")
 
-	// ErrTakerInvalidPosition: taker post-trade position size or
-	// entry_quote overflow. Soft: stop taker, preserve prior fills.
+	// Soft: taker post-trade |position| or |entry_quote| overflow.
 	ErrTakerInvalidPosition = errors.Register(ModuleName, 7, "taker post-trade position out of bounds")
 
-	// ErrMakerInsufficientCollateral: maker isolated position grows
-	// (or flips) and the auto-allocated `margin_delta` exceeds the
-	// account's available cross collateral. Soft: evict maker and
-	// continue.
+	// Soft: maker isolated margin_delta exceeds available cross USDC.
 	ErrMakerInsufficientCollateral = errors.Register(ModuleName, 8, "maker insufficient cross collateral for isolated margin allocation")
 
-	// ErrTakerInsufficientCollateral: taker side of the isolated
-	// margin auto-allocation cannot be funded from cross collateral.
-	// Soft: stop taker, preserve prior fills.
+	// Soft: taker isolated margin_delta exceeds available cross USDC.
 	ErrTakerInsufficientCollateral = errors.Register(ModuleName, 9, "taker insufficient cross collateral for isolated margin allocation")
 
-	// ErrInvalidTransferAmount fires when a spot maker/taker debit
-	// receives a negative `math.Int` amount. This is a hard error
-	// (programmer / invariant violation), not a soft sentinel — it
-	// cannot be evicted-and-continue because the underlying ApplySpot
-	// invariant has been violated upstream.
+	// Hard: a spot debit received a negative amount; upstream invariant
+	// violated and the tx must revert.
 	ErrInvalidTransferAmount = errors.Register(ModuleName, 10, "transfer amount must be non-negative")
 )
 
-// IsRecoverableMakerError reports whether err is a sentinel that the
-// matching loop should treat as "evict this maker and try the next
-// resting order".
+// IsRecoverableMakerError reports whether err lets the matching loop
+// evict this maker and try the next resting order.
 func IsRecoverableMakerError(err error) bool {
 	if err == nil {
 		return false
@@ -76,9 +51,8 @@ func IsRecoverableMakerError(err error) bool {
 	)
 }
 
-// IsRecoverableTakerError reports whether err is a sentinel that the
-// matching loop should treat as "stop this taker but preserve the
-// fills that already wrote through".
+// IsRecoverableTakerError reports whether err lets the matching loop
+// stop the taker while preserving the fills already written.
 func IsRecoverableTakerError(err error) bool {
 	if err == nil {
 		return false

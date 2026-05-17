@@ -5,8 +5,7 @@ const (
 	EventTypeMarketExitPosition = "market_exit_position"
 	EventTypeAutoADL            = "auto_adl"
 	// EventTypeDeleverage is emitted by every deleverage path
-	// (MsgDeleverage, LLP absorb, autoADL); `source` distinguishes
-	// the entry point.
+	// (MsgDeleverage, LLP absorb, autoADL); source distinguishes them.
 	EventTypeDeleverage = "deleverage"
 )
 
@@ -22,7 +21,7 @@ const (
 	AttributeKeyVictimZeroPrice = "victim_zero_price"
 	AttributeKeyCandZeroPrice   = "cand_zero_price"
 	AttributeKeyDeleverager     = "deleverager"
-	// AttributeKeySource tags `EventTypeDeleverage` with the entry
+	// AttributeKeySource tags EventTypeDeleverage with the entry
 	// point (msg / llp / auto_adl).
 	AttributeKeySource = "source"
 )

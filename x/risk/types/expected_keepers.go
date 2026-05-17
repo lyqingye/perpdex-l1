@@ -14,22 +14,20 @@ type AccountKeeper interface {
 	GetPosition(ctx context.Context, accIdx uint64, marketIdx uint32) (accounttypes.AccountPosition, error)
 	GetAccountAsset(ctx context.Context, accIdx uint64, assetIdx uint32) (accounttypes.AccountAsset, error)
 	IterateAccounts(ctx context.Context, cb func(accounttypes.Account) bool) error
-	// IterateAccountPositions walks every persisted position row owned by
-	// `accountIdx`. Callback returns true to stop. Replaces the old
-	// MaxPerpsMarketIndex full-scan loops in risk / liquidation.
+	// IterateAccountPositions walks every persisted position row of
+	// accountIdx; cb returns true to stop.
 	IterateAccountPositions(ctx context.Context, accountIdx uint64, cb func(accounttypes.AccountPosition) bool) error
 }
 
 type MarketKeeper interface {
 	GetMarket(ctx context.Context, idx uint32) (markettypes.Market, error)
 	GetMarketDetails(ctx context.Context, idx uint32) (markettypes.MarketDetails, error)
-	// GetMarkPrice returns the authoritative mark price after a zero +
-	// staleness gate. Risk math (IM/MM/CM/uPnL) MUST route every mark
-	// read through this method so a halted funding pipeline or a
-	// freshly-created market cannot silently feed stale / zero marks.
+	// GetMarkPrice returns the gated mark (zero + staleness check).
+	// Risk math MUST route every mark read through this so a halted
+	// funding pipeline or fresh market cannot feed stale/zero marks.
 	GetMarkPrice(ctx context.Context, marketIdx uint32) (uint32, error)
-	// GetMarkPriceAndDetails returns the mark price and MarketDetails row in
-	// a single round-trip, applying the same gate as GetMarkPrice.
+	// GetMarkPriceAndDetails returns the gated mark and MarketDetails
+	// in a single round-trip.
 	GetMarkPriceAndDetails(ctx context.Context, marketIdx uint32) (uint32, markettypes.MarketDetails, error)
 }
 
