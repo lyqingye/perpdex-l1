@@ -250,10 +250,13 @@ func TestAutoADL_RefreshesVictimZPBetweenFills(t *testing.T) {
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	// candA: high-leverage short. EntryQuote = -1500 (avg = 300) →
-	// uPnL at mark=100 is +1000. The real account `Collateral` is
-	// generous so `preCheckCollateral` does not filter candA out
-	// before the trade engine runs; the score-driving leverage is
-	// supplied via `rk.cross[201]` below.
+	// uPnL at mark=100 is +1000. autoADL no longer pre-filters on
+	// the deleverager's `Collateral` field — the post-trade
+	// `IsValidRiskChangeFrom` inside `ApplyPerpsMatching` is the
+	// sole counterparty health gate — but the generous balance
+	// here keeps the test compatible with future changes that
+	// might re-introduce a pre-filter on the cross aggregate. The
+	// score-driving leverage is supplied via `rk.cross[201]` below.
 	ak.accounts[201] = accounttypes.Account{
 		AccountIndex: 201, AccountType: perptypes.MasterAccountType,
 		Collateral: math.NewInt(1_000_000),

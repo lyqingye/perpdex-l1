@@ -424,6 +424,13 @@ type stubTrade struct {
 	// model post-trade risk regression on bankrupt or recoverable
 	// rejections).
 	err error
+	// errFn lets tests fail individual fills based on the PerpFill
+	// payload — used to model the trade engine rejecting a single
+	// counterparty (e.g. ErrTakerRiskRegression) while letting the
+	// next ranked candidate proceed. When set, errFn takes
+	// precedence over the static `err` field. The fill is still
+	// recorded in `calls` regardless of the returned error.
+	errFn func(f tradekeeper.PerpFill) error
 	// onCall lets a test mutate sibling stub state right after a
 	// fill is recorded — used to model the cross account's TAV /
 	// status changing as a result of an LLP / ADL fill so the next
@@ -435,6 +442,9 @@ func (s *stubTrade) ApplyPerpsMatching(_ context.Context, f tradekeeper.PerpFill
 	s.calls = append(s.calls, f)
 	if s.onCall != nil {
 		s.onCall(f)
+	}
+	if s.errFn != nil {
+		return s.errFn(f)
 	}
 	return s.err
 }

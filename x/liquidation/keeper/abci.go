@@ -18,9 +18,12 @@ import (
 //     order, gated by "post-takeover IF risk does not breach IF
 //     IMR".
 //  2. Positions the LLP cannot absorb (IMR breach) fall through to
-//     ADL, where the deleverager-side pre-trade collateral assert
-//     (`preCheckCollateral`) skips under-capitalised candidates and
-//     advances to the next counterparty.
+//     ADL. The trade engine's post-trade `IsValidRiskChangeFrom`
+//     (run on both the bankrupt maker and the counterparty taker
+//     by `ApplyPerpsMatching`) is the sole counterparty health
+//     gate; an under-capitalised candidate surfaces as
+//     `ErrTakerRiskRegression` and autoADL advances to the next
+//     counterparty in the ranked queue.
 //
 // Total work is bounded by `Params.MaxAdlAttemptsPerBlock`.
 // PARTIAL_LIQUIDATION is serviced exclusively by MsgLiquidate;
