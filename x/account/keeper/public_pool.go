@@ -5,9 +5,176 @@ import (
 
 	"cosmossdk.io/math"
 
+	sdk "github.com/cosmos/cosmos-sdk/types"
+
 	perptypes "github.com/perpdex/perpdex-l1/types"
 	"github.com/perpdex/perpdex-l1/x/account/types"
 )
+
+// PublicPoolAccountParams carries the inputs needed to mint a fresh
+// PUBLIC_POOL / INSURANCE_FUND sub-account. Callers fill the master
+// reference and the seed PublicPoolInfo; the keeper handles index
+// allocation and timestamping.
+type PublicPoolAccountParams struct {
+	Master             types.Account
+	AccountType        uint32
+	AccountTradingMode uint32
+	SeedCollateral     math.Int
+	Info               *types.PublicPoolInfo
+}
+
+// CreatePublicPoolAccount allocates the next sub-account index and
+// persists a brand-new pool account in a single step. Used by
+// Msg.CreatePublicPool.
+func (k Keeper) CreatePublicPoolAccount(
+	ctx context.Context,
+	p PublicPoolAccountParams,
+) (types.Account, error) {
+	idx, err := k.allocatePoolSubAccountIndex(ctx)
+	if err != nil {
+		return types.Account{}, err
+	}
+	now := sdk.UnwrapSDKContext(ctx).BlockTime().UnixMilli()
+	pool := types.Account{
+		AccountIndex:       idx,
+		MasterAccountIndex: p.Master.AccountIndex,
+		OwnerAddress:       p.Master.OwnerAddress,
+		AccountType:        p.AccountType,
+		AccountTradingMode: p.AccountTradingMode,
+		Collateral:         p.SeedCollateral,
+		CreatedAt:          now,
+		PublicPoolInfo:     p.Info,
+	}
+	if err := k.createAccount(ctx, pool); err != nil {
+		return types.Account{}, err
+	}
+	return pool, nil
+}
+
+// allocatePoolSubAccountIndex pulls the next sub-account index,
+// skipping any reserved range. Mirrors CreateSubAccount's allocation
+// without the master-type guard so the IF master (nil owner) can
+// also spawn sub-accounts. Internal helper used by
+// CreatePublicPoolAccount.
+func (k Keeper) allocatePoolSubAccountIndex(ctx context.Context) (uint64, error) {
+	idx, err := k.NextSubIndex.Next(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if idx < perptypes.MinSubAccountIndex {
+		idx = perptypes.MinSubAccountIndex
+		if err := k.NextSubIndex.Set(ctx, idx+1); err != nil {
+			return 0, err
+		}
+	}
+	if idx > perptypes.MaxAccountIndex {
+		return 0, types.ErrAccountIndexExceed.Wrapf("sub idx=%d", idx)
+	}
+	return idx, nil
+}
+
+// UpdatePublicPoolInfo loads the pool account, runs `mut` against
+// its `PublicPoolInfo` pointer, and persists. Returns the updated
+// account. If the loaded account is not a pool / has no
+// PublicPoolInfo the caller gets `ErrInvalidPoolAccount`. If `mut`
+// returns an error the account is NOT persisted.
+//
+// Single entry point for the GetAccount → mutate info → SetAccount
+// pattern, shared by UpdatePublicPool / MintShares / BurnShares /
+// StrategyTransfer.
+func (k Keeper) UpdatePublicPoolInfo(
+	ctx context.Context,
+	idx uint64,
+	mut func(*types.PublicPoolInfo) error,
+) (types.Account, error) {
+	a, err := k.GetAccount(ctx, idx)
+	if err != nil {
+		return types.Account{}, err
+	}
+	if a.PublicPoolInfo == nil {
+		return types.Account{}, types.ErrInvalidPoolAccount.Wrapf("account %d", idx)
+	}
+	if err := mut(a.PublicPoolInfo); err != nil {
+		return types.Account{}, err
+	}
+	if err := k.updateAccount(ctx, a); err != nil {
+		return types.Account{}, err
+	}
+	return a, nil
+}
+
+// UpsertPublicPoolShare appends or replaces the PublicPoolShare
+// entry for `poolIdx` on the master account. Used by MintShares to
+// fold a fresh deposit into the LP row.
+//
+// Returns ErrSharesListFull when no entry exists and the per-master
+// share-list cap is reached.
+func (k Keeper) UpsertPublicPoolShare(
+	ctx context.Context,
+	masterIdx, poolIdx uint64,
+	shareDelta, principalDelta math.Int,
+	entryTimestamp int64,
+) error {
+	master, err := k.GetAccount(ctx, masterIdx)
+	if err != nil {
+		return err
+	}
+	if i, ok := FindShareEntry(master, poolIdx); ok {
+		master.PublicPoolShares[i].ShareAmount = master.PublicPoolShares[i].ShareAmount.Add(shareDelta)
+		master.PublicPoolShares[i].PrincipalAmount = master.PublicPoolShares[i].PrincipalAmount.Add(principalDelta)
+		master.PublicPoolShares[i].EntryTimestamp = entryTimestamp
+	} else {
+		if uint32(len(master.PublicPoolShares)) >= uint32(perptypes.SharesListSize) {
+			return types.ErrSharesListFull
+		}
+		master.PublicPoolShares = append(master.PublicPoolShares, types.PublicPoolShare{
+			PublicPoolIndex: poolIdx,
+			ShareAmount:     shareDelta,
+			PrincipalAmount: principalDelta,
+			EntryTimestamp:  entryTimestamp,
+		})
+	}
+	return k.updateAccount(ctx, master)
+}
+
+// ReducePublicPoolShare debits `shareAmount` (and the proportional
+// principal) from the master's existing PublicPoolShare for
+// `poolIdx`. When the resulting `ShareAmount` reaches zero the entry
+// is removed entirely. Used by BurnShares.
+//
+// Caller must have already validated the entry exists with at least
+// `shareAmount` shares (ErrInsufficientShares is the standard
+// surface for a missing/under-funded entry).
+func (k Keeper) ReducePublicPoolShare(
+	ctx context.Context,
+	masterIdx, poolIdx uint64,
+	shareAmount math.Int,
+) error {
+	master, err := k.GetAccount(ctx, masterIdx)
+	if err != nil {
+		return err
+	}
+	entryIdx, ok := FindShareEntry(master, poolIdx)
+	if !ok {
+		return types.ErrInsufficientShares.Wrap("depositor has no entry for this pool")
+	}
+	entry := master.PublicPoolShares[entryIdx]
+	if entry.ShareAmount.LT(shareAmount) {
+		return types.ErrInsufficientShares.Wrapf(
+			"requested %s, have %s",
+			shareAmount.String(), entry.ShareAmount.String(),
+		)
+	}
+	principalDelta := entry.PrincipalAmount.Mul(shareAmount).Quo(entry.ShareAmount)
+	entry.ShareAmount = entry.ShareAmount.Sub(shareAmount)
+	entry.PrincipalAmount = entry.PrincipalAmount.Sub(principalDelta)
+	if entry.ShareAmount.IsZero() {
+		master.PublicPoolShares = append(master.PublicPoolShares[:entryIdx], master.PublicPoolShares[entryIdx+1:]...)
+	} else {
+		master.PublicPoolShares[entryIdx] = entry
+	}
+	return k.updateAccount(ctx, master)
+}
 
 // SharesToUSDCValue implements `get_shares_usdc_value_for_public_pool`:
 //
