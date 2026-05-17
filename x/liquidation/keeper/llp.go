@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 
 	"cosmossdk.io/math"
@@ -109,17 +110,27 @@ func (k Keeper) tryLLPAbsorb(
 		WithDeleverageSource(DeleverageSourceLLP),
 	); err != nil {
 		if errors.Is(err, types.ErrInsufficientCollateral) {
-			// Defensive: `Deleverage` skips the deleverager
-			// pre-trade collateral assert when the deleverager is
-			// the IF (`isInsuranceFund`), so this branch is not
-			// expected to fire on the LLP path. Keep the graceful
-			// fallback in case a future change re-introduces a
-			// collateral guard against the IF — we still want
-			// EndBlocker to advance to autoADL rather than abort
-			// the entire block.
-			sdk.UnwrapSDKContext(ctx).Logger().Info("liquidation: LLP absorb skipped (insufficient collateral)",
-				"victim", victim, "market", marketIdx, "err", err)
-			return false, nil
+			// INVARIANT VIOLATION. The current `Deleverage`
+			// implementation does NOT raise
+			// ErrInsufficientCollateral on the IF / Pool
+			// deleverager path (the user-deleverager
+			// collateral guard was removed by F6), so this
+			// branch is unreachable. If a future change
+			// re-introduces a collateral assert against the
+			// IF and silently flips it into this branch, the
+			// LLP path would degrade to "absorbing nothing"
+			// without surfacing the regression. Surface the
+			// violation as a hard error so processAccount
+			// logs it loudly — processAccount already
+			// fall-throughs to autoADL on a non-nil error
+			// from tryLLPAbsorb (see x/liquidation/keeper/abci.go
+			// processAccount), so the block still advances.
+			return false, fmt.Errorf(
+				"INVARIANT VIOLATION: LLP %d hit ErrInsufficientCollateral on market %d "+
+					"(Deleverage is expected to skip the collateral guard for IF/Pool "+
+					"deleveragers; see x/liquidation/keeper/liquidate.go Deleverage): %w",
+				perptypes.InsuranceFundOperatorAccountIdx, marketIdx, err,
+			)
 		}
 		sdk.UnwrapSDKContext(ctx).Logger().Error("liquidation: LLP absorb failed",
 			"victim", victim, "market", marketIdx, "err", err)
