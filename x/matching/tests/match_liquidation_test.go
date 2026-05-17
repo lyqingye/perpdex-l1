@@ -199,13 +199,24 @@ func TestMatchLiquidation_PriceUnreachableBreaksImmediately(t *testing.T) {
 		"liquidation IOC residue must never enter the orderbook indexes")
 }
 
-// TestMatchLiquidation_HealthShortCircuit_Bankruptcy ensures a victim
-// who progresses from PARTIAL into BANKRUPTCY between fills is NOT
-// short-circuited by `needsLiquidation` — the loop must keep matching
-// because BANKRUPTCY is part of the "in liquidation" health set.
-// Without Gap A's BANKRUPTCY arm, the second maker would be
-// erroneously skipped the moment the victim's health reading flipped
-// to BANKRUPTCY mid-loop (e.g., from a funding accrual).
+// TestMatchLiquidation_HealthShortCircuit_Bankruptcy pins the
+// BANKRUPTCY arm of `needsLiquidation`'s in-liquidation predicate.
+//
+// In the natural IOC flow this arm is unreachable: `Liquidate`
+// admits only PARTIAL victims; reduce-only fills at `price >=
+// zeroPrice` monotonically improve TAV; and `FundingRatePrefixSum`
+// is a tx-level constant (only the funding BeginBlocker bumps it),
+// so the victim's health cannot regress mid-loop. The arm is kept
+// in the predicate to express the design-level "in liquidation"
+// set: if a future spec change ever lets a BANKRUPTCY victim enter
+// the IOC loop (a new caller bypassing the PARTIAL-only gate), the
+// loop must NOT short-circuit them as "recovered" after the first
+// fill.
+//
+// This test forces the BANKRUPTCY status through `stubRisk` and
+// verifies the loop drains both makers — the regression we lock in
+// is "predicate must continue to honour BANKRUPTCY", not any
+// claimed mid-loop status flip.
 func TestMatchLiquidation_HealthShortCircuit_Bankruptcy(t *testing.T) {
 	e := newMatchEnv(t)
 	rk := newStubRisk()

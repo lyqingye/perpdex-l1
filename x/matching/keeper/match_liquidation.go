@@ -276,18 +276,41 @@ func (k Keeper) applyLiquidationFill(
 //
 // Used exclusively by `matchLiquidation` to implement the "stop
 // once the victim recovers" short-circuit. It is intentionally NOT
-// called from `matchOrder` so the user-path
-// matching loop pays no per-fill risk-keeper read.
+// called from `matchOrder` so the user-path matching loop pays no
+// per-fill risk-keeper read.
 //
-// The accepted health-status set follows the "in liquidation"
-// predicate. In perpdex's single-asset USDC mode (no non-USDC
-// margined assets) the total-account-liquidation-threshold
-// collapses onto total account value, so the predicate reduces to
-// `TAV < MMR`, which spans PARTIAL_LIQUIDATION ∪ FULL_LIQUIDATION
-// ∪ BANKRUPTCY. BANKRUPTCY is included even though entry to the
-// IOC loop requires PARTIAL and fills only improve TAV — funding
-// accruals between fills could in theory push an account from
-// PARTIAL through FULL into BANKRUPTCY mid-loop.
+// The accepted health-status set is the "in liquidation" predicate:
+// PARTIAL_LIQUIDATION ∪ FULL_LIQUIDATION ∪ BANKRUPTCY. In perpdex's
+// single-asset USDC mode (no non-USDC margined assets) the
+// total-account-liquidation-threshold collapses onto total account
+// value, so the predicate reduces to `TAV < MMR`, which spans
+// exactly these three tiers.
+//
+// # BANKRUPTCY arm is unreachable in the natural IOC flow
+//
+// `Liquidate` (x/liquidation) restricts entry to PARTIAL victims;
+// fills inside this loop are reduce-only and execute at maker
+// prices `>= zeroPrice`, which monotonically improves the victim's
+// TAV. Crucially, funding does NOT accrue between fills inside the
+// same tx: `FundingRatePrefixSum` is only bumped by the funding
+// BeginBlocker (`x/funding/keeper/abci.go` SettleAllMarkets, gated
+// by `FundingPeriodMs`), so the prefix sum is constant for the
+// duration of a single MsgLiquidate. Even though `Apply` calls
+// `SettlePositionFunding` per fill, the second-and-later fills
+// observe `delta = current - last = 0` (the first fill already
+// pushed `LastFundingRatePrefixSum` to the current prefix sum), so
+// no funding payment is realised across iterations. Combined with
+// the TAV-monotone fill direction, the victim's health can only
+// climb toward HEALTHY inside the loop — it cannot regress into
+// FULL_LIQUIDATION or BANKRUPTCY mid-loop.
+//
+// The BANKRUPTCY arm is therefore unreachable from the natural IOC
+// entry path. It is retained as part of the predicate because it
+// expresses the design-level "in liquidation" set: if a future spec
+// change ever lets a BANKRUPTCY victim enter the IOC loop (e.g. a
+// new caller bypassing the PARTIAL-only gate in `Liquidate`), this
+// predicate must not erroneously short-circuit them as "recovered"
+// after the first fill.
 func (k Keeper) needsLiquidation(ctx context.Context, victim uint64, marketIdx uint32) (bool, error) {
 	pos, err := k.accountKeeper.GetPosition(ctx, victim, marketIdx)
 	if err != nil {
