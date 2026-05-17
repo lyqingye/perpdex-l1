@@ -336,12 +336,10 @@ func (s *stubRisk) GetLiquidationRiskSnapshot(
 	}, nil
 }
 
-// ComputeCrossRisk returns the seeded cross RiskParameters for `acc`,
-// falling back to the synthesised projection of the account's current
-// status enum. Used by Deleverage's post-fill HEALTHY assert; tests
-// that want to exercise that assert seed `rk.cross[acc]` with the
-// desired post-state aggregate (TAV, IMR, etc.) so the fall-through
-// HEALTHY check produces the expected outcome.
+// ComputeCrossRisk returns the seeded entry for `acc`, or the
+// synthesised projection of the account's current status enum if no
+// entry was seeded. Tests exercising Deleverage's post-fill HEALTHY
+// assert seed rk.cross[acc] with the desired post-state aggregate.
 func (s *stubRisk) ComputeCrossRisk(_ context.Context, acc uint64) (risktypes.RiskParameters, error) {
 	if v, ok := s.cross[acc]; ok {
 		return v, nil
