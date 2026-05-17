@@ -138,66 +138,37 @@ func (k Keeper) Liquidate(ctx context.Context, victim uint64, marketIdx uint32, 
 	return nil
 }
 
-// Deleverage is the keeper entry for MsgDeleverage and the engine path
-// used by EndBlocker for both LLP takeover and user-side ADL fills.
+// Deleverage is the keeper entry for MsgDeleverage and the LLP-takeover
+// path called from EndBlocker. autoADL does NOT route through here —
+// it issues its own ADL trade at `ZeroPriceMid(victimZP, candZP)`
+// directly against the trade engine.
 //
-// Risk-check policy mirrors Lighter's `internal_deleverage` apply-time
-// pattern (`bankrupt_account_valid_risk_change` +
-// `is_*_has_enough_cross_collateral`) but is expressed in perpdex's
-// risk envelope:
+// Risk checks:
 //
-//   - Bankrupt risk regression: enforced by the trade engine's
-//     `IsValidRiskChangeFrom` on the maker side (we DO NOT pass
-//     `SkipMakerRiskCheck`). Same role as Lighter's
-//     `bankrupt_account_valid_risk_change`.
-//   - Bankrupt has-enough-collateral: NOT asserted. A strict assert
-//     here would lean on `zero_price` zeroing the bankrupt's
-//     collateral by construction; perpdex's `GetPositionZeroPrice`
-//     uses the TAV/MMR ratio formulation uniformly across
-//     PARTIAL/FULL/BANKRUPTCY, which produces extreme prices for
-//     deeply-bankrupt accounts and would reject every legitimate
-//     close-out. perpdex's design is "residual debt is allowed to
-//     persist on the victim ledger" (see post-trade comment below);
-//     enforcing the assert would block the EndBlocker waterfall
-//     instead of advancing it. Re-enabling requires aligning the
-//     zero-price formula with a dedicated bankrupt branch first.
-//   - User-deleverager has-enough-collateral: enforced AFTER
-//     `ApplyPerpsMatching` returns, by re-reading the deleverager's
-//     cross risk envelope and asserting `post.TAV >= post.IMR`
-//     (HEALTHY). The check is positioned post-fill on purpose: the
-//     trade engine has already mutated the cosmos-sdk store branch,
-//     so a fresh `ComputeCrossRisk` reads the real post-state for
-//     free, while a pre-fill simulator would have to re-derive the
-//     same risk numbers. If the assert fails the branch is rolled
-//     back via the returned error — fail-late but state-safe.
+//   - Bankrupt (maker) post-trade health regression is enforced by
+//     the trade engine's IsValidRiskChangeFrom (we do NOT set
+//     SkipMakerRiskCheck).
+//   - Bankrupt collateral sufficiency is NOT asserted. The
+//     unified TAV/MMR-ratio zero-price formula produces extreme
+//     prices for deeply-bankrupt accounts; a strict assert would
+//     reject every legitimate close-out. Residual negative
+//     collateral is allowed to persist on the victim ledger.
+//   - User-deleverager must remain HEALTHY after the fill. This
+//     bounds the user-supplied `baseAmount`, which is otherwise
+//     unconstrained. The check runs after ApplyPerpsMatching so
+//     it reads real post-state instead of re-simulating; a
+//     non-nil return rolls back the store branch.
+//   - IF / Pool deleveragers skip the post-fill check; they are
+//     absorbers by design (LLP capacity is vetted upstream by
+//     tryLLPAbsorb's IMR gate).
 //
-//     This is the perpdex analogue of Lighter's apply-time
-//     `is_deleverager_has_enough_cross_collateral`. Lighter's
-//     `available_pre >= |margin_delta|` is algebraically equivalent
-//     to `post.TAV >= post.IMR` after substituting the wider
-//     margin_delta = ΔIMR - ΔTAV that perpdex's `MsgDeleverage`
-//     requires (because `size` is a user-controlled msg field and
-//     the settle price is the victim's zero price, NOT
-//     `ZeroPriceMid`, so the price-by-construction invariant alone
-//     does not save the deleverager when the victim is in deep
-//     BANKRUPTCY and its zero price has crossed the mark).
-//   - User-deleverager risk regression
-//     (`IsValidRiskChangeFrom`): NOT run on the taker side
-//     (`SkipTakerRiskCheck=true`). The post-fill HEALTHY check
-//     above already implies non-regression (HEALTHY post-state
-//     accepted unconditionally by `IsValidRiskChangeFrom` per
-//     `classifyChange`), and skipping the duplicate
-//     `ComputeCrossRisk` call inside the trade engine keeps the
-//     hot path lean.
-//   - IF / Pool deleverager: not asserted on either side. The IF
-//     is an unconditional absorber; LLP capacity is vetted upstream
-//     by `tryLLPAbsorb`'s IMR gate.
+// SkipTakerRiskCheck=true on the trade engine call lets the post-fill
+// HEALTHY check below own deleverager-side enforcement and avoids a
+// redundant ComputeCrossRisk inside the engine.
 //
 // `opts` only carries the entry-point label emitted on the resulting
-// `EventTypeDeleverage`. Default is `source="msg"`; the LLP absorb
-// path passes `WithDeleverageSource(DeleverageSourceLLP)`. autoADL
-// does NOT route through here — it issues its own ADL trade at
-// `ZeroPriceMid(victimZP, candZP)` directly against the trade engine.
+// EventTypeDeleverage. Default is source="msg"; the LLP absorb path
+// passes WithDeleverageSource(DeleverageSourceLLP).
 func (k Keeper) Deleverage(
 	ctx context.Context,
 	victim uint64, marketIdx uint32, deleverager uint64, baseAmount uint64,
@@ -284,57 +255,22 @@ func (k Keeper) Deleverage(
 		BaseAmount:        baseAmount,
 		IsTakerAsk:        takerIsAsk,
 		NoFee:             true,
-		// Bankrupt (maker) keeps trade engine's IsValidRiskChangeFrom
-		// — that is the bankrupt-side equivalent of Lighter's
-		// `bankrupt_account_valid_risk_change` apply-time assert.
-		// All deleverager flavours (user / IF / Pool) skip the trade
-		// engine taker risk regression: IF and Pool are absorbers by
-		// mandate; user-deleveragers are governed by the explicit
-		// post-fill HEALTHY check below, which is the perpdex
-		// equivalent of Lighter's apply-time
-		// `is_deleverager_has_enough_cross_collateral` (size upper
-		// bound expressed via post-state cushion) — `MsgDeleverage`'s
-		// `size` is a msg input so this assertion is what bounds
-		// it. Skipping the trade engine's taker check here avoids a
-		// redundant `ComputeCrossRisk` call (the post-state read
-		// below reuses the state ApplyPerpsMatching just wrote).
+		// Bankrupt (maker) is risk-checked by the trade engine.
+		// Deleverager (taker) is not — the post-fill HEALTHY check
+		// below covers user-deleveragers, IF/Pool are absorbers.
 		SkipTakerRiskCheck: true,
 	}); err != nil {
 		return err
 	}
 
-	// Post-fill cushion assertion for user-deleveragers, mirroring
-	// Lighter's apply-time `is_deleverager_has_enough_cross_collateral`
-	// in spirit but expressed in perpdex's post-state HEALTHY form
-	// (algebraically equivalent: post.TAV >= post.IMR is the same
-	// invariant Lighter encodes as `available_pre >= |margin_delta|`
-	// after substituting perpdex's wider margin_delta = ΔIMR - ΔTAV).
+	// Post-fill HEALTHY check — bounds the user-supplied baseAmount
+	// against the deleverager's post-state. ApplyPerpsMatching has
+	// already written the new state into the store branch, so this
+	// reads it directly; a pre-fill simulator would re-derive the
+	// same numbers. If the assert fails, returning the error rolls
+	// the branch back.
 	//
-	// Why post-state read instead of pre-fill simulate: the trade
-	// engine's `ApplyPerpsMatching` already wrote the post-state in
-	// the current cosmos-sdk store branch. A `ComputeCrossRisk` here
-	// reads the real post-state for free; a pre-fill simulator would
-	// have to re-derive the same numbers and is strictly redundant.
-	// If the assert fails, returning a non-nil error rolls back the
-	// branch — same observable outcome as fail-fast, but without the
-	// duplicated risk computation on the success path (which is the
-	// hot path).
-	//
-	// IF / Pool deleveragers are NOT subject to this assert. They are
-	// absorbers of last resort by mandate and may legitimately fall
-	// out of HEALTHY when soaking up a victim's residual exposure;
-	// LLP capacity is governed upstream in `tryLLPAbsorb` instead.
-	//
-	// The autoADL path does NOT call this function and is not subject
-	// to this assert: there the settle price is `ZeroPriceMid(victim,
-	// candidate)` and `size` is bounded by the protocol-internal
-	// queue, so deleverager non-regression is guaranteed by Lighter-
-	// style price-by-construction + size-bounded invariants. The
-	// exposure here is unique to `MsgDeleverage`, where `size` is a
-	// user-controlled msg field and the settle price is the victim's
-	// zero price (NOT the mid), so the price-by-construction
-	// invariant alone does not save the deleverager when the victim
-	// is in deep BANKRUPTCY and its zero price has crossed the mark.
+	// Skipped for IF / Pool (absorbers by design).
 	if !isInsuranceFund && !isPoolDeleverager {
 		postCross, err := k.riskKeeper.ComputeCrossRisk(ctx, deleverager)
 		if err != nil {
