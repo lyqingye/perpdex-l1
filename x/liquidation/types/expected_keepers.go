@@ -86,18 +86,13 @@ type RiskKeeper interface {
 		accountIdx uint64,
 		marketIdx uint32,
 	) (risktypes.ZeroPriceSnapshot, error)
-}
-
-// FundingKeeper provides funding-settlement primitives. Used by the
-// pre-trade collateral assert in Deleverage so the bankrupt /
-// deleverager balances the assert reads are funding-aware: any pending
-// funding for the targeted market position is realised before we
-// compare available collateral against the predicted realised PnL.
-// Settling funding is idempotent and rolls accrued obligations into
-// `EntryQuote`, mirroring what `Engine.Apply`'s step-1 will do
-// immediately afterwards.
-type FundingKeeper interface {
-	SettlePositionFunding(ctx context.Context, accountIndex uint64, marketIndex uint32) error
+	// ComputeCrossRisk returns the cross aggregate risk parameters
+	// for `accountIdx`. Used by the post-fill HEALTHY assert in
+	// `Deleverage` to read the deleverager's post-trade cross
+	// envelope (and decide whether to roll back the fill). See the
+	// `Deleverage` docstring for why this assert is positioned
+	// post-fill rather than via a pre-fill simulator.
+	ComputeCrossRisk(ctx context.Context, accountIdx uint64) (risktypes.RiskParameters, error)
 }
 
 type MatchingKeeper interface {

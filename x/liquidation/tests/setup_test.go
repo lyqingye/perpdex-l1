@@ -5,12 +5,12 @@
 //
 //   - Bech32 prefix bootstrap (TestMain).
 //   - In-memory stub keepers (account / market / risk / trade /
-//     matching / funding) that satisfy the interfaces consumed by the
+//     matching) that satisfy the interfaces consumed by the
 //     liquidation keeper, with just enough behaviour to drive the
 //     LLP→ADL waterfall, the partial-liquidation IOC path and genesis
 //     round-trips.
-//   - Keeper construction helpers (newKeeper / newKeeperWithFunding)
-//     that wire the in-memory store + stubs and seed default Params.
+//   - Keeper construction helper (newKeeper) that wires the in-memory
+//     store + stubs and seeds default Params.
 //
 // Helpers live in `package tests` (no `_test` suffix), so every
 // `*_test.go` file under x/liquidation/tests can call them without
@@ -336,6 +336,19 @@ func (s *stubRisk) GetLiquidationRiskSnapshot(
 	}, nil
 }
 
+// ComputeCrossRisk returns the seeded cross RiskParameters for `acc`,
+// falling back to the synthesised projection of the account's current
+// status enum. Used by Deleverage's post-fill HEALTHY assert; tests
+// that want to exercise that assert seed `rk.cross[acc]` with the
+// desired post-state aggregate (TAV, IMR, etc.) so the fall-through
+// HEALTHY check produces the expected outcome.
+func (s *stubRisk) ComputeCrossRisk(_ context.Context, acc uint64) (risktypes.RiskParameters, error) {
+	if v, ok := s.cross[acc]; ok {
+		return v, nil
+	}
+	return riskParamsForStatus(s.crossStatusFor(acc)), nil
+}
+
 func (s *stubRisk) SimulateRiskAfterTakeover(
 	_ context.Context, acc uint64, _ uint32, _ math.Int, _ uint32,
 ) (risktypes.RiskParameters, error) {
@@ -424,6 +437,13 @@ type stubTrade struct {
 	// model post-trade risk regression on bankrupt or recoverable
 	// rejections).
 	err error
+	// errFn lets tests fail individual fills based on the PerpFill
+	// payload — used to model the trade engine rejecting a single
+	// counterparty (e.g. ErrTakerRiskRegression) while letting the
+	// next ranked candidate proceed. When set, errFn takes
+	// precedence over the static `err` field. The fill is still
+	// recorded in `calls` regardless of the returned error.
+	errFn func(f tradekeeper.PerpFill) error
 	// onCall lets a test mutate sibling stub state right after a
 	// fill is recorded — used to model the cross account's TAV /
 	// status changing as a result of an LLP / ADL fill so the next
@@ -436,23 +456,9 @@ func (s *stubTrade) ApplyPerpsMatching(_ context.Context, f tradekeeper.PerpFill
 	if s.onCall != nil {
 		s.onCall(f)
 	}
-	return s.err
-}
-
-// stubFunding satisfies liquidation/types.FundingKeeper. The real
-// keeper writes to position state via UpdatePosition; the stub
-// exposes a per-(acc,mkt) call counter so tests can assert that the
-// pre-trade collateral assert in Deleverage settles funding before
-// reading available collateral.
-type stubFunding struct {
-	calls map[[2]uint64]int
-	err   error
-}
-
-func newStubFunding() *stubFunding { return &stubFunding{calls: map[[2]uint64]int{}} }
-
-func (s *stubFunding) SettlePositionFunding(_ context.Context, acc uint64, mkt uint32) error {
-	s.calls[[2]uint64{acc, uint64(mkt)}]++
+	if s.errFn != nil {
+		return s.errFn(f)
+	}
 	return s.err
 }
 
@@ -521,14 +527,6 @@ func newKeeper(
 	ak *stubAccount, rk *stubRisk, tk *stubTrade, matchk *stubMatching,
 ) (liqkeeper.Keeper, sdk.Context) {
 	t.Helper()
-	return newKeeperWithFunding(t, ak, rk, tk, matchk, newStubFunding())
-}
-
-func newKeeperWithFunding(
-	t *testing.T,
-	ak *stubAccount, rk *stubRisk, tk *stubTrade, matchk *stubMatching, fk *stubFunding,
-) (liqkeeper.Keeper, sdk.Context) {
-	t.Helper()
 	// Wire the account stub into the risk stub so
 	// GetLiquidationRiskSnapshot can derive Position from the same
 	// in-memory table the production keeper would walk.
@@ -546,7 +544,6 @@ func newKeeperWithFunding(
 		rk,
 		tk,
 		matchk,
-		fk,
 	)
 	// Seed Params so EndBlocker can read MaxAdlAttemptsPerBlock /
 	// MaxAdlCandidatesPerVictim. Without this each EndBlocker invocation

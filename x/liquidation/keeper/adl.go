@@ -58,10 +58,11 @@ type ADLCandidate struct {
 // `snap.CrossRisk` even when the candidate's targeted position is
 // isolated, so the cross aggregate drives leverage in both modes.
 //
-// Isolated candidates are not filtered out; on execution
-// `preCheckCollateral` swaps the cushion source to the position's
-// `AllocatedMargin`, so isolated envelopes settle against their own
-// margin without touching cross collateral.
+// Isolated candidates are not filtered out; the trade engine's
+// per-side `applyAccount` dispatcher routes their fill through
+// `applyIsolatedAccount` (instead of `applyCrossAccount`), so
+// isolated envelopes settle against their own `AllocatedMargin`
+// without touching cross collateral.
 func (k Keeper) BuildADLQueue(
 	ctx context.Context,
 	marketIdx uint32,
@@ -255,18 +256,34 @@ func (k Keeper) autoADL(
 		}
 		// autoADL settles at the midpoint, not at the victim's zero
 		// price, so the fill cannot reuse `Deleverage` as a wrapper
-		// — drive the trade engine directly. The preCheckCollateral
-		// guard is replicated here for the deleverager (counterparty)
-		// only, mirroring Deleverage's user-side branch.
-		if err := k.preCheckCollateral(
-			ctx, c.AccountIndex, marketIdx, size.Uint64(), settlePrice,
-			true /*isTakerSide*/, takerIsAsk, "counterparty",
-		); err != nil {
-			sdkCtx.Logger().Info("liquidation: auto-adl skipped (insufficient counterparty collateral)",
-				"victim", victim, "market", marketIdx,
-				"counterparty", c.AccountIndex, "err", err)
-			continue
-		}
+		// — drive the trade engine directly. No counterparty-side
+		// `preCheckCollateral` is run here because the price-by-
+		// construction guarantees the fill cannot worsen a
+		// deleverager's health:
+		//
+		//  1. `size` is bounded by the deleverager's actual
+		//     position above (`size = min(c.PositionSize.Abs(),
+		//     remaining)`); no external caller can over-size the
+		//     trade.
+		//  2. `settlePrice = ZeroPriceMid(victimZP, candZP)` lies
+		//     between the two zero prices; the overlap check
+		//     above (`victimZP {<=,>=} candZP`) guarantees
+		//     `settlePrice` is on the "better than candZP" side
+		//     for the deleverager — closing in that band can only
+		//     improve the deleverager's TAV/MMR ratio relative to
+		//     trading at its own zero price (which is, by
+		//     definition, the price that leaves the ratio
+		//     invariant).
+		//
+		// The post-trade `IsValidRiskChangeFrom` run inside
+		// `ApplyPerpsMatching` (deleverager taker side, no
+		// `SkipTakerRiskCheck`) remains as defense-in-depth and
+		// uses the full TAV-aware `ComputeCrossRisk` aggregate —
+		// strictly stronger than the cash-only `Collateral` field
+		// that the previous `preCheckCollateral` consulted. So the
+		// removal both fixes the F6 false-skip (cross collateral
+		// excludes other-market uPnL even when the account is
+		// healthy) and removes a redundant pre-filter.
 		if err := k.tradeKeeper.ApplyPerpsMatching(ctx, tradekeeper.PerpFill{
 			MakerAccountIndex: victim,
 			TakerAccountIndex: c.AccountIndex,

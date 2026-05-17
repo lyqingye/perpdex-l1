@@ -53,7 +53,6 @@ type Keeper struct {
 	riskKeeper     types.RiskKeeper
 	tradeKeeper    types.TradeKeeper
 	matchingKeeper types.MatchingKeeper
-	fundingKeeper  types.FundingKeeper
 
 	Schema collections.Schema
 	Params collections.Item[types.Params]
@@ -61,7 +60,7 @@ type Keeper struct {
 
 func NewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, authority string,
 	ak types.AccountKeeper, mk types.MarketKeeper, rk types.RiskKeeper, tk types.TradeKeeper,
-	matchk types.MatchingKeeper, fk types.FundingKeeper,
+	matchk types.MatchingKeeper,
 ) Keeper {
 	sb := collections.NewSchemaBuilder(storeService)
 	k := Keeper{
@@ -73,7 +72,6 @@ func NewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, authori
 		riskKeeper:     rk,
 		tradeKeeper:    tk,
 		matchingKeeper: matchk,
-		fundingKeeper:  fk,
 
 		Params: collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
 	}

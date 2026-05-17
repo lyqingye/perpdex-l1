@@ -27,6 +27,7 @@ import (
 	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
 	risktypes "github.com/perpdex/perpdex-l1/x/risk/types"
 	tradekeeper "github.com/perpdex/perpdex-l1/x/trade/keeper"
+	tradetypes "github.com/perpdex/perpdex-l1/x/trade/types"
 )
 
 // TestEndBlocker_FullLiquidationPrefersLLPThenADL exercises the
@@ -226,11 +227,26 @@ func TestEndBlocker_BankruptResidueStaysWithVictim(t *testing.T) {
 	)
 }
 
-// TestEndBlocker_ADLCandidateInsufficientCollateral_AdvancesToNext
-// covers Gap C 内 autoADL: when the first ADL candidate's collateral
-// cannot cover the close-out at the candidate-specific settle price,
-// autoADL must move on to the next candidate rather than aborting.
-func TestEndBlocker_ADLCandidateInsufficientCollateral_AdvancesToNext(t *testing.T) {
+// TestEndBlocker_ADLCandidateRejectedByEngine_AdvancesToNext covers
+// the autoADL graceful-fallthrough invariant: when the first ranked
+// candidate's fill is rejected by the trade engine (e.g.
+// `ErrTakerRiskRegression` from the post-trade
+// `IsValidRiskChangeFrom` — the sole counterparty health gate after
+// the redundant `preCheckCollateral` pre-filter was removed), autoADL
+// must record the failure, log it, and move on to the next candidate
+// in the ranked queue rather than aborting the whole block.
+//
+// Pre-fix this scenario was driven by the `preCheckCollateral`
+// pre-filter rejecting under-capitalised candidates on the
+// `account.Collateral` field. That pre-filter was removed (issue
+// F6: it is both redundant — the trade engine already runs a
+// strictly-stronger TAV-aware risk check on the same fill — and
+// uses the wrong cushion source, as a winner with cross uPnL on
+// other markets has TAV ≫ Collateral and would be falsely skipped).
+// The advance-on-failure semantics now relies on the engine's
+// rejection error surfacing through `ApplyPerpsMatching`, which
+// this test pins via `stubTrade.errFn`.
+func TestEndBlocker_ADLCandidateRejectedByEngine_AdvancesToNext(t *testing.T) {
 	ak := newStubAccount()
 	// IF that breaches IMR so EndBlocker delegates to autoADL.
 	ak.accounts[perptypes.InsuranceFundOperatorAccountIdx] = accounttypes.Account{
@@ -248,21 +264,21 @@ func TestEndBlocker_ADLCandidateInsufficientCollateral_AdvancesToNext(t *testing
 		BaseSize: math.NewInt(50), EntryQuote: math.NewInt(5_000),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
-	// First candidate (highest profit rank) has zero cushion and
-	// will trip the deleverager-side collateral assert. Picks a
-	// slightly more negative EntryQuote (-2200) than 202 (-2000) so
-	// that at markPrice=100 its uPnL ratio (=1200/2200) exceeds 202's
-	// (=1000/2000) and it ranks first in BuildADLQueue.
+	// First candidate (highest profit rank). The trade engine
+	// rejects its fill via `errFn` below to exercise the
+	// rejection-driven advance path. EntryQuote = -2200 (vs -2000
+	// for 202) gives it the higher uPnL ratio, putting it first
+	// in BuildADLQueue.
 	ak.accounts[201] = accounttypes.Account{
 		AccountIndex: 201, AccountType: perptypes.MasterAccountType,
-		Collateral: math.NewInt(0),
+		Collateral: math.NewInt(1_000_000),
 	}
 	ak.pos[[2]uint64{201, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 201, MarketIndex: 0,
 		BaseSize: math.NewInt(-10), EntryQuote: math.NewInt(-2_200),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
-	// Second candidate has a deep cushion and matches.
+	// Second candidate must be picked up after 201 is rejected.
 	ak.accounts[202] = accounttypes.Account{
 		AccountIndex: 202, AccountType: perptypes.MasterAccountType,
 		Collateral: math.NewInt(1_000_000),
@@ -288,18 +304,31 @@ func TestEndBlocker_ADLCandidateInsufficientCollateral_AdvancesToNext(t *testing
 		CloseOutMarginRequirement:    math.NewInt(125),
 	}
 	tk := &stubTrade{}
+	// Reject only the first candidate's fill, leave the rest to
+	// succeed. This models the trade engine's
+	// `IsValidRiskChangeFrom` returning `ErrTakerRiskRegression`
+	// for an under-capitalised counterparty.
+	tk.errFn = func(f tradekeeper.PerpFill) error {
+		if f.TakerAccountIndex == 201 {
+			return tradetypes.ErrTakerRiskRegression
+		}
+		return nil
+	}
 	matchk := newStubMatching()
 	k, ctx := newKeeper(t, ak, rk, tk, matchk)
 
 	require.NoError(t, k.EndBlocker(ctx))
 
-	require.NotEmpty(t, tk.calls,
-		"second ADL candidate must take over after the first one is rejected")
-	for _, f := range tk.calls {
-		require.NotEqual(t, uint64(201), f.TakerAccountIndex,
-			"candidate 201 had insufficient collateral; must have been skipped")
-	}
-	require.Equal(t, uint64(202), tk.calls[0].TakerAccountIndex)
+	// Both fills must be attempted (autoADL records 201 first,
+	// then advances to 202). Only 202's fill should "succeed"
+	// from the trade engine's perspective; the loop must not
+	// stop at 201.
+	require.Len(t, tk.calls, 2,
+		"autoADL must attempt the second candidate after the first is rejected")
+	require.Equal(t, uint64(201), tk.calls[0].TakerAccountIndex,
+		"candidate 201 (higher leverage) is attempted first")
+	require.Equal(t, uint64(202), tk.calls[1].TakerAccountIndex,
+		"candidate 202 must take over after the engine rejects 201")
 }
 
 // TestEndBlocker_CrossAggregateRefreshedAcrossMarkets pins the

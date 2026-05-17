@@ -250,10 +250,13 @@ func TestAutoADL_RefreshesVictimZPBetweenFills(t *testing.T) {
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	// candA: high-leverage short. EntryQuote = -1500 (avg = 300) →
-	// uPnL at mark=100 is +1000. The real account `Collateral` is
-	// generous so `preCheckCollateral` does not filter candA out
-	// before the trade engine runs; the score-driving leverage is
-	// supplied via `rk.cross[201]` below.
+	// uPnL at mark=100 is +1000. autoADL no longer pre-filters on
+	// the deleverager's `Collateral` field — the post-trade
+	// `IsValidRiskChangeFrom` inside `ApplyPerpsMatching` is the
+	// sole counterparty health gate — but the generous balance
+	// here keeps the test compatible with future changes that
+	// might re-introduce a pre-filter on the cross aggregate. The
+	// score-driving leverage is supplied via `rk.cross[201]` below.
 	ak.accounts[201] = accounttypes.Account{
 		AccountIndex: 201, AccountType: perptypes.MasterAccountType,
 		Collateral: math.NewInt(1_000_000),
@@ -531,30 +534,37 @@ func TestDeleverage_RejectsSameSideCounterparty(t *testing.T) {
 		"no fill is allowed to reach the trade engine when the same-side guard fires")
 }
 
-// TestDeleverage_InsufficientDeleveragerCollateral_UserADL covers Gap C
-// deleverager branch: under user-ADL the deleverager's own collateral
-// is also asserted (perpdex defense-in-depth: the deleverager must
-// have enough cross collateral to absorb the predicted realized
-// loss). Insufficient collateral on the user-ADL deleverager
-// rejects the trade.
+// TestDeleverage_UserADL_PostFillHealthGate pins the user-deleverager
+// post-fill HEALTHY assertion in `Deleverage`. Mirrors Lighter's
+// apply-time `is_deleverager_has_enough_cross_collateral`, but
+// expressed in perpdex's post-state form (`post.TAV >= post.IMR`)
+// because perpdex's `MsgDeleverage` accepts `size` as a msg input
+// and settles at the victim's zero price (not `ZeroPriceMid`), so
+// the price-by-construction invariant alone does not save the
+// deleverager when the victim is in deep BANKRUPTCY.
 //
-// IF / pool deleveragers are NOT subject to this assert; that case is
-// covered by the absence of an `ErrInsufficientCollateral` failure in
-// `TestEndBlocker_FullLiquidationPrefersLLPThenADL`.
-func TestDeleverage_InsufficientDeleveragerCollateral_UserADL(t *testing.T) {
+// Setup: user-deleverager 200 is opposite-side and the victim's zero
+// price has crossed the mark, but the post-state cross aggregate
+// (synthesised by the stub from `rk.status = FULL_LIQUIDATION`) is
+// not HEALTHY → the assert rejects with `ErrInvalidADLCounterparty`.
+//
+// The fill IS submitted to the trade engine (the assert is
+// positioned post-fill on purpose; cosmos-sdk rolls back the store
+// branch on the returned error), so `tk.calls` records the fill —
+// but the caller-visible outcome is a tx failure with state
+// untouched, identical to a fail-fast pre-check.
+//
+// IF / pool deleveragers are NOT subject to this assert; that case
+// is covered by the absence of an `ErrInvalidADLCounterparty`
+// failure in `TestEndBlocker_FullLiquidationPrefersLLPThenADL`.
+func TestDeleverage_UserADL_PostFillHealthGate(t *testing.T) {
 	ak := newStubAccount()
-	// Bankrupt with positive collateral so the bankrupt-side assert
-	// passes by short-circuit.
 	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.NewInt(1_000_000)}
 	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
 		AccountIndex: 100, MarketIndex: 0,
 		BaseSize: math.NewInt(50), EntryQuote: math.NewInt(5_000),
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
-	// User-ADL deleverager: opposite-side, but no cushion at all.
-	// Closing their short at zeroPrice=10 against EQ=-5_000 yields
-	// realised PnL ≈ -4_500 (in the engine's "Collateral += PnL"
-	// frame) which they cannot cover.
 	ak.accounts[200] = accounttypes.Account{
 		AccountIndex: 200, AccountType: perptypes.MasterAccountType,
 		Collateral: math.NewInt(0),
@@ -565,12 +575,10 @@ func TestDeleverage_InsufficientDeleveragerCollateral_UserADL(t *testing.T) {
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	rk := newStubRisk()
+	// rk.status = FULL_LIQ makes the deleverager's post-state
+	// `riskParamsForStatus` projection non-HEALTHY (TAV=0, IMR=3),
+	// triggering the post-fill assert.
 	rk.status = perptypes.HealthFullLiquidation
-	// Force a low zeroPrice (10) for the bankrupt so closing the
-	// deleverager's short at that price realises ≈ -4500 in the
-	// engine's "Collateral += PnL" frame (deleverager has 0 cushion).
-	// Without this override the stub falls through to markPrice=100, at
-	// which point the close PnL is zero and the assert short-circuits.
 	rk.zero[[2]uint64{100, 0}] = 10
 	tk := &stubTrade{}
 	matchk := newStubMatching()
@@ -578,6 +586,57 @@ func TestDeleverage_InsufficientDeleveragerCollateral_UserADL(t *testing.T) {
 
 	err := k.Deleverage(ctx, 100, 0, 200, 50)
 	require.Error(t, err)
-	require.ErrorIs(t, err, liqtypes.ErrInsufficientCollateral)
-	require.Empty(t, tk.calls)
+	require.ErrorIs(t, err, liqtypes.ErrInvalidADLCounterparty,
+		"post-fill HEALTHY assert must reject when the deleverager would land non-HEALTHY")
+	require.Len(t, tk.calls, 1,
+		"the fill IS submitted; cosmos-sdk rolls back the store branch on the returned error")
+}
+
+// TestDeleverage_UserADL_HealthyDeleverager_Passes pins the success
+// path of the post-fill HEALTHY assert: when the deleverager's
+// post-state cross aggregate is HEALTHY (TAV >= IMR), `Deleverage`
+// returns nil and the fill stands. Together with the rejection test
+// above this nails down both directions of the assert.
+//
+// `rk.cross[200]` is seeded with a HEALTHY post-state aggregate (the
+// stub's `ComputeCrossRisk` returns `rk.cross[acc]` if seeded), so
+// the assert clears regardless of the synthesised fall-back from the
+// global `rk.status` (which is FULL_LIQUIDATION for the bankrupt 100).
+func TestDeleverage_UserADL_HealthyDeleverager_Passes(t *testing.T) {
+	ak := newStubAccount()
+	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.NewInt(1_000_000)}
+	ak.pos[[2]uint64{100, 0}] = accounttypes.AccountPosition{
+		AccountIndex: 100, MarketIndex: 0,
+		BaseSize: math.NewInt(50), EntryQuote: math.NewInt(5_000),
+		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
+	}
+	ak.accounts[200] = accounttypes.Account{
+		AccountIndex: 200, AccountType: perptypes.MasterAccountType,
+		Collateral: math.NewInt(1_000_000),
+	}
+	ak.pos[[2]uint64{200, 0}] = accounttypes.AccountPosition{
+		AccountIndex: 200, MarketIndex: 0,
+		BaseSize: math.NewInt(-50), EntryQuote: math.NewInt(-5_000),
+		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
+	}
+	rk := newStubRisk()
+	rk.status = perptypes.HealthFullLiquidation // bankrupt 100
+	// Seed a HEALTHY post-state aggregate for deleverager 200.
+	// Production callers would derive this from real post-fill
+	// state; the stub returns whatever `rk.cross[acc]` is seeded.
+	rk.cross[200] = risktypes.RiskParameters{
+		Collateral:                   math.NewInt(1_000_000),
+		CollateralWithFunding:        math.NewInt(1_000_000),
+		TotalAccountValue:            math.NewInt(10_000),
+		InitialMarginRequirement:     math.NewInt(1_000),
+		MaintenanceMarginRequirement: math.NewInt(500),
+		CloseOutMarginRequirement:    math.NewInt(250),
+	}
+	rk.zero[[2]uint64{100, 0}] = 10
+	tk := &stubTrade{}
+	matchk := newStubMatching()
+	k, ctx := newKeeper(t, ak, rk, tk, matchk)
+
+	require.NoError(t, k.Deleverage(ctx, 100, 0, 200, 50))
+	require.Len(t, tk.calls, 1, "the trade engine receives the fill on the success path")
 }
