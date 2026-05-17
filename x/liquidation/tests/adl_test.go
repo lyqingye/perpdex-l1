@@ -535,28 +535,17 @@ func TestDeleverage_RejectsSameSideCounterparty(t *testing.T) {
 }
 
 // TestDeleverage_UserADL_PostFillHealthGate pins the user-deleverager
-// post-fill HEALTHY assertion in `Deleverage`. Mirrors Lighter's
-// apply-time `is_deleverager_has_enough_cross_collateral`, but
-// expressed in perpdex's post-state form (`post.TAV >= post.IMR`)
-// because perpdex's `MsgDeleverage` accepts `size` as a msg input
-// and settles at the victim's zero price (not `ZeroPriceMid`), so
-// the price-by-construction invariant alone does not save the
-// deleverager when the victim is in deep BANKRUPTCY.
+// post-fill HEALTHY assert in Deleverage: when the deleverager's
+// post-trade cross aggregate is not HEALTHY, the call must fail
+// with ErrInvalidADLCounterparty.
 //
-// Setup: user-deleverager 200 is opposite-side and the victim's zero
-// price has crossed the mark, but the post-state cross aggregate
-// (synthesised by the stub from `rk.status = FULL_LIQUIDATION`) is
-// not HEALTHY → the assert rejects with `ErrInvalidADLCounterparty`.
+// The fill IS submitted to the trade engine — the assert is
+// positioned post-fill on purpose, and cosmos-sdk rolls back the
+// store branch on the returned error, so the caller-visible outcome
+// is the same as a fail-fast pre-check.
 //
-// The fill IS submitted to the trade engine (the assert is
-// positioned post-fill on purpose; cosmos-sdk rolls back the store
-// branch on the returned error), so `tk.calls` records the fill —
-// but the caller-visible outcome is a tx failure with state
-// untouched, identical to a fail-fast pre-check.
-//
-// IF / pool deleveragers are NOT subject to this assert; that case
-// is covered by the absence of an `ErrInvalidADLCounterparty`
-// failure in `TestEndBlocker_FullLiquidationPrefersLLPThenADL`.
+// IF / pool deleveragers are exempt; that path is covered by
+// TestEndBlocker_FullLiquidationPrefersLLPThenADL.
 func TestDeleverage_UserADL_PostFillHealthGate(t *testing.T) {
 	ak := newStubAccount()
 	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.NewInt(1_000_000)}
@@ -575,9 +564,8 @@ func TestDeleverage_UserADL_PostFillHealthGate(t *testing.T) {
 		LastFundingRatePrefixSum: math.ZeroInt(), AllocatedMargin: math.ZeroInt(),
 	}
 	rk := newStubRisk()
-	// rk.status = FULL_LIQ makes the deleverager's post-state
-	// `riskParamsForStatus` projection non-HEALTHY (TAV=0, IMR=3),
-	// triggering the post-fill assert.
+	// FULL_LIQ projects to a non-HEALTHY post-state (TAV=0, IMR=3),
+	// which is what the post-fill assert rejects.
 	rk.status = perptypes.HealthFullLiquidation
 	rk.zero[[2]uint64{100, 0}] = 10
 	tk := &stubTrade{}
@@ -594,14 +582,9 @@ func TestDeleverage_UserADL_PostFillHealthGate(t *testing.T) {
 
 // TestDeleverage_UserADL_HealthyDeleverager_Passes pins the success
 // path of the post-fill HEALTHY assert: when the deleverager's
-// post-state cross aggregate is HEALTHY (TAV >= IMR), `Deleverage`
-// returns nil and the fill stands. Together with the rejection test
-// above this nails down both directions of the assert.
-//
-// `rk.cross[200]` is seeded with a HEALTHY post-state aggregate (the
-// stub's `ComputeCrossRisk` returns `rk.cross[acc]` if seeded), so
-// the assert clears regardless of the synthesised fall-back from the
-// global `rk.status` (which is FULL_LIQUIDATION for the bankrupt 100).
+// post-trade cross aggregate is HEALTHY (TAV >= IMR), Deleverage
+// returns nil and the fill stands. Paired with the rejection test
+// above to lock down both directions of the assert.
 func TestDeleverage_UserADL_HealthyDeleverager_Passes(t *testing.T) {
 	ak := newStubAccount()
 	ak.accounts[100] = accounttypes.Account{AccountIndex: 100, Collateral: math.NewInt(1_000_000)}
@@ -621,9 +604,8 @@ func TestDeleverage_UserADL_HealthyDeleverager_Passes(t *testing.T) {
 	}
 	rk := newStubRisk()
 	rk.status = perptypes.HealthFullLiquidation // bankrupt 100
-	// Seed a HEALTHY post-state aggregate for deleverager 200.
-	// Production callers would derive this from real post-fill
-	// state; the stub returns whatever `rk.cross[acc]` is seeded.
+	// ComputeCrossRisk returns the seeded entry verbatim, giving the
+	// deleverager a HEALTHY post-state.
 	rk.cross[200] = risktypes.RiskParameters{
 		Collateral:                   math.NewInt(1_000_000),
 		CollateralWithFunding:        math.NewInt(1_000_000),

@@ -227,25 +227,17 @@ func TestEndBlocker_BankruptResidueStaysWithVictim(t *testing.T) {
 	)
 }
 
-// TestEndBlocker_ADLCandidateRejectedByEngine_AdvancesToNext covers
-// the autoADL graceful-fallthrough invariant: when the first ranked
-// candidate's fill is rejected by the trade engine (e.g.
-// `ErrTakerRiskRegression` from the post-trade
-// `IsValidRiskChangeFrom` — the sole counterparty health gate after
-// the redundant `preCheckCollateral` pre-filter was removed), autoADL
-// must record the failure, log it, and move on to the next candidate
-// in the ranked queue rather than aborting the whole block.
+// TestEndBlocker_ADLCandidateRejectedByEngine_AdvancesToNext pins
+// the autoADL graceful-fallthrough invariant: when the trade engine
+// rejects the first ranked candidate's fill (e.g.
+// ErrTakerRiskRegression from the post-trade IsValidRiskChangeFrom),
+// autoADL must log it and move on to the next candidate instead of
+// aborting the block.
 //
-// Pre-fix this scenario was driven by the `preCheckCollateral`
-// pre-filter rejecting under-capitalised candidates on the
-// `account.Collateral` field. That pre-filter was removed (issue
-// F6: it is both redundant — the trade engine already runs a
-// strictly-stronger TAV-aware risk check on the same fill — and
-// uses the wrong cushion source, as a winner with cross uPnL on
-// other markets has TAV ≫ Collateral and would be falsely skipped).
-// The advance-on-failure semantics now relies on the engine's
-// rejection error surfacing through `ApplyPerpsMatching`, which
-// this test pins via `stubTrade.errFn`.
+// Before the F6 fix this scenario was driven by the now-removed
+// preCheckCollateral pre-filter; advance-on-failure now relies on
+// the engine's rejection error surfacing through ApplyPerpsMatching,
+// which this test pins via stubTrade.errFn.
 func TestEndBlocker_ADLCandidateRejectedByEngine_AdvancesToNext(t *testing.T) {
 	ak := newStubAccount()
 	// IF that breaches IMR so EndBlocker delegates to autoADL.
@@ -304,10 +296,9 @@ func TestEndBlocker_ADLCandidateRejectedByEngine_AdvancesToNext(t *testing.T) {
 		CloseOutMarginRequirement:    math.NewInt(125),
 	}
 	tk := &stubTrade{}
-	// Reject only the first candidate's fill, leave the rest to
-	// succeed. This models the trade engine's
-	// `IsValidRiskChangeFrom` returning `ErrTakerRiskRegression`
-	// for an under-capitalised counterparty.
+	// Reject only the first candidate's fill, mimicking the trade
+	// engine's IsValidRiskChangeFrom returning
+	// ErrTakerRiskRegression on an under-capitalised counterparty.
 	tk.errFn = func(f tradekeeper.PerpFill) error {
 		if f.TakerAccountIndex == 201 {
 			return tradetypes.ErrTakerRiskRegression

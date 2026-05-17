@@ -86,12 +86,9 @@ type RiskKeeper interface {
 		accountIdx uint64,
 		marketIdx uint32,
 	) (risktypes.ZeroPriceSnapshot, error)
-	// ComputeCrossRisk returns the cross aggregate risk parameters
-	// for `accountIdx`. Used by the post-fill HEALTHY assert in
-	// `Deleverage` to read the deleverager's post-trade cross
-	// envelope (and decide whether to roll back the fill). See the
-	// `Deleverage` docstring for why this assert is positioned
-	// post-fill rather than via a pre-fill simulator.
+	// ComputeCrossRisk returns the current cross aggregate risk
+	// parameters for `accountIdx`. Used by Deleverage's post-fill
+	// HEALTHY assert to read the deleverager's post-trade envelope.
 	ComputeCrossRisk(ctx context.Context, accountIdx uint64) (risktypes.RiskParameters, error)
 }
 
