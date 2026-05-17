@@ -141,44 +141,57 @@ func (k Keeper) Liquidate(ctx context.Context, victim uint64, marketIdx uint32, 
 // Deleverage is the keeper entry for MsgDeleverage and the engine path
 // used by EndBlocker for both LLP takeover and user-side ADL fills.
 //
-// Risk-check policy (deleverage trade settles bankrupt+deleverager
-// at the victim's zero price, with perpdex defense-in-depth on the
-// deleverager side):
+// Risk-check policy mirrors Lighter's `internal_deleverage` apply-time
+// pattern (`bankrupt_account_valid_risk_change` +
+// `is_*_has_enough_cross_collateral`) but is expressed in perpdex's
+// risk envelope:
 //
-//   - Bankrupt (maker) post-trade `IsValidRiskChangeFrom` is ALWAYS run.
-//   - LLP / Insurance Fund deleveragers (PUBLIC_POOL / INSURANCE_FUND
-//     account types, or the canonical InsuranceFundOperator account)
-//     SKIP the post-trade risk check on the deleverager side — they
-//     are willing absorbers by mandate, so the post-trade risk
-//     regression assert is asserted on the bankrupt but NOT on the
-//     pool deleverager.
-//   - User-ADL deleveragers KEEP their post-trade risk check
-//     (defense-in-depth, stricter than a collateral-only guard).
+//   - Bankrupt risk regression: enforced by the trade engine's
+//     `IsValidRiskChangeFrom` on the maker side (we DO NOT pass
+//     `SkipMakerRiskCheck`). Same role as Lighter's
+//     `bankrupt_account_valid_risk_change`.
+//   - Bankrupt has-enough-collateral: NOT asserted. A strict assert
+//     here would lean on `zero_price` zeroing the bankrupt's
+//     collateral by construction; perpdex's `GetPositionZeroPrice`
+//     uses the TAV/MMR ratio formulation uniformly across
+//     PARTIAL/FULL/BANKRUPTCY, which produces extreme prices for
+//     deeply-bankrupt accounts and would reject every legitimate
+//     close-out. perpdex's design is "residual debt is allowed to
+//     persist on the victim ledger" (see post-trade comment below);
+//     enforcing the assert would block the EndBlocker waterfall
+//     instead of advancing it. Re-enabling requires aligning the
+//     zero-price formula with a dedicated bankrupt branch first.
+//   - User-deleverager has-enough-collateral: enforced AFTER
+//     `ApplyPerpsMatching` returns, by re-reading the deleverager's
+//     cross risk envelope and asserting `post.TAV >= post.IMR`
+//     (HEALTHY). The check is positioned post-fill on purpose: the
+//     trade engine has already mutated the cosmos-sdk store branch,
+//     so a fresh `ComputeCrossRisk` reads the real post-state for
+//     free, while a pre-fill simulator would have to re-derive the
+//     same risk numbers. If the assert fails the branch is rolled
+//     back via the returned error — fail-late but state-safe.
 //
-// Pre-trade collateral asserts:
-//
-//   - User-ADL deleverager: asserted via `preCheckCollateral`
-//     ("deleverager has enough cross collateral for the predicted
-//     realized loss").
-//   - LLP / IF deleverager: not asserted — the LLP IMR gate in
-//     `tryLLPAbsorb` already vets pool capacity; the IF is an
-//     unconditional absorber.
-//   - Bankrupt: NOT asserted. A strict "bankrupt has enough cross
-//     collateral" assert would rely on `zero_price` zeroing the
-//     bankrupt's collateral by construction; perpdex's
-//     `GetPositionZeroPrice` uses the TAV/MMR ratio formulation
-//     uniformly across PARTIAL/FULL/BANKRUPTCY, which produces
-//     extreme prices for deeply-bankrupt accounts and would reject
-//     every legitimate close-out under a strict assert. perpdex's
-//     design is "residual debt is allowed to persist on the victim
-//     ledger" (see post-trade comment below); enforcing the assert
-//     here would block the EndBlocker waterfall instead of
-//     advancing it. Re-enabling requires aligning the zero-price
-//     formula with a dedicated bankrupt branch first.
-//
-// The deleverager assert short-circuits when the side's predicted
-// realized PnL is non-negative (it gains collateral from the trade)
-// — the check is trivially satisfied in that case.
+//     This is the perpdex analogue of Lighter's apply-time
+//     `is_deleverager_has_enough_cross_collateral`. Lighter's
+//     `available_pre >= |margin_delta|` is algebraically equivalent
+//     to `post.TAV >= post.IMR` after substituting the wider
+//     margin_delta = ΔIMR - ΔTAV that perpdex's `MsgDeleverage`
+//     requires (because `size` is a user-controlled msg field and
+//     the settle price is the victim's zero price, NOT
+//     `ZeroPriceMid`, so the price-by-construction invariant alone
+//     does not save the deleverager when the victim is in deep
+//     BANKRUPTCY and its zero price has crossed the mark).
+//   - User-deleverager risk regression
+//     (`IsValidRiskChangeFrom`): NOT run on the taker side
+//     (`SkipTakerRiskCheck=true`). The post-fill HEALTHY check
+//     above already implies non-regression (HEALTHY post-state
+//     accepted unconditionally by `IsValidRiskChangeFrom` per
+//     `classifyChange`), and skipping the duplicate
+//     `ComputeCrossRisk` call inside the trade engine keeps the
+//     hot path lean.
+//   - IF / Pool deleverager: not asserted on either side. The IF
+//     is an unconditional absorber; LLP capacity is vetted upstream
+//     by `tryLLPAbsorb`'s IMR gate.
 //
 // `opts` only carries the entry-point label emitted on the resulting
 // `EventTypeDeleverage`. Default is `source="msg"`; the LLP absorb
@@ -263,18 +276,6 @@ func (k Keeper) Deleverage(
 
 	takerIsAsk := pos.OpeningIsAsk()
 
-	// Pre-trade collateral assert on the deleverager side only — the
-	// bankrupt side is not asserted (see docstring). IF / Pool
-	// deleveragers are absorbers by mandate and skip the check.
-	if !isInsuranceFund && !isPoolDeleverager {
-		if err := k.preCheckCollateral(
-			ctx, deleverager, marketIdx, baseAmount, zeroPrice,
-			true /*isTakerSide*/, takerIsAsk, "deleverager",
-		); err != nil {
-			return err
-		}
-	}
-
 	if err := k.tradeKeeper.ApplyPerpsMatching(ctx, tradekeeper.PerpFill{
 		MakerAccountIndex: victim,
 		TakerAccountIndex: deleverager,
@@ -283,14 +284,72 @@ func (k Keeper) Deleverage(
 		BaseAmount:        baseAmount,
 		IsTakerAsk:        takerIsAsk,
 		NoFee:             true,
-		// Bankrupt (maker) is always risk-checked. IF / Pool
-		// deleveragers are absorbers by mandate and skip the
-		// post-trade taker risk regression; user deleveragers keep
-		// it as defense-in-depth.
-		SkipTakerRiskCheck: isInsuranceFund || isPoolDeleverager,
+		// Bankrupt (maker) keeps trade engine's IsValidRiskChangeFrom
+		// — that is the bankrupt-side equivalent of Lighter's
+		// `bankrupt_account_valid_risk_change` apply-time assert.
+		// All deleverager flavours (user / IF / Pool) skip the trade
+		// engine taker risk regression: IF and Pool are absorbers by
+		// mandate; user-deleveragers are governed by the explicit
+		// post-fill HEALTHY check below, which is the perpdex
+		// equivalent of Lighter's apply-time
+		// `is_deleverager_has_enough_cross_collateral` (size upper
+		// bound expressed via post-state cushion) — `MsgDeleverage`'s
+		// `size` is a msg input so this assertion is what bounds
+		// it. Skipping the trade engine's taker check here avoids a
+		// redundant `ComputeCrossRisk` call (the post-state read
+		// below reuses the state ApplyPerpsMatching just wrote).
+		SkipTakerRiskCheck: true,
 	}); err != nil {
 		return err
 	}
+
+	// Post-fill cushion assertion for user-deleveragers, mirroring
+	// Lighter's apply-time `is_deleverager_has_enough_cross_collateral`
+	// in spirit but expressed in perpdex's post-state HEALTHY form
+	// (algebraically equivalent: post.TAV >= post.IMR is the same
+	// invariant Lighter encodes as `available_pre >= |margin_delta|`
+	// after substituting perpdex's wider margin_delta = ΔIMR - ΔTAV).
+	//
+	// Why post-state read instead of pre-fill simulate: the trade
+	// engine's `ApplyPerpsMatching` already wrote the post-state in
+	// the current cosmos-sdk store branch. A `ComputeCrossRisk` here
+	// reads the real post-state for free; a pre-fill simulator would
+	// have to re-derive the same numbers and is strictly redundant.
+	// If the assert fails, returning a non-nil error rolls back the
+	// branch — same observable outcome as fail-fast, but without the
+	// duplicated risk computation on the success path (which is the
+	// hot path).
+	//
+	// IF / Pool deleveragers are NOT subject to this assert. They are
+	// absorbers of last resort by mandate and may legitimately fall
+	// out of HEALTHY when soaking up a victim's residual exposure;
+	// LLP capacity is governed upstream in `tryLLPAbsorb` instead.
+	//
+	// The autoADL path does NOT call this function and is not subject
+	// to this assert: there the settle price is `ZeroPriceMid(victim,
+	// candidate)` and `size` is bounded by the protocol-internal
+	// queue, so deleverager non-regression is guaranteed by Lighter-
+	// style price-by-construction + size-bounded invariants. The
+	// exposure here is unique to `MsgDeleverage`, where `size` is a
+	// user-controlled msg field and the settle price is the victim's
+	// zero price (NOT the mid), so the price-by-construction
+	// invariant alone does not save the deleverager when the victim
+	// is in deep BANKRUPTCY and its zero price has crossed the mark.
+	if !isInsuranceFund && !isPoolDeleverager {
+		postCross, err := k.riskKeeper.ComputeCrossRisk(ctx, deleverager)
+		if err != nil {
+			return err
+		}
+		if postCross.HealthStatus() != perptypes.HealthHealthy {
+			return types.ErrInvalidADLCounterparty.Wrapf(
+				"deleverage at price=%d size=%d would push deleverager %d out of HEALTHY (post.TAV=%s post.IMR=%s)",
+				zeroPrice, baseAmount, deleverager,
+				postCross.TotalAccountValue.String(),
+				postCross.InitialMarginRequirement.String(),
+			)
+		}
+	}
+
 	// No post-trade IF top-up: residual negative collateral persists
 	// on the victim ledger as account-level debt.
 	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
@@ -322,100 +381,3 @@ func (k Keeper) healthEnvelopeFor(
 	return k.riskKeeper.GetHealthStatus(ctx, accIdx)
 }
 
-// preCheckCollateral implements the "deleverager has enough cross
-// collateral to absorb the predicted realized loss" guard for the
-// deleverager side of a Deleverage / autoADL trade.
-//
-// The bankrupt side is intentionally NOT routed through this helper;
-// see `Deleverage`'s docstring for the rationale (perpdex's uniform
-// TAV/MMR-ratio zero-price formula produces extreme prices for deeply
-// bankrupt accounts which would fail the strict assert universally,
-// blocking the EndBlocker waterfall instead of advancing it).
-//
-// Behaviour:
-//
-//  1. Settle pending funding on the (account, market) position so the
-//     post-funding `EntryQuote` feeds into the predicted PnL — the
-//     comparison is funding-aware. Idempotent: `Engine.Apply` step 1
-//     does the same.
-//  2. Compute the predicted realized PnL via the same pure `ApplyFill`
-//     used by `Engine.applyPositionChange` so the assert and the
-//     engine cannot drift on sign / scaling.
-//  3. Short-circuit when the predicted RealizedPnL is non-negative —
-//     in perpdex's frame `applyCrossAccount` adds RealizedPnL
-//     directly to `Collateral`, so a non-negative RealizedPnL means
-//     the side's collateral does not shrink and no cushion is
-//     required.
-//  4. Otherwise, compare the side's available collateral against
-//     `|RealizedPnL|`. Cross uses `account.Collateral`; isolated uses
-//     `pos.AllocatedMargin` — mirroring the per-account split between
-//     the cross aggregate (ComputeCrossRisk) and the per-position
-//     isolated envelope (ComputeIsolatedRisk).
-//
-// On rejection returns `types.ErrInsufficientCollateral`; the
-// EndBlocker callers (`tryLLPAbsorb` / `autoADL`) treat it as a
-// graceful "skip this candidate" signal so the waterfall can advance
-// to the next ADL counterparty without aborting the whole block.
-//
-// Sign conventions match `Engine.applyPositionChange`:
-//
-//	makerSign := +1 if takerIsAsk else -1
-//	takerSign := -makerSign
-func (k Keeper) preCheckCollateral(
-	ctx context.Context,
-	accountIdx uint64,
-	marketIdx uint32,
-	base uint64,
-	zeroPrice uint32,
-	isTakerSide bool,
-	takerIsAsk bool,
-	label string,
-) error {
-	if err := k.fundingKeeper.SettlePositionFunding(ctx, accountIdx, marketIdx); err != nil {
-		return err
-	}
-	pos, err := k.accountKeeper.GetPosition(ctx, accountIdx, marketIdx)
-	if err != nil {
-		return err
-	}
-	var sign int64
-	switch {
-	case isTakerSide && takerIsAsk:
-		sign = -1
-	case isTakerSide && !takerIsAsk:
-		sign = +1
-	case !isTakerSide && takerIsAsk:
-		sign = +1
-	default:
-		sign = -1
-	}
-	delta := math.NewIntFromUint64(base).MulRaw(sign)
-	fill := pos.ApplyFill(delta, zeroPrice)
-	realized := fill.RealizedPnL
-	if !realized.IsNegative() {
-		// `applyCrossAccount` adds RealizedPnL directly to
-		// Collateral, so a non-negative value means the side's
-		// collateral does not shrink — no cushion required, so the
-		// guard short-circuits as trivially satisfied.
-		return nil
-	}
-	required := realized.Abs()
-	var available math.Int
-	switch pos.MarginMode {
-	case perptypes.IsolatedMargin:
-		available = pos.AllocatedMargin
-	default:
-		a, err := k.accountKeeper.GetAccount(ctx, accountIdx)
-		if err != nil {
-			return err
-		}
-		available = a.Collateral
-	}
-	if available.LT(required) {
-		return types.ErrInsufficientCollateral.Wrapf(
-			"%s account=%d market=%d available=%s required=%s",
-			label, accountIdx, marketIdx, available.String(), required.String(),
-		)
-	}
-	return nil
-}
