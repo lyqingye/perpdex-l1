@@ -15,54 +15,37 @@ import (
 	tradekeeper "github.com/perpdex/perpdex-l1/x/trade/keeper"
 )
 
-// ADLCandidate is a counterparty considered for auto-deleveraging on a
-// (market, side) pair. Candidates are ranked by `Score`, descending; the
-// first entry is the most "ADL-able" — the spec ranks by leverage AND
-// unrealized profit jointly so highly-leveraged winners get pulled in
-// before low-leverage winners with the same uPnL.
+// ADLCandidate is a counterparty considered for ADL on (market, side).
+// Ranked by Score desc — leverage and unrealized profit jointly, so
+// highly-leveraged winners come first.
 type ADLCandidate struct {
 	AccountIndex uint64
-	// PositionSize is the candidate's signed perp position. It is
-	// always opposite to the victim's side that produced this queue.
+	// Signed perp position; always opposite to the victim's side.
 	PositionSize math.Int
-	// UnrealizedPnL of the position at the current mark price.
-	// Strictly positive — losing positions are filtered out.
+	// uPnL at the current mark; strictly positive (losers filtered).
 	UnrealizedPnL math.Int
-	// ZeroPrice cached from the snapshot so autoADL can enforce
-	// zero-price alignment without re-querying.
+	// Cached from the snapshot so autoADL can enforce zero-price
+	// alignment without re-querying.
 	ZeroPrice uint32
-	// Leverage is the cross account leverage at rank time (notional /
-	// max(collateral, 1)), expressed in MarginTick units. Always the
-	// CROSS aggregate, even for isolated candidates, per the spec
-	// ("highly-leveraged winners come first").
+	// Cross-aggregate leverage at rank time (notional / max(coll, 1))
+	// in MarginTick units. Always CROSS, even for isolated candidates.
 	Leverage math.Int
-	// Score = leverage * uPnL_ratio. uPnL_ratio is approximated by
-	// uPnL * MarginTick / max(|entry_quote|, 1). Higher = closer to
-	// the front of the ADL queue.
+	// Score = leverage * uPnL_ratio where
+	// uPnL_ratio ≈ uPnL * MarginTick / max(|entry_quote|, 1).
 	Score math.Int
 }
 
-// BuildADLQueue scans every account, picks those that hold an opposing
-// non-zero position in `marketIdx` AND are currently profitable on it,
-// computes the ADL score, and returns the top `limit` candidates
-// sorted by score descending. `oppositeIsLong = true` means the victim
-// is short, so the ADL queue must be longs (PositionSize > 0).
+// BuildADLQueue returns up to `limit` opposite-side, profitable
+// counterparties in `marketIdx` ranked by ADL score desc.
+// `oppositeIsLong=true` means the victim is short, so candidates must
+// be longs.
 //
-// Cost: O(N_accounts) per call. The caller is expected to apply the
-// `MaxAdlCandidatesPerVictim` cap from Params before invoking this.
-//
-// Each candidate is read through one `GetLiquidationRiskSnapshot` call
-// so the (pos, mark, md, Risk, CrossRisk, ZeroPrice) bundle stays
-// internally consistent — uPnL is computed from the same mark the
-// snapshot's ZeroPrice was anchored to. Ranking always uses
-// `snap.CrossRisk` even when the candidate's targeted position is
-// isolated, so the cross aggregate drives leverage in both modes.
-//
-// Isolated candidates are not filtered out; the trade engine's
-// per-side `applyAccount` dispatcher routes their fill through
-// `applyIsolatedAccount` (instead of `applyCrossAccount`), so
-// isolated envelopes settle against their own `AllocatedMargin`
-// without touching cross collateral.
+// O(N_accounts) per call; the caller applies MaxAdlCandidatesPerVictim
+// from Params. Each candidate is read through one
+// GetLiquidationRiskSnapshot so (pos, mark, md, Risk, CrossRisk, ZP)
+// stay internally consistent. Leverage always comes from
+// snap.CrossRisk; isolated candidates are not filtered, the trade
+// engine routes them via applyIsolatedAccount.
 func (k Keeper) BuildADLQueue(
 	ctx context.Context,
 	marketIdx uint32,
@@ -75,10 +58,9 @@ func (k Keeper) BuildADLQueue(
 
 	out := make([]ADLCandidate, 0, limit)
 	if err := k.accountKeeper.IterateAccounts(ctx, func(a accounttypes.Account) bool {
-		// Skip system accounts (treasury, IF) and any other Public
-		// Pool sub-accounts: pool absorption goes through the
-		// IF_FIRST routing in EndBlocker, never the user-facing
-		// ranked ADL queue.
+		// Skip system accounts and pool sub-accounts: pool absorption
+		// goes through EndBlocker's IF_FIRST routing, never the ranked
+		// user queue.
 		if a.AccountIndex == perptypes.TreasuryAccountIndex ||
 			a.AccountIndex == perptypes.InsuranceFundOperatorAccountIdx ||
 			a.IsPoolType() {
@@ -92,7 +74,7 @@ func (k Keeper) BuildADLQueue(
 		if pos.BaseSize.IsZero() {
 			return false
 		}
-		// Only opposite-side positions can offset a victim's close-out.
+		// Opposite side only.
 		if pos.IsLong() != oppositeIsLong {
 			return false
 		}
@@ -101,13 +83,11 @@ func (k Keeper) BuildADLQueue(
 			return false
 		}
 		leverage := ComputeLeverage(snap.CrossRisk)
-		// uPnL_ratio = uPnL / max(|entry_quote|, 1).
 		entryAbs := pos.EntryQuote.Abs()
 		if !entryAbs.IsPositive() {
 			entryAbs = math.OneInt()
 		}
 		uPnLRatio := uPnL.Mul(math.NewInt(int64(perptypes.MarginTick))).Quo(entryAbs)
-		// Score = leverage * uPnL_ratio (in MarginTick^2 units).
 		score := leverage.Mul(uPnLRatio)
 		out = append(out, ADLCandidate{
 			AccountIndex:  a.AccountIndex,
@@ -135,14 +115,11 @@ func (k Keeper) BuildADLQueue(
 	return out, nil
 }
 
-// ComputeLeverage returns `IM * MarginTick / Collateral` as a leverage
-// proxy used only for ADL ranking. `Collateral.IsNil()` is a risk
-// keeper invariant violation and panics. `Collateral <= 0` (residual
-// debt, fully wiped account) clamps to 1 so the candidate ranks at
-// the front of the queue. `IM == 0` returns a neutral 1.
-//
-// Exported solely so the external `tests/` package can unit-test the
-// edge cases; production callers all live in this package.
+// ComputeLeverage returns IM * MarginTick / Collateral as the ADL
+// ranking leverage proxy. Nil Collateral panics (risk-keeper
+// invariant). Collateral <= 0 clamps to 1 (residual debt → ranks at
+// front). IM == 0 returns neutral 1. Exported for unit tests; in-pkg
+// callers only.
 func ComputeLeverage(rp risktypes.RiskParameters) math.Int {
 	if rp.Collateral.IsNil() {
 		panic("liquidation: RiskParameters.Collateral is nil; upstream invariant violated")
@@ -157,38 +134,21 @@ func ComputeLeverage(rp risktypes.RiskParameters) math.Int {
 	return rp.InitialMarginRequirement.Mul(math.NewInt(int64(perptypes.MarginTick))).Quo(collateral)
 }
 
-// autoADL closes a portion of the victim's `marketIdx` position
-// against the top-ranked counterparties returned by BuildADLQueue.
+// autoADL closes part of the victim's position in marketIdx against
+// the top-ranked BuildADLQueue counterparties.
 //
-// Per the spec the trade between the bankrupt account and an
-// opposite-side counterparty MUST happen at a price where the two
-// "zero prices" align — i.e. the execution price is at least as good
-// as either side's zero price. The exact midpoint
-// `(victimZP + candZP) / 2` satisfies both invariants when the prices
-// overlap; pairs whose zero prices do NOT overlap are skipped (the
-// counterparty would lose health).
+// Execution price must align zero prices on both sides — the midpoint
+// (victimZP + candZP) / 2 satisfies both when zero prices overlap;
+// non-overlapping pairs are skipped (counterparty would lose health).
 //
-// `attemptsLeft` is decremented per successful fill and shared across
-// all victims in the block.
+// attemptsLeft is decremented per fill and shared across victims.
 //
-// The victim's snapshot is rebuilt INSIDE this call so victim TAV/MMR
-// reflect any state mutation that happened earlier in the same
-// EndBlocker iteration. autoADL also self-asserts that the victim is
-// still FULL_LIQUIDATION / BANKRUPTCY against that fresh snapshot —
-// the trade engine does not enforce victim health on the deleverage
-// path, so this routine is the canonical "no ADL on a recovered
-// account" gate.
-//
-// The victim snapshot is ALSO re-read after every successful fill in
-// the loop below. Each fill mutates the victim's BaseSize / EntryQuote
-// / Collateral, which shifts both TAV and MMR and therefore the
-// zero price; reusing the entry-time `victimZP` for subsequent
-// overlap checks and settle prices would feed stale state into the
-// next iteration and let `IsValidRiskChangeFrom` reject fills that a
-// fresh ZP would have routed away. The refresh also lets the loop
-// exit early when an earlier fill already restored the victim to
-// HEALTHY / PRE / PARTIAL, preserving the "no ADL on a recovered
-// account" gate intra-loop.
+// The victim snapshot is rebuilt at entry AND after every fill: each
+// fill mutates BaseSize / EntryQuote / Collateral and therefore TAV /
+// MMR / ZP. Reusing entry-time state would feed stale data into the
+// next overlap check / settle price; the refresh also gates "no ADL
+// on a recovered account" intra-loop (the trade engine does not
+// enforce victim health on the deleverage path).
 func (k Keeper) autoADL(
 	ctx context.Context,
 	victim uint64,
@@ -209,15 +169,13 @@ func (k Keeper) autoADL(
 	}
 	if status := snap.Risk.HealthStatus(); status != perptypes.HealthFullLiquidation &&
 		status != perptypes.HealthBankruptcy {
-		// Victim recovered (e.g., a sibling market's LLP fill
-		// earlier in this block). ADL is reserved for FULL /
-		// BANKRUPTCY victims; refuse the fill.
+		// Victim recovered (sibling-market LLP fill earlier in the
+		// block). ADL is reserved for FULL/BANKRUPTCY.
 		return nil
 	}
 	victimZP := snap.ZeroPrice
 
-	// Victim long  → counterparties must be short to offset.
-	// Victim short → counterparties must be long.
+	// Counterparties take the opposite side.
 	oppositeIsLong := pos.IsShort()
 	cands, err := k.BuildADLQueue(ctx, marketIdx, oppositeIsLong, candCap)
 	if err != nil {
@@ -230,9 +188,7 @@ func (k Keeper) autoADL(
 		if *attemptsLeft == 0 || remaining.IsZero() {
 			break
 		}
-		// Zero-price overlap: victim long → cand short needs
-		// victimZP <= candZP; victim short → cand long needs
-		// victimZP >= candZP. Non-overlapping pairs would push the
+		// Zero-price overlap: non-overlapping pairs would push the
 		// counterparty into liquidation.
 		if oppositeIsLong {
 			if victimZP < c.ZeroPrice {
@@ -243,8 +199,7 @@ func (k Keeper) autoADL(
 				continue
 			}
 		}
-		// Round the midpoint toward the victim-favourable side
-		// (long victim → ceil, short victim → floor) to remove the
+		// Round midpoint to the victim-favourable side to remove the
 		// 1-ulp floor bias.
 		settlePrice := ZeroPriceMid(victimZP, c.ZeroPrice, !oppositeIsLong)
 		size := c.PositionSize.Abs()
@@ -254,16 +209,13 @@ func (k Keeper) autoADL(
 		if !size.IsPositive() {
 			continue
 		}
-		// autoADL settles at the midpoint, not at the victim's zero
-		// price, so it bypasses the Deleverage wrapper and drives
-		// the trade engine directly. No counterparty-side pre-check
-		// is needed: `size` is bounded by the candidate's own
-		// position, and the overlap check guarantees `settlePrice`
-		// is on the candidate-favourable side of its own zero
-		// price — closing in that band can only improve the
-		// candidate's TAV/MMR ratio. The trade engine's post-fill
-		// IsValidRiskChangeFrom (taker side, not skipped here) is
-		// the TAV-aware backstop.
+		// autoADL settles at the midpoint, so it bypasses the
+		// Deleverage wrapper and drives the trade engine directly.
+		// No counterparty pre-check needed: size is bounded by the
+		// candidate's position and the overlap guarantees settlePrice
+		// is on the candidate-favourable side of its own ZP — closing
+		// in that band can only improve the candidate's TAV/MMR.
+		// IsValidRiskChangeFrom (taker side) is the backstop.
 		if err := k.tradeKeeper.ApplyPerpsMatching(ctx, tradekeeper.PerpFill{
 			MakerAccountIndex: victim,
 			TakerAccountIndex: c.AccountIndex,
@@ -272,18 +224,16 @@ func (k Keeper) autoADL(
 			BaseAmount:        size.Uint64(),
 			IsTakerAsk:        takerIsAsk,
 			NoFee:             true,
-			// User-ADL: both bankrupt (maker) and counterparty
-			// (taker) go through IsValidRiskChangeFrom.
+			// User-ADL: both sides go through IsValidRiskChangeFrom.
 		}); err != nil {
 			sdkCtx.Logger().Error("liquidation: auto-adl fill failed",
 				"victim", victim, "market", marketIdx,
 				"counterparty", c.AccountIndex, "err", err)
 			continue
 		}
-		// EventTypeAutoADL carries ADL-specific context (the two
-		// zero prices); EventTypeDeleverage is emitted alongside it
-		// so downstream indexers can read every deleverage path
-		// from a single event stream tagged by `source`.
+		// EventTypeAutoADL carries the two zero prices;
+		// EventTypeDeleverage is emitted alongside so indexers can
+		// read every deleverage path from one stream tagged by source.
 		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
 			types.EventTypeAutoADL,
 			sdk.NewAttribute(types.AttributeKeyVictim, strconv.FormatUint(victim, 10)),
@@ -305,14 +255,11 @@ func (k Keeper) autoADL(
 		))
 		*attemptsLeft--
 
-		// Refresh the victim snapshot. The fill we just emitted
-		// shifted the victim's BaseSize / EntryQuote / Collateral,
-		// so the entry-time `victimZP` and locally-decremented
-		// `remaining` are now stale. Subsequent overlap checks and
-		// `ZeroPriceMid` settle prices MUST observe the post-fill
-		// state, and the loop must short-circuit if the victim has
-		// already been closed out or recovered above the ADL
-		// envelope.
+		// Refresh: the fill shifted BaseSize / EntryQuote /
+		// Collateral, so victimZP and remaining are now stale.
+		// Subsequent overlap checks / settle prices MUST observe
+		// the post-fill state; the loop must also short-circuit if
+		// the victim closed out or recovered.
 		snap, err = k.riskKeeper.GetLiquidationRiskSnapshot(ctx, victim, marketIdx)
 		if err != nil {
 			return err
@@ -331,12 +278,9 @@ func (k Keeper) autoADL(
 }
 
 // ZeroPriceMid returns the integer midpoint of two zero prices,
-// rounded toward the victim-favourable side (long victim → ceil,
-// short victim → floor) to remove the 1-ulp bias plain floor division
-// would compound across many ADL fills.
-//
-// Exported solely so the external `tests/` package can unit-test the
-// rounding edges; production callers all live in this package.
+// rounded victim-favourably (long → ceil, short → floor) to remove
+// the 1-ulp bias plain floor division would compound across fills.
+// Exported for unit tests; in-pkg callers only.
 func ZeroPriceMid(a, b uint32, victimIsLong bool) uint32 {
 	sum := uint64(a) + uint64(b)
 	if victimIsLong {

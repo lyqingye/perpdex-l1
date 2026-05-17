@@ -1,8 +1,7 @@
 package types
 
-// Default ADL caps. Picked to match the dYdX v4 defaults of
-// MaxDeleveragingAttemptsPerBlock (8) and an explicit candidate window
-// per victim so the EndBlocker scan stays bounded.
+// Default ADL caps mirror dYdX v4's MaxDeleveragingAttemptsPerBlock
+// (8) and bound the EndBlocker scan with an explicit candidate window.
 const (
 	DefaultMaxADLAttemptsPerBlock    uint32 = 8
 	DefaultMaxADLCandidatesPerVictim uint32 = 16

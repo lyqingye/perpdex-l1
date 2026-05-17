@@ -8,22 +8,15 @@ import (
 	"github.com/perpdex/perpdex-l1/x/risk/types"
 )
 
-// risk_change.go drives the cross + isolated pre/post-state risk
-// regression checks. The actual per-side decision functions live in
-// cross.go (isCrossRiskChangeValid) and isolated.go
-// (isIsolatedRiskChangeValid); this file just stitches them together
-// across both account-wide and per-isolated-market scopes.
-//
-// Pre-state lives in a function-local `types.PreRiskSnapshot` value
-// threaded through by the caller (engine.Apply, account msg-server).
-// There is no chain-level KV cache: a pre-state that outlived its
-// handler would silently leak into the next Msg's regression check.
+// risk_change.go stitches the per-scope decision functions
+// (cross.isCrossRiskChangeValid + isolated.isIsolatedRiskChangeValid)
+// into the account-wide regression check. Pre-state is function-local
+// (PreRiskSnapshot threaded through callers); a chain-level cache
+// would leak pre-state across handlers.
 
-// classifyChange centralises the pre-vs-post risk decision used by both
-// the cross and isolated paths. `missingPre` signals that no pre-state
-// snapshot exists; in that case we reject any unhealthy post-state to
-// avoid silently accepting a change that may have introduced the
-// underwater state.
+// classifyChange is the shared pre-vs-post decision used by both
+// scopes. missingPre rejects any unhealthy post-state to avoid
+// silently accepting a regression that may have introduced it.
 func classifyChange(pre, post types.RiskParameters, missingPre bool) bool {
 	postClass := post.HealthStatus()
 	if postClass == perptypes.HealthHealthy {
@@ -38,9 +31,9 @@ func classifyChange(pre, post types.RiskParameters, missingPre bool) bool {
 	}
 	switch preClass {
 	case perptypes.HealthPreLiquidation:
-		// PRE rule: no MMR growth + TAV/MMR ratio non-
-		// decreasing. The MMR cap implicitly forbids any |size|
-		// increase since mark is constant within the block.
+		// PRE rule: no MMR growth and TAV/MMR ratio non-decreasing.
+		// Mark is constant within a block, so the MMR cap is
+		// equivalent to a per-position |size| cap.
 		if post.MaintenanceMarginRequirement.GT(pre.MaintenanceMarginRequirement) {
 			return false
 		}
@@ -48,61 +41,44 @@ func classifyChange(pre, post types.RiskParameters, missingPre bool) bool {
 			post.MaintenanceMarginRequirement.IsZero() {
 			return true
 		}
-		// Compare post.TAV/post.MMR >= pre.TAV/pre.MMR without division,
-		// so integer truncation cannot make the health ratio look better.
+		// post.TAV/post.MMR >= pre.TAV/pre.MMR, cross-multiplied so
+		// integer truncation cannot flatter the ratio.
 		lhs := post.TotalAccountValue.Mul(pre.MaintenanceMarginRequirement)
 		rhs := pre.TotalAccountValue.Mul(post.MaintenanceMarginRequirement)
 		return !lhs.LT(rhs)
 	default:
-		// PARTIAL / FULL / BANKRUPTCY pre-state: enforce the TAV/IM
-		// ratio safety net so liquidation fills can never worsen
-		// capital efficiency.
+		// PARTIAL/FULL/BANKRUPTCY pre: enforce TAV/IM coverage so
+		// liquidation fills can never worsen capital efficiency.
+		// Once below MMR, IMR coverage is the stricter benchmark.
 		if post.InitialMarginRequirement.IsZero() ||
 			pre.InitialMarginRequirement.IsZero() {
 			return true
 		}
-		// Once the account is already below MMR, MMR coverage is no longer
-		// a useful recovery benchmark. Use the stricter IMR coverage ratio
-		// instead, and compare post.TAV/post.IMR >= pre.TAV/pre.IMR without
-		// division so integer truncation cannot hide a worse risk efficiency.
 		lhs := post.TotalAccountValue.Mul(pre.InitialMarginRequirement)
 		rhs := pre.TotalAccountValue.Mul(post.InitialMarginRequirement)
 		return !lhs.LT(rhs)
 	}
 }
 
-// IsValidRiskChangeFrom enforces the post-state vs pre-state risk
-// invariants. It walks both the cross account and each isolated
-// position the account holds; if either side regresses the change is
-// rejected.
+// IsValidRiskChangeFrom enforces post-vs-pre risk invariants across
+// the cross aggregate and every isolated position. Either side
+// regressing rejects the change.
 //
-// Per-side semantics:
+//   - HEALTHY post: accepted unconditionally.
+//   - PRE pre: post.class <= PRE, post.MMR <= pre.MMR, TAV/MMR ratio
+//     cannot decrease.
+//   - PARTIAL/FULL/BANKRUPTCY pre: post.class <= pre.class and
+//     TAV/IM ratio cannot decrease (safety net for liquidation fills).
 //
-//   - HEALTHY post-state is accepted unconditionally.
-//   - PRE_LIQUIDATION pre-state: post must remain at most PRE,
-//     post.MMR <= pre.MMR (no new exposure on the same mark), AND
-//     TAV/MMR ratio cannot decrease. This implements the spec's
-//     "do not increase the size of any position and do not decrease
-//     the account value to maintenance margin requirement ratio"
-//     rule. Mark prices are constant across pre/post inside the same
-//     block, so the MMR comparison is equivalent to a per-position
-//     |size| comparison.
-//   - Otherwise (PARTIAL/FULL/BANKRUPTCY pre-state): post.class <=
-//     pre.class AND TAV/IM ratio cannot decrease. Routine user trades
-//     in these states are rejected up-front by the matching layer; the
-//     check here is the safety net for liquidation-initiated fills.
-//
-// `pre` MUST be the value returned by SnapshotRisk at the start of
-// the same handler. A zero-value snapshot is treated as "no pre-state"
-// and forces the post-state to be HEALTHY (fail-closed rule).
+// pre MUST come from SnapshotRisk in the same handler. A zero-value
+// snapshot is treated as "no pre-state" → post must be HEALTHY.
 func (k Keeper) IsValidRiskChangeFrom(ctx context.Context, accountIdx uint64, pre types.PreRiskSnapshot) (bool, error) {
 	if ok, err := k.isCrossRiskChangeValid(ctx, accountIdx, pre.Cross); err != nil || !ok {
 		return ok, err
 	}
-	// Walk each isolated position and require it to satisfy the same
-	// invariants. We do not error when a pre-snapshot is missing for
-	// an isolated position: the position may have just been opened
-	// in this fill, so we fall back to "post must be HEALTHY".
+	// Missing isolated pre is not an error — the position may have
+	// just been opened in this fill; fall back to "post must be
+	// HEALTHY".
 	var (
 		ok      = true
 		iterErr error
@@ -132,12 +108,10 @@ func (k Keeper) IsValidRiskChangeFrom(ctx context.Context, accountIdx uint64, pr
 	return ok, nil
 }
 
-// SnapshotRisk computes the pre-state RiskParameters for an account
-// and returns them by value. Both the cross aggregate and every
-// isolated position are captured; an isolated market that the account
-// does not currently hold a non-zero position in is not recorded so
-// IsValidRiskChangeFrom falls back to "post must be HEALTHY" if the
-// position is opened during the handler.
+// SnapshotRisk captures the cross aggregate and every non-zero
+// isolated position by value. Markets the account does not currently
+// hold are intentionally absent so IsValidRiskChangeFrom falls back
+// to "post must be HEALTHY" for positions opened during the handler.
 func (k Keeper) SnapshotRisk(ctx context.Context, accountIdx uint64) (types.PreRiskSnapshot, error) {
 	snap := types.PreRiskSnapshot{}
 	cross, err := k.ComputeCrossRisk(ctx, accountIdx)

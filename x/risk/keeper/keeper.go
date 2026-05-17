@@ -11,16 +11,10 @@ import (
 	"github.com/perpdex/perpdex-l1/x/risk/types"
 )
 
-// Keeper implements the pure risk computations described in 16-risk.md
-// and the "Liquidations & LLP" specification. The keeper owns only the
-// module Params; pre-state RiskParameters used by the post-state
-// regression check live in a function-local `types.PreRiskSnapshot`
-// value threaded through by the caller.
-//
-// Mark-price reads (zero + staleness gate) live on the market keeper,
-// not here; risk callers go through `k.marketKeeper.GetMarkPrice` /
-// `GetMarkPriceAndDetails` so x/trade, x/matching and x/liquidation can use
-// the same accessor without depending on x/risk.
+// Keeper implements pure risk computations. Owns only Params;
+// pre-state snapshots live function-local in PreRiskSnapshot values
+// the caller threads through. Mark-price reads (zero + staleness
+// gate) live on the market keeper.
 type Keeper struct {
 	cdc           codec.BinaryCodec
 	storeService  store.KVStoreService

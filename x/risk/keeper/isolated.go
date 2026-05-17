@@ -8,14 +8,9 @@ import (
 	"github.com/perpdex/perpdex-l1/x/risk/types"
 )
 
-// isolated.go owns every per-(account, market) risk computation that
-// has its own collateral envelope: the AllocatedMargin pool of an
-// isolated position is fenced from cross collateral, so the health
-// machine evaluates each isolated position independently. The
-// per-position half of IsValidRiskChangeFrom (isIsolatedRiskChangeValid)
-// also lives here because it consumes ComputeIsolatedRisk directly;
-// the cross + isolated driver IsValidRiskChangeFrom itself sits in
-// risk_change.go.
+// isolated.go owns per-(account, market) risk computations whose
+// AllocatedMargin is fenced from cross collateral. The cross +
+// isolated driver IsValidRiskChangeFrom sits in risk_change.go.
 
 // ComputeIsolatedRisk returns risk parameters for one isolated position.
 func (k Keeper) ComputeIsolatedRisk(ctx context.Context, accountIdx uint64, marketIdx uint32) (types.RiskParameters, error) {
@@ -42,8 +37,8 @@ func (k Keeper) ComputeIsolatedRisk(ctx context.Context, accountIdx uint64, mark
 }
 
 // GetIsolatedHealthStatus classifies the health of one isolated
-// position. Returns HealthHealthy when the position is empty or in
-// cross mode (the latter is a programming error from the caller).
+// position. Empty positions and cross-mode requests (caller error)
+// return HealthHealthy.
 func (k Keeper) GetIsolatedHealthStatus(ctx context.Context, accountIdx uint64, marketIdx uint32) (uint32, error) {
 	pos, err := k.accountKeeper.GetPosition(ctx, accountIdx, marketIdx)
 	if err != nil {
@@ -59,10 +54,10 @@ func (k Keeper) GetIsolatedHealthStatus(ctx context.Context, accountIdx uint64, 
 	return rp.HealthStatus(), nil
 }
 
-// IterateIsolatedPositions walks every isolated perp position held by
-// the account and invokes `fn(marketIdx, status, rp)`. `fn` may return
-// `true` to stop iteration. Used by liquidation/matching to flag /
-// liquidate isolated positions independently of the cross health.
+// IterateIsolatedPositions walks every isolated position of the
+// account, invoking fn(marketIdx, status, rp). fn returns true to
+// stop. Used by liquidation/matching to evaluate isolated positions
+// independently of cross health.
 func (k Keeper) IterateIsolatedPositions(ctx context.Context, accountIdx uint64,
 	fn func(marketIdx uint32, status uint32, rp types.RiskParameters) bool,
 ) error {
@@ -83,11 +78,9 @@ func (k Keeper) IterateIsolatedPositions(ctx context.Context, accountIdx uint64,
 	return iterErr
 }
 
-// isIsolatedRiskChangeValid is the per-position half of
-// IsValidRiskChangeFrom (in risk_change.go). It compares the
-// post-state isolated parameters for one (account, market) against
-// the caller-provided pre-state. `hasPre == false` is treated as
-// "no pre-state" and forces the post-state to be HEALTHY.
+// isIsolatedRiskChangeValid compares the post-state isolated params
+// for one (account, market) against pre. hasPre == false forces the
+// post-state to be HEALTHY.
 func (k Keeper) isIsolatedRiskChangeValid(
 	ctx context.Context,
 	accountIdx uint64,

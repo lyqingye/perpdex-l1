@@ -14,57 +14,39 @@ import (
 	tradekeeper "github.com/perpdex/perpdex-l1/x/trade/keeper"
 )
 
-// Canonical `source` attribute values for `EventTypeDeleverage`.
+// Canonical source values on EventTypeDeleverage.
 const (
 	DeleverageSourceMsg     = "msg"
 	DeleverageSourceLLP     = "llp"
 	DeleverageSourceAutoADL = "auto_adl"
 )
 
-// DeleverageOption tags the entry point on the emitted
-// `EventTypeDeleverage`.
+// DeleverageOption tags the entry point on the emitted event.
 type DeleverageOption func(*deleverageOpts)
 
 type deleverageOpts struct {
 	source string
 }
 
-// WithDeleverageSource sets the `source` attribute. Pass one of the
-// `DeleverageSource*` constants.
+// WithDeleverageSource sets the source attribute (DeleverageSource*).
 func WithDeleverageSource(source string) DeleverageOption {
 	return func(o *deleverageOpts) { o.source = source }
 }
 
-// Liquidate is the keeper entry point for MsgLiquidate. It implements
-// the partial-liquidation procedure:
+// Liquidate is the MsgLiquidate entry point (PARTIAL only):
+//  1. require PARTIAL_LIQUIDATION (FULL/BANKRUPTCY are EndBlocker
+//     territory)
+//  2. cancel the victim's open orders so they cannot front-run the
+//     close-out
+//  3. compute the zero price (TAV/MMR-invariant)
+//  4. submit a synthetic LIQUIDATION_ORDER + IOC + reduce_only on
+//     behalf of the victim; improvements above ZP are taxed at
+//     min(market.LiquidationFee, price_diff_rate) → LLP/IF
 //
-//  1. Verify the victim is in PARTIAL_LIQUIDATION. FULL/BANKRUPTCY are
-//     out of scope here — those tiers are handled by EndBlocker via
-//     the LLP take-over → ADL waterfall, which is a distinct
-//     deleverage path from the partial-liquidation tx.
-//  2. Cancel every open order owned by the victim. A victim's resting
-//     bids could otherwise front-run the close-out fill — the
-//     cancel-all step always precedes the partial-liquidation IOC.
-//  3. Compute the position's mark-based zero price (TAV/MMR ratio
-//     invariant) — the worst price the victim is allowed to receive.
-//  4. Submit a synthetic `LIQUIDATION_ORDER + IOC + reduce_only` to
-//     the matching keeper on behalf of the victim. The order trades
-//     against the open book at maker prices that improve on the zero
-//     price; any improvement is taxed at `market.LiquidationFee` and
-//     routed to the LLP / Insurance Fund. The matching loop also
-//     short-circuits the moment the victim is no longer in
-//     liquidation.
-//
-// There is intentionally no post-trade "top up negative collateral
-// from the Insurance Fund" step. The partial-liquidation IOC trades
-// at maker prices >= zero_price, and the per-trade liquidation fee
-// is taxed only on the improvement above zero_price (capped at
-// `min(market.LiquidationFee, price_diff_rate)`); by construction
-// the victim's collateral cannot become negative through this path.
-// IF "absorption" only happens in the FULL/BANKRUPTCY tiers, where
-// the IF participates as the deleverage trade counterparty (gated
-// by `tryLLPAbsorb` IMR simulation), not via a silent collateral
-// transfer.
+// No post-trade IF top-up: fills happen at >= ZP and the fee is
+// taxed only on the improvement, so collateral cannot go negative
+// via this path. IF absorption only happens in FULL/BANKRUPTCY via
+// Deleverage (gated by tryLLPAbsorb).
 func (k Keeper) Liquidate(ctx context.Context, victim uint64, marketIdx uint32, baseAmount uint64) error {
 	snap, err := k.riskKeeper.GetZeroPriceSnapshot(ctx, victim, marketIdx)
 	if err != nil {
@@ -78,11 +60,8 @@ func (k Keeper) Liquidate(ctx context.Context, victim uint64, marketIdx uint32, 
 	if err != nil {
 		return err
 	}
-	// MsgLiquidate is intentionally restricted to PARTIAL: FULL and
-	// BANKRUPTCY are deleverage / IF / LLP territory and are driven
-	// by EndBlocker (see abci.go). A keeper bot that sees a
-	// FULL/BANKRUPTCY account should not race the EndBlocker by
-	// issuing MsgLiquidate.
+	// MsgLiquidate is PARTIAL-only; FULL/BANKRUPTCY route through
+	// EndBlocker (see abci.go).
 	if status != perptypes.HealthPartialLiquidation {
 		return types.ErrNotLiquidatable.Wrapf(
 			"victim status=%d not partial; FULL/BANKRUPTCY routes via EndBlocker LLP→ADL",
@@ -92,20 +71,16 @@ func (k Keeper) Liquidate(ctx context.Context, victim uint64, marketIdx uint32, 
 	if baseAmount == 0 {
 		return types.ErrInvalidParams.Wrap("base_amount must be > 0")
 	}
-	// A partial-liquidation Msg that passes in more base than the
-	// victim's remaining size would otherwise close the position *and*
-	// flip it to the opposite side, stealing collateral from the
-	// victim. Cap here (symmetrical to Deleverage).
+	// Cap baseAmount to remaining size: overshoot would flip the
+	// position and steal collateral. Symmetric to Deleverage.
 	absVictim := pos.BaseSize.Abs()
 	if math.NewIntFromUint64(baseAmount).GT(absVictim) {
 		return types.ErrInvalidParams.Wrapf(
 			"base_amount=%d exceeds victim position size %s", baseAmount, absVictim.String(),
 		)
 	}
-	// Cancel-all orders BEFORE the IOC close-out so a victim's
-	// resting bids cannot front-run the close-out fill. We tolerate
-	// a missing matching keeper only as a graceful fall-through for
-	// stub-driven tests.
+	// Cancel-all BEFORE the IOC so resting orders cannot front-run.
+	// A nil matchingKeeper is tolerated only for stub-driven tests.
 	if k.matchingKeeper != nil {
 		if _, err := k.matchingKeeper.CancelAllOpenOrdersForAccount(ctx, victim); err != nil {
 			return err
@@ -138,37 +113,24 @@ func (k Keeper) Liquidate(ctx context.Context, victim uint64, marketIdx uint32, 
 	return nil
 }
 
-// Deleverage is the keeper entry for MsgDeleverage and the LLP-takeover
+// Deleverage is the MsgDeleverage entry point and the LLP-takeover
 // path called from EndBlocker. autoADL does NOT route through here —
-// it issues its own ADL trade at `ZeroPriceMid(victimZP, candZP)`
-// directly against the trade engine.
+// it drives the trade engine directly at ZeroPriceMid.
 //
-// Risk checks:
-//
-//   - Bankrupt (maker) post-trade health regression is enforced by
-//     the trade engine's IsValidRiskChangeFrom (we do NOT set
+// Risk model:
+//   - Bankrupt maker: trade engine's IsValidRiskChangeFrom (NOT
 //     SkipMakerRiskCheck).
-//   - Bankrupt collateral sufficiency is NOT asserted. The
-//     unified TAV/MMR-ratio zero-price formula produces extreme
-//     prices for deeply-bankrupt accounts; a strict assert would
-//     reject every legitimate close-out. Residual negative
-//     collateral is allowed to persist on the victim ledger.
-//   - User-deleverager must remain HEALTHY after the fill. This
-//     bounds the user-supplied `baseAmount`, which is otherwise
-//     unconstrained. The check runs after ApplyPerpsMatching so
-//     it reads real post-state instead of re-simulating; a
-//     non-nil return rolls back the store branch.
-//   - IF / Pool deleveragers skip the post-fill check; they are
-//     absorbers by design (LLP capacity is vetted upstream by
-//     tryLLPAbsorb's IMR gate).
+//   - Bankrupt collateral sufficiency is NOT asserted: the ZP
+//     formula produces extreme prices for deeply-bankrupt accounts;
+//     residual negative collateral persists as ledger debt.
+//   - User deleverager: must remain HEALTHY after the fill — the
+//     post-fill check below reads real post-state and rolls back on
+//     failure.
+//   - IF / Pool deleveragers skip the post-fill check (absorbers by
+//     design; LLP IMR gate is upstream).
 //
-// SkipTakerRiskCheck=true on the trade engine call lets the post-fill
-// HEALTHY check below own deleverager-side enforcement and avoids a
-// redundant ComputeCrossRisk inside the engine.
-//
-// `opts` only carries the entry-point label emitted on the resulting
-// EventTypeDeleverage. Default is source="msg"; the LLP absorb path
-// passes WithDeleverageSource(DeleverageSourceLLP).
+// SkipTakerRiskCheck=true lets the post-fill HEALTHY check below own
+// deleverager-side enforcement (avoids a redundant engine read).
 func (k Keeper) Deleverage(
 	ctx context.Context,
 	victim uint64, marketIdx uint32, deleverager uint64, baseAmount uint64,
@@ -223,9 +185,8 @@ func (k Keeper) Deleverage(
 
 	isInsuranceFund := deleverager == perptypes.InsuranceFundOperatorAccountIdx
 	if !isInsuranceFund && !isPoolDeleverager {
-		// MsgDeleverage lets a user pick the counterparty, so the
-		// same-side / size-cap guard is required here. autoADL does
-		// not route through this function.
+		// User-picked counterparty needs the same-side / size-cap
+		// guard. autoADL bypasses this function.
 		dPos, err := k.accountKeeper.GetPosition(ctx, deleverager, marketIdx)
 		if err != nil {
 			return err
@@ -255,22 +216,15 @@ func (k Keeper) Deleverage(
 		BaseAmount:        baseAmount,
 		IsTakerAsk:        takerIsAsk,
 		NoFee:             true,
-		// Bankrupt (maker) is risk-checked by the trade engine.
-		// Deleverager (taker) is not — the post-fill HEALTHY check
-		// below covers user-deleveragers, IF/Pool are absorbers.
+		// Maker checked by engine; taker checked below for users.
 		SkipTakerRiskCheck: true,
 	}); err != nil {
 		return err
 	}
 
-	// Post-fill HEALTHY check — bounds the user-supplied baseAmount
-	// against the deleverager's post-state. ApplyPerpsMatching has
-	// already written the new state into the store branch, so this
-	// reads it directly; a pre-fill simulator would re-derive the
-	// same numbers. If the assert fails, returning the error rolls
-	// the branch back.
-	//
-	// Skipped for IF / Pool (absorbers by design).
+	// Post-fill HEALTHY check — bounds the user-supplied baseAmount.
+	// Reads the post-state ApplyPerpsMatching already wrote; an
+	// error rolls back the store branch. IF/Pool are absorbers.
 	if !isInsuranceFund && !isPoolDeleverager {
 		postCross, err := k.riskKeeper.ComputeCrossRisk(ctx, deleverager)
 		if err != nil {
@@ -286,8 +240,7 @@ func (k Keeper) Deleverage(
 		}
 	}
 
-	// No post-trade IF top-up: residual negative collateral persists
-	// on the victim ledger as account-level debt.
+	// No IF top-up: residual negative collateral persists as debt.
 	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
 		types.EventTypeDeleverage,
 		sdk.NewAttribute(types.AttributeKeyVictim, strconv.FormatUint(victim, 10)),
@@ -300,14 +253,9 @@ func (k Keeper) Deleverage(
 	return nil
 }
 
-// healthEnvelopeFor picks the right health-status getter for the
-// targeted (account, market) pair. Cross positions read the cross
-// account health; isolated positions read the per-market isolated
-// health, since each isolated position is a distinct risk envelope.
-//
-// Used by both Liquidate/Deleverage (MsgLiquidate / MsgDeleverage entry
-// points) and processAccount (EndBlocker) so the cross-vs-isolated
-// routing rule is defined exactly once.
+// healthEnvelopeFor returns the correct health status for a position:
+// cross aggregate for cross, per-market for isolated. Single
+// definition shared by Liquidate / Deleverage / processAccount.
 func (k Keeper) healthEnvelopeFor(
 	ctx context.Context, accIdx uint64, marketIdx uint32, marginMode uint32,
 ) (uint32, error) {

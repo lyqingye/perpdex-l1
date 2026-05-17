@@ -13,10 +13,9 @@ import (
 	"github.com/perpdex/perpdex-l1/x/trade/types"
 )
 
-// Keeper provides pure trade application functions used by x/matching
-// and x/liquidation. It owns no state apart from Params and forwards
-// the perp pipeline to a composed `perp.Engine`; spot lives directly on
-// the keeper because it is a single account-model path today.
+// Keeper provides pure trade-application functions used by x/matching
+// and x/liquidation. Stores only Params; perp work is forwarded to a
+// composed perp.Engine, while spot lives directly on the keeper.
 type Keeper struct {
 	cdc          codec.BinaryCodec
 	storeService store.KVStoreService
@@ -27,20 +26,15 @@ type Keeper struct {
 	fundingKeeper types.FundingKeeper
 	riskKeeper    types.RiskKeeper
 
-	// perp encapsulates the cross / isolated (and future unified)
-	// perp account-model pipeline. The keeper exposes Apply* methods
-	// that thin-forward into it.
+	// perp owns the cross / isolated (and future unified) pipeline.
 	perp perp.Engine
 
 	Schema collections.Schema
 	Params collections.Item[types.Params]
 }
 
-// PerpFill is the public surface for `Keeper.ApplyPerpsMatching`. It
-// is an alias to the engine's Fill struct so external callers
-// (matching, liquidation, tests) can keep writing
-// `tradekeeper.PerpFill{...}` without taking on a direct dependency
-// on the `perp` sub-package.
+// PerpFill is the public surface for ApplyPerpsMatching, aliasing the
+// engine Fill so callers do not depend on the perp sub-package.
 type PerpFill = perp.Fill
 
 func NewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, authority string,
@@ -70,10 +64,7 @@ func NewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, authori
 func (k Keeper) Authority() string { return k.authority }
 
 // ApplyPerpsMatching forwards a perp fill into the engine. See
-// `perp.Engine.Apply` for the full 8-step pipeline (funding settle,
-// pre-risk snapshot, position update, financial routing, treasury +
-// liquidation fee, isolated-margin auto-allocation, OI update, post
-// risk check).
+// perp.Engine.Apply for the 8-step pipeline.
 func (k Keeper) ApplyPerpsMatching(ctx context.Context, f PerpFill) error {
 	return k.perp.Apply(ctx, f)
 }

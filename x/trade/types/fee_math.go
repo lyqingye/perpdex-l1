@@ -6,14 +6,8 @@ import (
 	perptypes "github.com/perpdex/perpdex-l1/types"
 )
 
-// FeeOf returns the integer fee charged for `notional` quote at the
-// supplied bps rate, using the fixed fee tick:
-//
-//	fee = notional * bps / FeeTick
-//
-// Truncates toward zero (Quo on cosmos-sdk math.Int does Euclidean
-// division). Returns ZeroInt when bps == 0 to avoid an unnecessary
-// big.Int multiplication.
+// FeeOf returns notional * bps / FeeTick, truncated toward zero.
+// Short-circuits on bps == 0 to skip the big.Int multiplication.
 func FeeOf(notional math.Int, bps uint32) math.Int {
 	if bps == 0 || notional.IsNil() || notional.IsZero() {
 		return math.ZeroInt()

@@ -12,10 +12,10 @@ import (
 	tradekeeper "github.com/perpdex/perpdex-l1/x/trade/keeper"
 )
 
-// ApplyExitPosition is invoked by x/market when a market expires. It closes
-// every open position in `marketIdx` against the insurance fund at the
-// last mark price. Trades carry NoFee + NoRiskCheck so the insurance fund
-// can absorb residual size even when doing so worsens its own health.
+// ApplyExitPosition closes every open position in marketIdx against
+// the insurance fund at the last mark price (called by x/market on
+// expiry). Trades carry NoFee + NoRiskCheck so the IF can absorb
+// residual size even when its own health worsens.
 func (k Keeper) ApplyExitPosition(ctx context.Context, marketIdx uint32) error {
 	md, err := k.marketKeeper.GetMarketDetails(ctx, marketIdx)
 	if err != nil {
@@ -23,7 +23,6 @@ func (k Keeper) ApplyExitPosition(ctx context.Context, marketIdx uint32) error {
 	}
 	closePrice := md.MarkPrice
 	if closePrice == 0 {
-		// Without a mark price we cannot price the exit. Skip gracefully.
 		sdk.UnwrapSDKContext(ctx).Logger().Error(
 			"liquidation: skip exit position, mark price unset",
 			"market", marketIdx,

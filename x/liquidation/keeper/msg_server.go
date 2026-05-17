@@ -16,12 +16,9 @@ func (m msgServer) Liquidate(ctx context.Context, msg *types.MsgLiquidate) (*typ
 	if err := msg.ValidateBasic(); err != nil {
 		return nil, err
 	}
-	// The partial-liquidation tx has no counterparty — the victim's
-	// close-out fills against the public order book. There is no
-	// liquidator account to resolve and no sender authorisation
-	// check beyond ValidateBasic (anyone can poke the engine to
-	// liquidate an underwater account; the LLP / Insurance Fund
-	// collects the improvement fee).
+	// Partial liquidation has no counterparty (fills against the
+	// public book) and is permissionless — anyone can poke an
+	// underwater account; LLP/IF collects the improvement fee.
 	if err := m.Keeper.Liquidate(ctx, msg.VictimAccountIndex, msg.MarketIndex, msg.BaseAmount); err != nil {
 		return nil, err
 	}
@@ -36,11 +33,8 @@ func (m msgServer) Deleverage(ctx context.Context, msg *types.MsgDeleverage) (*t
 	if base == 0 {
 		base = 1
 	}
-	// Sender must be authorised to operate the deleverager account.
-	// Insurance Fund / Public Pool deleveragers are protocol-level paths
-	// that only the governance authority may drive directly; ADL from
-	// a user account is permitted for the account's owner (master/sub
-	// of the same bech32 address).
+	// IF/Pool deleveragers are governance-only; user ADL requires
+	// the deleverager-account owner (master/sub) as sender.
 	deleverager, err := m.accountKeeper.GetAccount(ctx, msg.DeleveragerAccountIndex)
 	if err != nil {
 		return nil, err

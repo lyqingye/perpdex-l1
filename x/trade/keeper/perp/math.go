@@ -4,10 +4,9 @@ import (
 	"cosmossdk.io/math"
 )
 
-// ceilDivPositive returns ⌈num/den⌉ for non-negative `num` and
-// strictly positive `den`. Mirrors `ceil_div_biguint` on the
-// non-negative branch (the negative-numerator branch is handled in
-// `calculateIsolatedMarginDelta` via the `oldMV <= 0` short-circuit).
+// ceilDivPositive returns ⌈num/den⌉ for non-negative num and positive
+// den. The negative-numerator branch is handled by the oldMV <= 0
+// short-circuit in calculateIsolatedMarginDelta.
 func ceilDivPositive(num, den math.Int) math.Int {
 	if den.IsZero() {
 		return math.ZeroInt()

@@ -4,22 +4,16 @@ import (
 	perptypes "github.com/perpdex/perpdex-l1/types"
 )
 
-// HealthStatus implements the 5-level liquidation state machine
-// described in the spec. It is a pure function of the
-// RiskParameters envelope so callers that already hold an RP value —
-// either as the cross aggregate, the isolated per-position
-// parameters, or the `Risk` field of a LiquidationRiskSnapshot — can
-// classify locally without going through GetHealthStatus /
-// GetIsolatedHealthStatus, which would re-aggregate state under the
-// hood.
+// HealthStatus is a pure 5-level classifier on a RiskParameters
+// envelope, so any holder of one (cross aggregate, isolated params,
+// or a snapshot's Risk field) can classify locally without
+// re-aggregating state.
 //
-// Bands (TAV ordered low to high):
-//
-//	TAV < 0           -> Bankruptcy
-//	TAV < CMR         -> FullLiquidation
-//	TAV < MMR         -> PartialLiquidation
-//	TAV < IMR         -> PreLiquidation
-//	otherwise         -> Healthy
+//	TAV < 0    -> Bankruptcy
+//	TAV < CMR  -> FullLiquidation
+//	TAV < MMR  -> PartialLiquidation
+//	TAV < IMR  -> PreLiquidation
+//	otherwise  -> Healthy
 func (p RiskParameters) HealthStatus() uint32 {
 	if p.TotalAccountValue.IsNil() {
 		return perptypes.HealthHealthy

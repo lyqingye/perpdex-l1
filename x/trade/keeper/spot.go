@@ -12,12 +12,8 @@ import (
 	"github.com/perpdex/perpdex-l1/x/trade/types"
 )
 
-// SpotFill is the input to ApplySpotMatching. It captures one spot
-// match between a maker and a taker. Spot trades have no notion of
-// position, isolated margin, or zero-price liquidation, so SpotFill is
-// intentionally a strict subset of PerpFill — callers that try to pass
-// perp-only fields here get a compile error rather than silently
-// dropping them on the floor.
+// SpotFill is one spot match. Intentionally a strict subset of
+// PerpFill so perp-only fields cannot leak across at compile time.
 type SpotFill struct {
 	MakerAccountIndex uint64
 	TakerAccountIndex uint64
@@ -30,25 +26,15 @@ type SpotFill struct {
 	NoFee             bool
 }
 
-// ApplySpotMatching applies a spot fill: taker gives quote, gets base (buy)
-// or vice versa (sell). UNIFIED collateral mode keeps account.collateral and
-// account_asset.balance synchronized.
-//
-// The maker side debits its locked balance first (lock-on-place semantics
-// from x/orderbook OpenOrder), spilling into available balance only if the
-// caller forgot to lock — defensive guard since resting orders always
-// have their resources locked. The taker side debits its available
-// balance directly.
-//
-// Insufficient-balance errors are wrapped into Maker* / Taker* sentinels
-// so the matching loop can evict a bad maker and continue, or stop a bad
-// taker without reverting prior fills.
+// ApplySpotMatching applies a spot fill (taker buys / sells base).
+// Maker drains locked balance first (lock-on-place from x/orderbook),
+// taker debits available directly. Insufficient-balance errors are
+// wrapped into Maker* / Taker* sentinels for the matching loop.
 func (k Keeper) ApplySpotMatching(ctx context.Context, f SpotFill, baseAssetID, quoteAssetID uint32) error {
 	notional := math.NewIntFromUint64(f.BaseAmount).Mul(math.NewIntFromUint64(uint64(f.Price)))
 	baseAmt := math.NewIntFromUint64(f.BaseAmount)
 	if f.IsTakerAsk {
-		// taker sells base, maker buys base — maker owes quote
-		// (locked at place time), taker owes base (unlocked).
+		// taker sells base: maker owes quote (locked), taker owes base.
 		if err := k.spotMakerDebit(ctx, f.MakerAccountIndex, f.TakerAccountIndex, quoteAssetID, notional); err != nil {
 			return err
 		}
@@ -56,8 +42,7 @@ func (k Keeper) ApplySpotMatching(ctx context.Context, f SpotFill, baseAssetID, 
 			return err
 		}
 	} else {
-		// taker buys base, maker sells base — maker owes base
-		// (locked at place time), taker owes quote (unlocked).
+		// taker buys base: maker owes base (locked), taker owes quote.
 		if err := k.spotMakerDebit(ctx, f.MakerAccountIndex, f.TakerAccountIndex, baseAssetID, baseAmt); err != nil {
 			return err
 		}
@@ -75,9 +60,7 @@ func (k Keeper) ApplySpotMatching(ctx context.Context, f SpotFill, baseAssetID, 
 			}
 		}
 		if makerFee.IsPositive() {
-			// Maker fee is paid out of whatever quote balance the
-			// maker still has after the lock release; debiting
-			// from available is correct because the lock only
+			// Maker fee comes from available balance: the lock only
 			// covered notional, not fees.
 			if err := k.spotMakerDebit(ctx, f.MakerAccountIndex, perptypes.TreasuryAccountIndex, quoteAssetID, makerFee); err != nil {
 				return err
@@ -87,14 +70,9 @@ func (k Keeper) ApplySpotMatching(ctx context.Context, f SpotFill, baseAssetID, 
 	return nil
 }
 
-// spotMakerDebit moves `amount` of `assetID` from `from` (a maker) to
-// `to`, draining the maker's locked balance first (lock-on-place
-// accounting from x/orderbook.OpenOrder) and falling back to the
-// available balance only if the lock is short — defensive guard since
-// resting orders always have their resources locked.
-//
-// Insufficient-balance errors are wrapped into ErrMakerInsufficientBalance
-// so the matching loop can evict the bad maker and continue.
+// spotMakerDebit moves amount from a maker, draining locked balance
+// first and falling back to available as a defensive guard. Wraps
+// insufficient-balance errors into ErrMakerInsufficientBalance.
 func (k Keeper) spotMakerDebit(ctx context.Context, from, to uint64, assetID uint32, amount math.Int) error {
 	if amount.IsNegative() {
 		return types.ErrInvalidTransferAmount
@@ -108,13 +86,9 @@ func (k Keeper) spotMakerDebit(ctx context.Context, from, to uint64, assetID uin
 	return nil
 }
 
-// spotTakerDebit moves `amount` of `assetID` from `from` (a taker) to
-// `to`. Takers in spot matching are not lock-on-place (only resting
-// orders lock), so the debit goes straight against the available
-// balance.
-//
-// Insufficient-balance errors are wrapped into ErrTakerInsufficientBalance
-// so the matching loop can stop the taker without reverting prior fills.
+// spotTakerDebit moves amount from a taker against available balance
+// (takers do not lock-on-place). Wraps insufficient-balance errors
+// into ErrTakerInsufficientBalance.
 func (k Keeper) spotTakerDebit(ctx context.Context, from, to uint64, assetID uint32, amount math.Int) error {
 	if amount.IsNegative() {
 		return types.ErrInvalidTransferAmount
