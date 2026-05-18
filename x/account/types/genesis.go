@@ -128,6 +128,7 @@ func (gs GenesisState) Validate() error {
 		}
 	}
 	posSeen := map[uint64]map[uint32]bool{}
+	posIDSeen := map[uint64]bool{}
 	for _, p := range gs.AccountPositions {
 		if posSeen[p.AccountIndex] == nil {
 			posSeen[p.AccountIndex] = map[uint32]bool{}
@@ -138,6 +139,38 @@ func (gs GenesisState) Validate() error {
 		posSeen[p.AccountIndex][p.MarketIndex] = true
 		if p.MarginMode != perptypes.CrossMargin && p.MarginMode != perptypes.IsolatedMargin {
 			return ErrInvalidMarginMode.Wrapf("position (%d,%d) margin_mode=%d", p.AccountIndex, p.MarketIndex, p.MarginMode)
+		}
+		// position_id == 0 is the reserved "leverage-only" sentinel; any
+		// non-zero id MUST be globally unique so off-chain indexers can
+		// rely on it as the lifeline join key. A row carrying
+		// position_id != 0 must also have base_size != 0 — open
+		// positions always have an id, leverage-only configs always
+		// have id == 0.
+		if p.PositionId == 0 {
+			if !p.BaseSize.IsNil() && !p.BaseSize.IsZero() {
+				return ErrInvalidParams.Wrapf(
+					"position (%d,%d) base_size=%s with position_id=0",
+					p.AccountIndex, p.MarketIndex, p.BaseSize.String())
+			}
+			continue
+		}
+		if posIDSeen[p.PositionId] {
+			return ErrInvalidParams.Wrapf("duplicate position_id %d", p.PositionId)
+		}
+		posIDSeen[p.PositionId] = true
+		if !p.BaseSize.IsNil() && p.BaseSize.IsZero() {
+			return ErrInvalidParams.Wrapf(
+				"position (%d,%d) base_size=0 with position_id=%d",
+				p.AccountIndex, p.MarketIndex, p.PositionId)
+		}
+	}
+	// Counters.NextPositionIndex must dominate every persisted id so
+	// the next allocation never collides with an existing lifeline.
+	for id := range posIDSeen {
+		if gs.Counters.NextPositionIndex != 0 && gs.Counters.NextPositionIndex <= id {
+			return ErrInvalidParams.Wrapf(
+				"next_position_index=%d must exceed max persisted position_id=%d",
+				gs.Counters.NextPositionIndex, id)
 		}
 	}
 	metaSeen := map[uint64]bool{}

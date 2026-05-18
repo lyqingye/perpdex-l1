@@ -25,6 +25,11 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 			return err
 		}
 	}
+	// Position rows are restored verbatim through the package-private
+	// setPosition primitive so the genesis-supplied PositionId values
+	// (and leverage-only config rows) are preserved bit-for-bit. The
+	// lifecycle dispatcher (UpdatePosition) is intentionally bypassed
+	// here — we are not opening / updating / closing, we are restoring.
 	for _, p := range gs.AccountPositions {
 		if err := k.setPosition(ctx, p); err != nil {
 			return err
@@ -52,6 +57,22 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 		subCounter = perptypes.MinSubAccountIndex
 	}
 	if err := k.NextSubIndex.Set(ctx, subCounter); err != nil {
+		return err
+	}
+	// position_id allocator. Coerced to >= max(existing+1, 1) so
+	// freshly opened positions never collide with a genesis-seeded id
+	// and the first allocation lands at 1 (id == 0 is the reserved
+	// "leverage-only" sentinel).
+	positionCounter := gs.Counters.NextPositionIndex
+	for _, p := range gs.AccountPositions {
+		if p.PositionId >= positionCounter {
+			positionCounter = p.PositionId + 1
+		}
+	}
+	if positionCounter == 0 {
+		positionCounter = 1
+	}
+	if err := k.NextPositionIndex.Set(ctx, positionCounter); err != nil {
 		return err
 	}
 	return nil
@@ -128,9 +149,17 @@ func (k Keeper) ExportGenesis(ctx context.Context) (*types.GenesisState, error) 
 	if err != nil {
 		return nil, err
 	}
+	position, err := k.NextPositionIndex.Peek(ctx)
+	if err != nil {
+		return nil, err
+	}
 	return &types.GenesisState{
-		Params:           p,
-		Counters:         types.Counters{NextMasterAccountIndex: master, NextSubAccountIndex: sub},
+		Params: p,
+		Counters: types.Counters{
+			NextMasterAccountIndex: master,
+			NextSubAccountIndex:    sub,
+			NextPositionIndex:      position,
+		},
 		Accounts:         accounts,
 		AccountAssets:    assets,
 		AccountPositions: positions,

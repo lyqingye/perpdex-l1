@@ -37,4 +37,7 @@ var (
 	ErrPoolGenericMsg        = errors.Register(ModuleName, 42, "public pool / insurance fund cannot use generic account msg; use share/strategy paths")
 	ErrInvalidMarginMode     = errors.Register(ModuleName, 44, "invalid margin mode")
 	ErrInvalidDepositorIndex = errors.Register(ModuleName, 45, "invalid depositor index")
+
+	// Position lifecycle errors (issue #91).
+	ErrPositionLifecycleViolation = errors.Register(ModuleName, 46, "position lifecycle violation")
 )

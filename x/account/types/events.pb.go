@@ -130,10 +130,59 @@ func (m *EventAccountAssetUpdated) GetAccountAsset() AccountAsset {
 	return AccountAsset{}
 }
 
-// EventPositionUpdated is emitted every time an AccountPosition row is
-// written — covers fill apply (x/trade), funding settlement
-// (x/funding), liquidation / ADL adjustments (x/liquidation) and
-// leverage flips (SetPositionLeverage).
+// EventPositionOpened is emitted on transition 0 → !=0 (or the open
+// half of a side flip). `position` carries the freshly persisted row,
+// including the new `position_id`.
+type EventPositionOpened struct {
+	Position AccountPosition `protobuf:"bytes,1,opt,name=position,proto3" json:"position"`
+}
+
+func (m *EventPositionOpened) Reset()         { *m = EventPositionOpened{} }
+func (m *EventPositionOpened) String() string { return proto.CompactTextString(m) }
+func (*EventPositionOpened) ProtoMessage()    {}
+func (*EventPositionOpened) Descriptor() ([]byte, []int) {
+	return fileDescriptor_87a158ac2142880c, []int{2}
+}
+func (m *EventPositionOpened) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *EventPositionOpened) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_EventPositionOpened.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *EventPositionOpened) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_EventPositionOpened.Merge(m, src)
+}
+func (m *EventPositionOpened) XXX_Size() int {
+	return m.Size()
+}
+func (m *EventPositionOpened) XXX_DiscardUnknown() {
+	xxx_messageInfo_EventPositionOpened.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_EventPositionOpened proto.InternalMessageInfo
+
+func (m *EventPositionOpened) GetPosition() AccountPosition {
+	if m != nil {
+		return m.Position
+	}
+	return AccountPosition{}
+}
+
+// EventPositionUpdated is emitted on any in-place mutation of an
+// existing AccountPosition row — covers same-side fill apply
+// (x/trade), funding settlement (x/funding), margin allocation
+// rebalances (x/trade isolated), liquidation / ADL adjustments
+// (x/liquidation) and leverage-only config writes
+// (SetPositionLeverage).
 type EventPositionUpdated struct {
 	Position AccountPosition `protobuf:"bytes,1,opt,name=position,proto3" json:"position"`
 }
@@ -142,7 +191,7 @@ func (m *EventPositionUpdated) Reset()         { *m = EventPositionUpdated{} }
 func (m *EventPositionUpdated) String() string { return proto.CompactTextString(m) }
 func (*EventPositionUpdated) ProtoMessage()    {}
 func (*EventPositionUpdated) Descriptor() ([]byte, []int) {
-	return fileDescriptor_87a158ac2142880c, []int{2}
+	return fileDescriptor_87a158ac2142880c, []int{3}
 }
 func (m *EventPositionUpdated) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -178,16 +227,77 @@ func (m *EventPositionUpdated) GetPosition() AccountPosition {
 	return AccountPosition{}
 }
 
+// EventPositionClosed is emitted on transition !=0 → 0 (or the close
+// half of a side flip). `position` carries the final pre-close snapshot
+// (with base_size already zeroed and the closed position_id retained)
+// so indexers can finalise the lifeline.
+type EventPositionClosed struct {
+	Position AccountPosition `protobuf:"bytes,1,opt,name=position,proto3" json:"position"`
+	// deleted is true when the underlying row was removed from storage
+	// (no non-default leverage to retain); false when the row remained as
+	// a leverage-only config row.
+	Deleted bool `protobuf:"varint,2,opt,name=deleted,proto3" json:"deleted,omitempty"`
+}
+
+func (m *EventPositionClosed) Reset()         { *m = EventPositionClosed{} }
+func (m *EventPositionClosed) String() string { return proto.CompactTextString(m) }
+func (*EventPositionClosed) ProtoMessage()    {}
+func (*EventPositionClosed) Descriptor() ([]byte, []int) {
+	return fileDescriptor_87a158ac2142880c, []int{4}
+}
+func (m *EventPositionClosed) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *EventPositionClosed) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_EventPositionClosed.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *EventPositionClosed) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_EventPositionClosed.Merge(m, src)
+}
+func (m *EventPositionClosed) XXX_Size() int {
+	return m.Size()
+}
+func (m *EventPositionClosed) XXX_DiscardUnknown() {
+	xxx_messageInfo_EventPositionClosed.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_EventPositionClosed proto.InternalMessageInfo
+
+func (m *EventPositionClosed) GetPosition() AccountPosition {
+	if m != nil {
+		return m.Position
+	}
+	return AccountPosition{}
+}
+
+func (m *EventPositionClosed) GetDeleted() bool {
+	if m != nil {
+		return m.Deleted
+	}
+	return false
+}
+
 func init() {
 	proto.RegisterType((*EventAccountUpdated)(nil), "perpdex.account.v1.EventAccountUpdated")
 	proto.RegisterType((*EventAccountAssetUpdated)(nil), "perpdex.account.v1.EventAccountAssetUpdated")
+	proto.RegisterType((*EventPositionOpened)(nil), "perpdex.account.v1.EventPositionOpened")
 	proto.RegisterType((*EventPositionUpdated)(nil), "perpdex.account.v1.EventPositionUpdated")
+	proto.RegisterType((*EventPositionClosed)(nil), "perpdex.account.v1.EventPositionClosed")
 }
 
 func init() { proto.RegisterFile("perpdex/account/v1/events.proto", fileDescriptor_87a158ac2142880c) }
 
 var fileDescriptor_87a158ac2142880c = []byte{
-	// 282 bytes of a gzipped FileDescriptorProto
+	// 318 bytes of a gzipped FileDescriptorProto
 	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xe2, 0x92, 0x2f, 0x48, 0x2d, 0x2a,
 	0x48, 0x49, 0xad, 0xd0, 0x4f, 0x4c, 0x4e, 0xce, 0x2f, 0xcd, 0x2b, 0xd1, 0x2f, 0x33, 0xd4, 0x4f,
 	0x2d, 0x4b, 0xcd, 0x2b, 0x29, 0xd6, 0x2b, 0x28, 0xca, 0x2f, 0xc9, 0x17, 0x12, 0x82, 0x2a, 0xd0,
@@ -198,14 +308,16 @@ var fileDescriptor_87a158ac2142880c = []byte{
 	0x89, 0xe5, 0xc4, 0x3d, 0x79, 0x86, 0x20, 0x98, 0x0e, 0x21, 0x09, 0x2e, 0xf6, 0xe4, 0xa2, 0x54,
 	0x90, 0x39, 0x12, 0x4c, 0x0a, 0x8c, 0x1a, 0x1c, 0x41, 0x30, 0xae, 0x52, 0x3a, 0x97, 0x04, 0xb2,
 	0x6d, 0x8e, 0xc5, 0xc5, 0xa9, 0x70, 0x2b, 0xbd, 0xb9, 0x78, 0xa1, 0x06, 0xc4, 0x27, 0x82, 0xc4,
-	0xa1, 0x16, 0x2b, 0xe0, 0xb1, 0x18, 0xac, 0x1f, 0x6a, 0x3b, 0x4f, 0x22, 0x92, 0x98, 0x52, 0x2c,
-	0x97, 0x08, 0xd8, 0xa2, 0x80, 0xfc, 0xe2, 0xcc, 0x92, 0xcc, 0xfc, 0x3c, 0x98, 0x25, 0xae, 0x5c,
-	0x1c, 0x05, 0x50, 0x21, 0xa8, 0xf9, 0xca, 0x78, 0xcc, 0x87, 0xe9, 0x86, 0x5a, 0x01, 0xd7, 0xea,
-	0xe4, 0x7e, 0xe2, 0x91, 0x1c, 0xe3, 0x85, 0x47, 0x72, 0x8c, 0x0f, 0x1e, 0xc9, 0x31, 0x4e, 0x78,
-	0x2c, 0xc7, 0x70, 0xe1, 0xb1, 0x1c, 0xc3, 0x8d, 0xc7, 0x72, 0x0c, 0x51, 0xba, 0xe9, 0x99, 0x25,
-	0x19, 0xa5, 0x49, 0x7a, 0xc9, 0xf9, 0xb9, 0xfa, 0xb0, 0xc0, 0x87, 0xd2, 0xba, 0x39, 0x86, 0xfa,
-	0x88, 0x98, 0x28, 0xa9, 0x2c, 0x48, 0x2d, 0x4e, 0x62, 0x03, 0xc7, 0x82, 0x31, 0x20, 0x00, 0x00,
-	0xff, 0xff, 0xe8, 0xa4, 0x8d, 0x64, 0xf4, 0x01, 0x00, 0x00,
+	0xa1, 0x16, 0x2b, 0xe0, 0xb1, 0x18, 0xac, 0x1f, 0x6a, 0x3b, 0x4f, 0x22, 0x92, 0x98, 0x52, 0x0c,
+	0xd4, 0x5b, 0x01, 0xf9, 0xc5, 0x99, 0x25, 0x99, 0xf9, 0x79, 0xfe, 0x05, 0xa9, 0x79, 0xa9, 0x29,
+	0x42, 0xae, 0x5c, 0x1c, 0x05, 0x50, 0x11, 0xa8, 0xf1, 0xca, 0x78, 0x8c, 0x87, 0x69, 0x86, 0xda,
+	0x00, 0xd7, 0xaa, 0x14, 0xcb, 0x25, 0x82, 0x62, 0x3a, 0xcc, 0x0b, 0x54, 0x32, 0xbe, 0x0c, 0xcd,
+	0xf1, 0xce, 0x39, 0xf9, 0xc5, 0x54, 0x33, 0x1d, 0x14, 0x3b, 0x29, 0xa9, 0x39, 0xa9, 0x48, 0xb1,
+	0x03, 0xe5, 0x3a, 0xb9, 0x9f, 0x78, 0x24, 0xc7, 0x78, 0xe1, 0x91, 0x1c, 0xe3, 0x83, 0x47, 0x72,
+	0x8c, 0x13, 0x1e, 0xcb, 0x31, 0x5c, 0x78, 0x2c, 0xc7, 0x70, 0xe3, 0xb1, 0x1c, 0x43, 0x94, 0x6e,
+	0x7a, 0x66, 0x49, 0x46, 0x69, 0x92, 0x5e, 0x72, 0x7e, 0xae, 0x3e, 0x2c, 0x49, 0x41, 0x69, 0xdd,
+	0x1c, 0x43, 0x7d, 0x44, 0xfa, 0x2a, 0xa9, 0x2c, 0x48, 0x2d, 0x4e, 0x62, 0x03, 0xa7, 0x2d, 0x63,
+	0x40, 0x00, 0x00, 0x00, 0xff, 0xff, 0xf2, 0x46, 0x9d, 0x1f, 0xca, 0x02, 0x00, 0x00,
 }
 
 func (m *EventAccountUpdated) Marshal() (dAtA []byte, err error) {
@@ -284,6 +396,39 @@ func (m *EventAccountAssetUpdated) MarshalToSizedBuffer(dAtA []byte) (int, error
 	return len(dAtA) - i, nil
 }
 
+func (m *EventPositionOpened) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *EventPositionOpened) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *EventPositionOpened) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	{
+		size, err := m.Position.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintEvents(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0xa
+	return len(dAtA) - i, nil
+}
+
 func (m *EventPositionUpdated) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
@@ -304,6 +449,49 @@ func (m *EventPositionUpdated) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	{
+		size, err := m.Position.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintEvents(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0xa
+	return len(dAtA) - i, nil
+}
+
+func (m *EventPositionClosed) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *EventPositionClosed) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *EventPositionClosed) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.Deleted {
+		i--
+		if m.Deleted {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i--
+		dAtA[i] = 0x10
+	}
 	{
 		size, err := m.Position.MarshalToSizedBuffer(dAtA[:i])
 		if err != nil {
@@ -353,6 +541,17 @@ func (m *EventAccountAssetUpdated) Size() (n int) {
 	return n
 }
 
+func (m *EventPositionOpened) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = m.Position.Size()
+	n += 1 + l + sovEvents(uint64(l))
+	return n
+}
+
 func (m *EventPositionUpdated) Size() (n int) {
 	if m == nil {
 		return 0
@@ -361,6 +560,20 @@ func (m *EventPositionUpdated) Size() (n int) {
 	_ = l
 	l = m.Position.Size()
 	n += 1 + l + sovEvents(uint64(l))
+	return n
+}
+
+func (m *EventPositionClosed) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = m.Position.Size()
+	n += 1 + l + sovEvents(uint64(l))
+	if m.Deleted {
+		n += 2
+	}
 	return n
 }
 
@@ -556,6 +769,89 @@ func (m *EventAccountAssetUpdated) Unmarshal(dAtA []byte) error {
 	}
 	return nil
 }
+func (m *EventPositionOpened) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowEvents
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: EventPositionOpened: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: EventPositionOpened: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Position", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowEvents
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthEvents
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthEvents
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.Position.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipEvents(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthEvents
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
 func (m *EventPositionUpdated) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -618,6 +914,109 @@ func (m *EventPositionUpdated) Unmarshal(dAtA []byte) error {
 				return err
 			}
 			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipEvents(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthEvents
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *EventPositionClosed) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowEvents
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: EventPositionClosed: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: EventPositionClosed: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Position", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowEvents
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthEvents
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthEvents
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.Position.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Deleted", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowEvents
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.Deleted = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := skipEvents(dAtA[iNdEx:])

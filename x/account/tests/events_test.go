@@ -121,21 +121,200 @@ func TestStateChangeEvents_AccountAsset_TransferPath(t *testing.T) {
 		"TransferAccountAssetBalance must emit one EventAccountAssetUpdated per side")
 }
 
-// TestStateChangeEvents_Position proves that the x/trade / x/funding
-// position-update path (UpdatePosition) fires a position event. This
-// is the most critical of the three because positions are mutated
-// almost exclusively from outside x/account.
-func TestStateChangeEvents_Position(t *testing.T) {
+// TestStateChangeEvents_Position_Lifecycle pins the three-event
+// lifecycle contract (issue #91): an UpdatePosition that transitions
+// base_size 0 -> !=0 emits EventPositionOpened (with a freshly
+// allocated position_id); a subsequent same-side mutation emits
+// EventPositionUpdated (preserving the id); the close transition
+// emits EventPositionClosed (with the closed id retained on the
+// payload) and removes the row from storage. The three events are
+// the canonical lifeline an off-chain indexer streams to rebuild the
+// canonical per-position record.
+func TestStateChangeEvents_Position_Lifecycle(t *testing.T) {
 	env := initTestEnv(t)
 
+	// 1) Open: 0 -> +5 fires EventPositionOpened with a new id.
 	resetEvents(env)
-	_, err := env.ak.UpdatePosition(env.ctx, 7001, 0, func(p *types.AccountPosition) error {
+	opened, err := env.ak.UpdatePosition(env.ctx, 7001, 0, func(p *types.AccountPosition) error {
 		p.BaseSize = math.NewInt(5)
 		p.EntryQuote = math.NewInt(500)
 		p.AllocatedMargin = math.NewInt(50)
 		return nil
 	})
 	require.NoError(t, err)
+	require.Equal(t, 1, countEvents(env, &types.EventPositionOpened{}),
+		"open transition (0 -> !=0) must emit a single EventPositionOpened")
+	require.Equal(t, 0, countEvents(env, &types.EventPositionUpdated{}),
+		"open must NOT emit EventPositionUpdated")
+	require.NotZero(t, opened.PositionId, "open must allocate a non-zero position_id")
+
+	// 2) Same-side update: +5 -> +8 fires EventPositionUpdated and
+	// preserves the position_id.
+	resetEvents(env)
+	updated, err := env.ak.UpdatePosition(env.ctx, 7001, 0, func(p *types.AccountPosition) error {
+		p.BaseSize = math.NewInt(8)
+		return nil
+	})
+	require.NoError(t, err)
 	require.Equal(t, 1, countEvents(env, &types.EventPositionUpdated{}),
-		"UpdatePosition must emit a single EventPositionUpdated")
+		"same-side update must emit a single EventPositionUpdated")
+	require.Equal(t, 0, countEvents(env, &types.EventPositionOpened{}),
+		"same-side update must NOT emit EventPositionOpened")
+	require.Equal(t, opened.PositionId, updated.PositionId, "position_id must be stable across same-side updates")
+
+	// 3) Close: +8 -> 0 fires EventPositionClosed and removes the row
+	// from storage (default leverage => not retained).
+	resetEvents(env)
+	closed, err := env.ak.UpdatePosition(env.ctx, 7001, 0, func(p *types.AccountPosition) error {
+		p.BaseSize = math.NewInt(0)
+		p.EntryQuote = math.NewInt(0)
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, countEvents(env, &types.EventPositionClosed{}),
+		"close transition (!=0 -> 0) must emit a single EventPositionClosed")
+	require.Equal(t, opened.PositionId, closed.PositionId,
+		"close must surface the closing position_id on the returned snapshot")
+
+	// Row is gone from storage; subsequent GetPosition auto-vivifies a
+	// fresh zero record with position_id == 0.
+	after, err := env.ak.GetPosition(env.ctx, 7001, 0)
+	require.NoError(t, err)
+	require.True(t, after.BaseSize.IsZero())
+	require.Zero(t, after.PositionId)
+}
+
+// TestStateChangeEvents_Position_Flip pins the flip lifecycle: a
+// side-flipping mutation emits Closed (old id) + Opened (new id) so
+// the indexer can finalise the previous lifeline before starting the
+// next one.
+func TestStateChangeEvents_Position_Flip(t *testing.T) {
+	env := initTestEnv(t)
+
+	// Open a long position.
+	opened, err := env.ak.UpdatePosition(env.ctx, 7100, 1, func(p *types.AccountPosition) error {
+		p.BaseSize = math.NewInt(10)
+		p.EntryQuote = math.NewInt(1000)
+		return nil
+	})
+	require.NoError(t, err)
+
+	// Flip to a short position: +10 -> -5. The dispatcher must emit
+	// Closed for the old id AND Opened for the freshly allocated id.
+	resetEvents(env)
+	flipped, err := env.ak.UpdatePosition(env.ctx, 7100, 1, func(p *types.AccountPosition) error {
+		p.BaseSize = math.NewInt(-5)
+		p.EntryQuote = math.NewInt(-500)
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, countEvents(env, &types.EventPositionClosed{}),
+		"flip must emit EventPositionClosed for the old lifeline")
+	require.Equal(t, 1, countEvents(env, &types.EventPositionOpened{}),
+		"flip must emit EventPositionOpened for the new lifeline")
+	require.NotEqual(t, opened.PositionId, flipped.PositionId,
+		"flip must allocate a new position_id")
+}
+
+// TestPositionId_UniqueAcrossLifecycles proves that the position_id
+// allocator is monotonic and never reuses an id across separate
+// lifecycles (open → close → reopen yields a fresh id), so off-chain
+// indexers can rely on it as a globally unique join key.
+func TestPositionId_UniqueAcrossLifecycles(t *testing.T) {
+	env := initTestEnv(t)
+
+	open := func(acc uint64, mkt uint32) uint64 {
+		p, err := env.ak.UpdatePosition(env.ctx, acc, mkt, func(p *types.AccountPosition) error {
+			p.BaseSize = math.NewInt(1)
+			p.EntryQuote = math.NewInt(100)
+			return nil
+		})
+		require.NoError(t, err)
+		return p.PositionId
+	}
+	close := func(acc uint64, mkt uint32) {
+		_, err := env.ak.UpdatePosition(env.ctx, acc, mkt, func(p *types.AccountPosition) error {
+			p.BaseSize = math.NewInt(0)
+			p.EntryQuote = math.NewInt(0)
+			return nil
+		})
+		require.NoError(t, err)
+	}
+
+	id1 := open(8001, 0)
+	close(8001, 0)
+	id2 := open(8001, 0) // same (account, market) — fresh id
+	close(8001, 0)
+	id3 := open(8002, 0) // different account — fresh id
+	id4 := open(8001, 1) // different market — fresh id
+
+	ids := []uint64{id1, id2, id3, id4}
+	for i, id := range ids {
+		require.NotZero(t, id, "ids[%d] must be non-zero", i)
+		for j := 0; j < i; j++ {
+			require.NotEqual(t, ids[j], id, "ids[%d] (%d) and ids[%d] (%d) must differ", i, id, j, ids[j])
+		}
+	}
+}
+
+// TestStateChangeEvents_Position_LeverageOnly proves the leverage-only
+// write branch: SetPositionLeverage against an empty position emits
+// EventPositionUpdated (configuration write, not an open) and the
+// persisted row carries position_id == 0 so indexers can distinguish
+// it from a real open lifeline.
+func TestStateChangeEvents_Position_LeverageOnly(t *testing.T) {
+	env := initTestEnv(t)
+
+	resetEvents(env)
+	require.NoError(t, env.ak.SetPositionLeverage(env.ctx, 7200, 2, perptypes.IsolatedMargin, 500))
+	require.Equal(t, 1, countEvents(env, &types.EventPositionUpdated{}),
+		"leverage-only write must emit EventPositionUpdated")
+	require.Equal(t, 0, countEvents(env, &types.EventPositionOpened{}),
+		"leverage-only write must NOT emit EventPositionOpened")
+
+	p, err := env.ak.GetPosition(env.ctx, 7200, 2)
+	require.NoError(t, err)
+	require.Zero(t, p.PositionId, "leverage-only row must keep position_id == 0")
+	require.Equal(t, uint32(perptypes.IsolatedMargin), p.MarginMode)
+	require.Equal(t, uint32(500), p.InitialMarginFraction)
+}
+
+// TestStateChangeEvents_Position_CloseRetainsLeverage proves the
+// "leverage-only retention" branch: closing a position that carries
+// non-default leverage settings RETAINS the row (with base_size == 0
+// and position_id == 0) so the user's preferred leverage survives the
+// close → reopen cycle. The event still fires with `deleted = false`.
+func TestStateChangeEvents_Position_CloseRetainsLeverage(t *testing.T) {
+	env := initTestEnv(t)
+
+	// Seed the user's leverage preference, then open a position with
+	// that preference still set.
+	require.NoError(t, env.ak.SetPositionLeverage(env.ctx, 7300, 3, perptypes.IsolatedMargin, 500))
+	_, err := env.ak.UpdatePosition(env.ctx, 7300, 3, func(p *types.AccountPosition) error {
+		p.BaseSize = math.NewInt(7)
+		p.EntryQuote = math.NewInt(700)
+		return nil
+	})
+	require.NoError(t, err)
+
+	// Now close it.
+	resetEvents(env)
+	_, err = env.ak.UpdatePosition(env.ctx, 7300, 3, func(p *types.AccountPosition) error {
+		p.BaseSize = math.NewInt(0)
+		p.EntryQuote = math.NewInt(0)
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, countEvents(env, &types.EventPositionClosed{}),
+		"close must emit EventPositionClosed even when row is retained")
+
+	// Row must STILL exist (with leverage intact) because the user
+	// configured a non-default margin mode.
+	p, err := env.ak.GetPosition(env.ctx, 7300, 3)
+	require.NoError(t, err)
+	require.True(t, p.BaseSize.IsZero(), "retained row must have base_size == 0")
+	require.Zero(t, p.PositionId, "retained row must reset position_id to 0")
+	require.Equal(t, uint32(perptypes.IsolatedMargin), p.MarginMode,
+		"leverage must survive the close")
+	require.Equal(t, uint32(500), p.InitialMarginFraction)
 }

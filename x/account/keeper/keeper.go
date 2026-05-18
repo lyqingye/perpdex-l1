@@ -24,15 +24,19 @@ type Keeper struct {
 	riskKeeper    RiskKeeper
 	marketKeeper  types.MarketKeeper
 
-	Schema           collections.Schema
-	Params           collections.Item[types.Params]
-	Accounts         collections.Map[uint64, types.Account]
-	OwnerToIndex     collections.Map[string, uint64]
-	AccountAssets    collections.Map[collections.Pair[uint64, uint32], types.AccountAsset]
-	AccountPositions collections.Map[collections.Pair[uint64, uint32], types.AccountPosition]
-	AccountMetas     collections.Map[uint64, types.AccountMeta]
-	NextMasterIndex  collections.Sequence
-	NextSubIndex     collections.Sequence
+	Schema            collections.Schema
+	Params            collections.Item[types.Params]
+	Accounts          collections.Map[uint64, types.Account]
+	OwnerToIndex      collections.Map[string, uint64]
+	AccountAssets     collections.Map[collections.Pair[uint64, uint32], types.AccountAsset]
+	AccountPositions  collections.Map[collections.Pair[uint64, uint32], types.AccountPosition]
+	AccountMetas      collections.Map[uint64, types.AccountMeta]
+	NextMasterIndex   collections.Sequence
+	NextSubIndex      collections.Sequence
+	// NextPositionIndex is the global position_id allocator. Bumped
+	// every time a position is opened (or flipped); persisted in
+	// genesis so the id stream is gap-stable across export / import.
+	NextPositionIndex collections.Sequence
 	// MasterSubAccounts is a (masterIdx, subIdx) -> () keyset so the
 	// SubAccounts query can scan only the master's range instead of
 	// the entire Accounts table. The Accounts row remains the source
@@ -59,14 +63,15 @@ func NewKeeper(
 		assetKeeper:  assetK,
 		bankKeeper:   bankK,
 
-		Params:           collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
-		Accounts:         collections.NewMap(sb, types.AccountKey, "accounts", collections.Uint64Key, codec.CollValue[types.Account](cdc)),
-		OwnerToIndex:     collections.NewMap(sb, types.OwnerToIndexKey, "owner_to_index", collections.StringKey, collections.Uint64Value),
-		AccountAssets:    collections.NewMap(sb, types.AccountAssetKey, "account_assets", collections.PairKeyCodec(collections.Uint64Key, collections.Uint32Key), codec.CollValue[types.AccountAsset](cdc)),
-		AccountPositions: collections.NewMap(sb, types.AccountPositionKey, "account_positions", collections.PairKeyCodec(collections.Uint64Key, collections.Uint32Key), codec.CollValue[types.AccountPosition](cdc)),
-		AccountMetas:     collections.NewMap(sb, types.AccountMetaKey, "account_metas", collections.Uint64Key, codec.CollValue[types.AccountMeta](cdc)),
-		NextMasterIndex:  collections.NewSequence(sb, types.NextMasterIndexKey, "next_master_index"),
-		NextSubIndex:     collections.NewSequence(sb, types.NextSubIndexKey, "next_sub_index"),
+		Params:            collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
+		Accounts:          collections.NewMap(sb, types.AccountKey, "accounts", collections.Uint64Key, codec.CollValue[types.Account](cdc)),
+		OwnerToIndex:      collections.NewMap(sb, types.OwnerToIndexKey, "owner_to_index", collections.StringKey, collections.Uint64Value),
+		AccountAssets:     collections.NewMap(sb, types.AccountAssetKey, "account_assets", collections.PairKeyCodec(collections.Uint64Key, collections.Uint32Key), codec.CollValue[types.AccountAsset](cdc)),
+		AccountPositions:  collections.NewMap(sb, types.AccountPositionKey, "account_positions", collections.PairKeyCodec(collections.Uint64Key, collections.Uint32Key), codec.CollValue[types.AccountPosition](cdc)),
+		AccountMetas:      collections.NewMap(sb, types.AccountMetaKey, "account_metas", collections.Uint64Key, codec.CollValue[types.AccountMeta](cdc)),
+		NextMasterIndex:   collections.NewSequence(sb, types.NextMasterIndexKey, "next_master_index"),
+		NextSubIndex:      collections.NewSequence(sb, types.NextSubIndexKey, "next_sub_index"),
+		NextPositionIndex: collections.NewSequence(sb, types.NextPositionIndexKey, "next_position_index"),
 		MasterSubAccounts: collections.NewKeySet(
 			sb,
 			types.MasterSubLinkKey,

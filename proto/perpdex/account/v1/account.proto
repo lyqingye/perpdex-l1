@@ -92,6 +92,23 @@ message AccountAsset {
 // AccountPosition stores a perp position for (account, market). Base size is
 // signed: base_size < 0 is short and opens with an ask; base_size >= 0 is long
 // and opens with a bid.
+//
+// Lifecycle (see x/account/keeper/position.go):
+//
+//   - position_id == 0 + base_size == 0: "leverage-only" config row that
+//     remembers the user's preferred margin_mode / initial_margin_fraction
+//     for the next open. Persisted iff one of those fields is non-default.
+//   - position_id != 0 + base_size != 0: "open" position. position_id is
+//     allocated by Keeper.NextPositionIndex at open time and is stable for
+//     the lifetime of the position (i.e. through size increases /
+//     decreases / funding accruals / margin allocations on the same side).
+//   - on full close (base_size returns to 0) the row is DELETED unless
+//     non-default leverage settings need to be retained, in which case it
+//     is reset back to a "leverage-only" row.
+//   - on side flip (base_size crosses zero into the opposite sign) the old
+//     position is treated as closed (EventPositionClosed with the OLD
+//     position_id) and a new one is opened (EventPositionOpened with a
+//     freshly allocated position_id).
 message AccountPosition {
   uint64 account_index = 1;
   uint32 market_index = 2;
@@ -116,6 +133,13 @@ message AccountPosition {
   int64 total_order_count = 9;
   int64 total_position_tied_order_count = 10;
   int64 created_at = 11;
+  // position_id is the chain-allocated unique identifier of the position
+  // lifetime. 0 means the row is a "leverage-only" config (no open
+  // position yet). A non-zero id is assigned on open, stable through all
+  // updates on the same side, and resets to a new id on side flip. Used
+  // by off-chain indexers as the join key between fills, funding events
+  // and the canonical position record.
+  uint64 position_id = 12;
 }
 
 // AccountMeta tracks low-frequency-write counters per account.
@@ -145,4 +169,8 @@ message Params {
 message Counters {
   uint64 next_master_account_index = 1;
   uint64 next_sub_account_index = 2;
+  // next_position_index is the next AccountPosition.position_id to
+  // allocate when a position is opened (or flipped). Persisted in
+  // genesis so the id stream is gap-stable across export / import.
+  uint64 next_position_index = 3;
 }

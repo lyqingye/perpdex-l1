@@ -33,10 +33,51 @@ message EventAccountAssetUpdated {
   AccountAsset account_asset = 1 [(gogoproto.nullable) = false];
 }
 
-// EventPositionUpdated is emitted every time an AccountPosition row is
-// written — covers fill apply (x/trade), funding settlement
-// (x/funding), liquidation / ADL adjustments (x/liquidation) and
-// leverage flips (SetPositionLeverage).
+// Position lifecycle events: every AccountPosition mutation funnels
+// into one of EventPositionOpened / EventPositionUpdated /
+// EventPositionClosed so indexers can rebuild the per-position lifeline
+// (open → N updates → close) keyed by `position_id`.
+//
+// Emission rules (see Keeper.UpdatePosition / OpenPosition /
+// ClosePosition):
+//
+//   - EventPositionOpened: base_size transitions 0 → !=0, OR a side
+//     flip closes the previous position and opens a new one. Carries
+//     the freshly allocated position_id.
+//   - EventPositionUpdated: any persisted mutation on an existing
+//     position (same-side size change, funding accrual, margin
+//     allocation, leverage-only config writes on a row with no open
+//     position). position_id is stable.
+//   - EventPositionClosed: base_size transitions !=0 → 0, OR the
+//     "close" half of a side flip. Carries the closed position_id.
+//     The underlying row may be deleted from storage (if leverage is
+//     default) or retained as a leverage-only config row.
+
+// EventPositionOpened is emitted on transition 0 → !=0 (or the open
+// half of a side flip). `position` carries the freshly persisted row,
+// including the new `position_id`.
+message EventPositionOpened {
+  AccountPosition position = 1 [(gogoproto.nullable) = false];
+}
+
+// EventPositionUpdated is emitted on any in-place mutation of an
+// existing AccountPosition row — covers same-side fill apply
+// (x/trade), funding settlement (x/funding), margin allocation
+// rebalances (x/trade isolated), liquidation / ADL adjustments
+// (x/liquidation) and leverage-only config writes
+// (SetPositionLeverage).
 message EventPositionUpdated {
   AccountPosition position = 1 [(gogoproto.nullable) = false];
+}
+
+// EventPositionClosed is emitted on transition !=0 → 0 (or the close
+// half of a side flip). `position` carries the final pre-close snapshot
+// (with base_size already zeroed and the closed position_id retained)
+// so indexers can finalise the lifeline.
+message EventPositionClosed {
+  AccountPosition position = 1 [(gogoproto.nullable) = false];
+  // deleted is true when the underlying row was removed from storage
+  // (no non-default leverage to retain); false when the row remained as
+  // a leverage-only config row.
+  bool deleted = 2;
 }
