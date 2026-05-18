@@ -77,21 +77,30 @@ func (k Keeper) Authority() string { return k.authority }
 //
 // Returns nil on success and snapshots the new prefix sum on the position so
 // the next settlement only charges newly accumulated rounds.
+//
+// Short-circuits when there is no open position (issue #91):
+// AccountPositions only carries open positions or leverage-only config
+// rows (BaseSize == 0). A closed / never-opened account has no funding
+// obligation, and the next open via x/trade is responsible for seeding
+// `LastFundingRatePrefixSum` from the market's current value, so we
+// don't need to maintain the snapshot on empty rows here.
 func (k Keeper) SettlePositionFunding(ctx context.Context, accountIndex uint64, marketIndex uint32) error {
+	pos, err := k.accountKeeper.GetPosition(ctx, accountIndex, marketIndex)
+	if err != nil {
+		return err
+	}
+	if pos.BaseSize.IsZero() {
+		return nil
+	}
 	d, err := k.marketKeeper.GetMarketDetails(ctx, marketIndex)
 	if err != nil {
 		return err
 	}
-	_, err = k.accountKeeper.UpdatePosition(ctx, accountIndex, marketIndex, func(pos *accounttypes.AccountPosition) error {
-		if pos.BaseSize.IsZero() {
-			pos.LastFundingRatePrefixSum = d.FundingRatePrefixSum
-			return nil
-		}
-		delta := d.FundingRatePrefixSum.Sub(pos.LastFundingRatePrefixSum)
-		if delta.IsZero() {
-			pos.LastFundingRatePrefixSum = d.FundingRatePrefixSum
-			return nil
-		}
+	delta := d.FundingRatePrefixSum.Sub(pos.LastFundingRatePrefixSum)
+	if delta.IsZero() {
+		return nil
+	}
+	_, err = k.accountKeeper.MutatePosition(ctx, accountIndex, marketIndex, func(pos *accounttypes.AccountPosition) error {
 		pay := pos.BaseSize.Mul(delta).Quo(math.NewInt(perptypes.FundingRateTick))
 		pos.EntryQuote = pos.EntryQuote.Add(pay)
 		pos.LastFundingRatePrefixSum = d.FundingRatePrefixSum

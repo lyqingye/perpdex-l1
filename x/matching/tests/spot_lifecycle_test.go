@@ -125,7 +125,12 @@ func (s *spotAccount) GetPosition(_ context.Context, acc uint64, mkt uint32) (ac
 	}, nil
 }
 
-func (s *spotAccount) UpdatePosition(
+// OpenPosition / MutatePosition / ClosePosition implement the
+// position lifecycle API exposed by the AccountKeeper interface in
+// x/trade/types. The spot-matching test only drives spot fills so the
+// trade engine's perp position path is never reached against this
+// stub; the helpers are stubbed out to satisfy the interface.
+func (s *spotAccount) OpenPosition(
 	ctx context.Context, accIdx uint64, marketIdx uint32,
 	mut func(*accounttypes.AccountPosition) error,
 ) (accounttypes.AccountPosition, error) {
@@ -133,6 +138,24 @@ func (s *spotAccount) UpdatePosition(
 	if err := mut(&pos); err != nil {
 		return accounttypes.AccountPosition{}, err
 	}
+	return pos, nil
+}
+
+func (s *spotAccount) MutatePosition(
+	ctx context.Context, accIdx uint64, marketIdx uint32,
+	mut func(*accounttypes.AccountPosition) error,
+) (accounttypes.AccountPosition, error) {
+	pos, _ := s.GetPosition(ctx, accIdx, marketIdx)
+	if err := mut(&pos); err != nil {
+		return accounttypes.AccountPosition{}, err
+	}
+	return pos, nil
+}
+
+func (s *spotAccount) ClosePosition(
+	ctx context.Context, accIdx uint64, marketIdx uint32,
+) (accounttypes.AccountPosition, error) {
+	pos, _ := s.GetPosition(ctx, accIdx, marketIdx)
 	return pos, nil
 }
 

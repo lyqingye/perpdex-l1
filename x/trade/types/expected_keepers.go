@@ -13,13 +13,25 @@ import (
 type AccountKeeper interface {
 	GetAccount(ctx context.Context, idx uint64) (accounttypes.Account, error)
 	GetPosition(ctx context.Context, accIdx uint64, marketIdx uint32) (accounttypes.AccountPosition, error)
-	// UpdatePosition is the canonical RMW entrypoint for position
-	// state; post-state invariants live on the account side.
-	UpdatePosition(
+	// Position lifecycle (issue #91). Each method enforces a narrow
+	// pre/post invariant and emits exactly one typed event so the
+	// indexer can rebuild the per-position lifeline.
+	OpenPosition(
 		ctx context.Context,
 		accIdx uint64,
 		marketIdx uint32,
 		mut func(*accounttypes.AccountPosition) error,
+	) (accounttypes.AccountPosition, error)
+	MutatePosition(
+		ctx context.Context,
+		accIdx uint64,
+		marketIdx uint32,
+		mut func(*accounttypes.AccountPosition) error,
+	) (accounttypes.AccountPosition, error)
+	ClosePosition(
+		ctx context.Context,
+		accIdx uint64,
+		marketIdx uint32,
 	) (accounttypes.AccountPosition, error)
 	AddCollateral(ctx context.Context, idx uint64, delta math.Int) error
 	GetAccountAsset(ctx context.Context, accIdx uint64, assetIdx uint32) (accounttypes.AccountAsset, error)

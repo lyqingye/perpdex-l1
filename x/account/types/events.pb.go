@@ -130,9 +130,9 @@ func (m *EventAccountAssetUpdated) GetAccountAsset() AccountAsset {
 	return AccountAsset{}
 }
 
-// EventPositionOpened is emitted on transition 0 → !=0 (or the open
-// half of a side flip). `position` carries the freshly persisted row,
-// including the new `position_id`.
+// EventPositionOpened is emitted by Keeper.OpenPosition. `position`
+// carries the freshly persisted row, including the new
+// chain-allocated `position_id` (>= 1) and the stamped `created_at`.
 type EventPositionOpened struct {
 	Position AccountPosition `protobuf:"bytes,1,opt,name=position,proto3" json:"position"`
 }
@@ -177,12 +177,13 @@ func (m *EventPositionOpened) GetPosition() AccountPosition {
 	return AccountPosition{}
 }
 
-// EventPositionUpdated is emitted on any in-place mutation of an
-// existing AccountPosition row — covers same-side fill apply
-// (x/trade), funding settlement (x/funding), margin allocation
-// rebalances (x/trade isolated), liquidation / ADL adjustments
-// (x/liquidation) and leverage-only config writes
-// (SetPositionLeverage).
+// EventPositionUpdated is emitted by Keeper.MutatePosition (same-side
+// fill apply from x/trade, funding settlement from x/funding,
+// isolated margin allocation rebalances, x/account msg_server
+// UpdateMargin) and by Keeper.SetPositionLeverage on a leverage-only
+// config row. position_id is stable across MutatePosition calls;
+// SetPositionLeverage emits with position_id == 0 so indexers can
+// tell a config update apart from an open-position update.
 type EventPositionUpdated struct {
 	Position AccountPosition `protobuf:"bytes,1,opt,name=position,proto3" json:"position"`
 }
@@ -227,16 +228,16 @@ func (m *EventPositionUpdated) GetPosition() AccountPosition {
 	return AccountPosition{}
 }
 
-// EventPositionClosed is emitted on transition !=0 → 0 (or the close
-// half of a side flip). `position` carries the final pre-close snapshot
-// (with base_size already zeroed and the closed position_id retained)
-// so indexers can finalise the lifeline.
+// EventPositionClosed is emitted by Keeper.ClosePosition. `position`
+// carries the final post-close snapshot (`base_size` and
+// `entry_quote` zeroed; the **pre-close** `position_id` retained so
+// indexers can finalise the lifeline). `deleted` reports the storage
+// outcome: `true` when the underlying KV row was removed (default
+// leverage); `false` when the row was retained as a leverage-only
+// config row (non-default `margin_mode` / `initial_margin_fraction`).
 type EventPositionClosed struct {
 	Position AccountPosition `protobuf:"bytes,1,opt,name=position,proto3" json:"position"`
-	// deleted is true when the underlying row was removed from storage
-	// (no non-default leverage to retain); false when the row remained as
-	// a leverage-only config row.
-	Deleted bool `protobuf:"varint,2,opt,name=deleted,proto3" json:"deleted,omitempty"`
+	Deleted  bool            `protobuf:"varint,2,opt,name=deleted,proto3" json:"deleted,omitempty"`
 }
 
 func (m *EventPositionClosed) Reset()         { *m = EventPositionClosed{} }

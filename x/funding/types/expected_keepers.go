@@ -30,11 +30,12 @@ type OrderbookKeeper interface {
 
 type AccountKeeper interface {
 	GetPosition(ctx context.Context, accIdx uint64, marketIdx uint32) (accounttypes.AccountPosition, error)
-	// UpdatePosition is the canonical RMW entrypoint for position
-	// state. Funding keeper uses it from SettlePositionFunding so the
-	// snapshot bookkeeping + (future) event emission stay on the
-	// account side.
-	UpdatePosition(
+	// MutatePosition is the same-side RMW entrypoint. Funding
+	// settlement only fires for OPEN positions (BaseSize != 0);
+	// closed / leverage-only positions have no funding obligation,
+	// so the funding keeper short-circuits before reaching this
+	// method. See spec/events/account.md for the full lifecycle.
+	MutatePosition(
 		ctx context.Context,
 		accIdx uint64,
 		marketIdx uint32,

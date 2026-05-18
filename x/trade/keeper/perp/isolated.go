@@ -17,12 +17,13 @@ import (
 // at open / close / OI-change boundaries.
 
 // isolatedAddAllocatedMargin folds delta (PnL net of fees, or any
-// other isolated credit) into the position's allocated_margin.
+// other isolated credit) into the position's allocated_margin. Routed
+// through MutatePosition so the same-side invariant is enforced.
 func (e Engine) isolatedAddAllocatedMargin(ctx context.Context, res *positionChangeResult, delta math.Int) error {
 	if delta.IsZero() {
 		return nil
 	}
-	updated, err := e.accountKeeper.UpdatePosition(ctx, res.AccountIdx, res.MarketIdx, func(p *accounttypes.AccountPosition) error {
+	updated, err := e.accountKeeper.MutatePosition(ctx, res.AccountIdx, res.MarketIdx, func(p *accounttypes.AccountPosition) error {
 		p.AllocatedMargin = p.AllocatedMargin.Add(delta)
 		return nil
 	})
@@ -40,7 +41,7 @@ func (e Engine) isolatedDebit(ctx context.Context, res *positionChangeResult, am
 	if amount.IsZero() {
 		return nil
 	}
-	updated, err := e.accountKeeper.UpdatePosition(ctx, res.AccountIdx, res.MarketIdx, func(p *accounttypes.AccountPosition) error {
+	updated, err := e.accountKeeper.MutatePosition(ctx, res.AccountIdx, res.MarketIdx, func(p *accounttypes.AccountPosition) error {
 		p.AllocatedMargin = p.AllocatedMargin.Sub(amount)
 		return nil
 	})
@@ -52,13 +53,36 @@ func (e Engine) isolatedDebit(ctx context.Context, res *positionChangeResult, am
 }
 
 // applyIsolatedAccount runs the per-side post-trade effect for an
-// isolated account in three steps:
-//  1. fold (realized_pnl - fee) into allocated_margin
-//  2. (maker only) debit improvement fee from allocated_margin
-//  3. rebalanceIsolatedMargin against new IM / market value
+// isolated account. Two top-level branches:
+//
+//  1. Closed (res.Closed == true): the position is gone (or retained as
+//     leverage-only with allocated_margin = 0). We do NOT issue any
+//     MutatePosition writes — the row may not exist, and even when
+//     retained as leverage-only it should not carry transient
+//     allocated_margin. Instead we drain the pre-close allocated_margin
+//     PLUS realized_pnl PLUS improvement fee directly back to cross
+//     collateral, mirroring the net effect of the pre-#91
+//     "isolatedAddAllocatedMargin → rebalanceIsolatedMargin" sequence
+//     in one AddCollateral call.
+//
+//  2. Open / Update / Flip-residual (Closed == false): standard
+//     3-step flow against the still-open position row.
 //
 // liqFee must be non-negative and zero on takers.
 func (e Engine) applyIsolatedAccount(ctx context.Context, res *positionChangeResult, fee math.Int, isMaker bool, liqFee math.Int, f Fill) error {
+	if res.Closed {
+		// res.New is the pre-close snapshot returned by ClosePosition;
+		// AllocatedMargin reflects the pool we need to drain.
+		refund := res.New.AllocatedMargin.Add(res.RealizedPnL).Sub(fee)
+		if isMaker && liqFee.IsPositive() {
+			refund = refund.Sub(liqFee)
+		}
+		if refund.IsZero() {
+			return nil
+		}
+		return e.accountKeeper.AddCollateral(ctx, res.AccountIdx, refund)
+	}
+
 	delta := res.RealizedPnL
 	if !fee.IsZero() {
 		delta = delta.Sub(fee)
@@ -86,6 +110,9 @@ func (e Engine) applyIsolatedAccount(ctx context.Context, res *positionChangeRes
 // check on the maker so partial-liquidation can still close an
 // underwater isolated victim; the delta is still applied so accounting
 // stays consistent.
+//
+// The closed branch is handled in applyIsolatedAccount above; this
+// function is only invoked when the position row is still open.
 func (e Engine) rebalanceIsolatedMargin(ctx context.Context, res *positionChangeResult, fee math.Int, isMaker bool, f Fill) error {
 	delta, err := e.calculateIsolatedMarginDelta(ctx, res, fee)
 	if err != nil {
@@ -113,7 +140,7 @@ func (e Engine) rebalanceIsolatedMargin(ctx context.Context, res *positionChange
 			}
 		}
 	}
-	updated, err := e.accountKeeper.UpdatePosition(ctx, res.AccountIdx, res.MarketIdx, func(p *accounttypes.AccountPosition) error {
+	updated, err := e.accountKeeper.MutatePosition(ctx, res.AccountIdx, res.MarketIdx, func(p *accounttypes.AccountPosition) error {
 		p.AllocatedMargin = p.AllocatedMargin.Add(delta)
 		return nil
 	})
@@ -129,7 +156,6 @@ func (e Engine) rebalanceIsolatedMargin(ctx context.Context, res *positionChange
 // must be added to allocated_margin (and removed from cross) to keep
 // the isolated position correctly margined:
 //
-//   - closed:        -max(allocated_margin, 0)
 //   - side flipped:  position_requirement - (allocated_margin + uPnL_new)
 //   - same, OI grew: max(0, oi_requirement - trade_pnl)
 //     trade_pnl = uPnL_new - uPnL_old - fee
@@ -139,18 +165,14 @@ func (e Engine) rebalanceIsolatedMargin(ctx context.Context, res *positionChange
 //
 // Requires res.New.AllocatedMargin to already reflect the step 1
 // PnL-fee credit AND the step 2 maker improvement-fee debit.
+//
+// The "closed" case is handled outside this function (in
+// applyIsolatedAccount) so this helper never has to reason about a
+// non-existent or leverage-only position row.
 func (e Engine) calculateIsolatedMarginDelta(ctx context.Context, res *positionChangeResult, fee math.Int) (math.Int, error) {
 	newPos := res.New
 	oldPos := res.Old
 	allocated := newPos.AllocatedMargin
-
-	// case 1: closed → release positive allocated_margin.
-	if newPos.BaseSize.IsZero() {
-		if allocated.IsPositive() {
-			return allocated.Neg(), nil
-		}
-		return math.ZeroInt(), nil
-	}
 
 	markPrice, md, err := e.marketKeeper.GetMarkPriceAndDetails(ctx, res.MarketIdx)
 	if err != nil {

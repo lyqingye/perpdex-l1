@@ -398,14 +398,25 @@ func (m msgServer) UpdateMargin(ctx context.Context, msg *types.MsgUpdateMargin)
 	if pos.MarginMode != perptypes.IsolatedMargin {
 		return nil, types.ErrPositionNotIsolated
 	}
+	// UpdateMargin only applies to an open position: adding margin to
+	// (or pulling margin from) a leverage-only config row that has no
+	// BaseSize would create a phantom allocated_margin balance with
+	// no position to back it. Reject early so the lifecycle invariant
+	// surfaces from a user-facing error rather than from a deeper
+	// MutatePosition lifecycle violation.
+	if pos.BaseSize.IsZero() {
+		return nil, types.ErrPositionLifecycleViolation.Wrap(
+			"UpdateMargin requires an open position (base_size != 0)")
+	}
 	amount := msg.Amount
 
-	// AllocatedMargin is already normalised to ZeroInt() by
-	// GetPosition / UpdatePosition's auto-vivified default, so the
-	// inline IsNil-guards used to live here are redundant.
+	// UpdateMargin is only valid on OPEN isolated positions (the
+	// pre-check above already enforced BaseSize != 0 + IsolatedMargin
+	// + AllocatedMargin >= amount on remove), so the per-action
+	// branch routes through MutatePosition.
 	switch msg.Action {
 	case perptypes.AddMargin:
-		if _, err := m.UpdatePosition(ctx, msg.AccountIndex, msg.MarketIndex, func(p *types.AccountPosition) error {
+		if _, err := m.MutatePosition(ctx, msg.AccountIndex, msg.MarketIndex, func(p *types.AccountPosition) error {
 			p.AllocatedMargin = p.AllocatedMargin.Add(amount)
 			return nil
 		}); err != nil {
@@ -418,7 +429,7 @@ func (m msgServer) UpdateMargin(ctx context.Context, msg *types.MsgUpdateMargin)
 		if pos.AllocatedMargin.LT(amount) {
 			return nil, types.ErrInsufficientFunds
 		}
-		if _, err := m.UpdatePosition(ctx, msg.AccountIndex, msg.MarketIndex, func(p *types.AccountPosition) error {
+		if _, err := m.MutatePosition(ctx, msg.AccountIndex, msg.MarketIndex, func(p *types.AccountPosition) error {
 			p.AllocatedMargin = p.AllocatedMargin.Sub(amount)
 			return nil
 		}); err != nil {

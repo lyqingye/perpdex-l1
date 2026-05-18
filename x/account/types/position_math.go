@@ -129,8 +129,10 @@ func (p AccountPosition) MarketValue(markPrice uint32) math.Int {
 //   - SideFlipped is true iff the position crossed zero and reversed
 //     direction, signalling callers to re-evaluate IM on the residual leg.
 //
-// Persistence (SetPosition / UpdatePosition) and bounds checks
-// (POSITION_SIZE_BITS / ENTRY_QUOTE_BITS) remain the caller's responsibility.
+// Persistence (the caller's choice between OpenPosition /
+// MutatePosition / ClosePosition on the account keeper) and bounds
+// checks (POSITION_SIZE_BITS / ENTRY_QUOTE_BITS) remain the caller's
+// responsibility.
 type FillResult struct {
 	Position    AccountPosition
 	RealizedPnL math.Int
@@ -158,9 +160,10 @@ type FillResult struct {
 //     residual leg's notional, side_flipped = true.
 //
 // Both x/trade `applyPositionChange` (which persists the result via
-// UpdatePosition) and x/risk `SimulateRiskAfterTakeover` (which inspects
-// the post-state for IM/MM/CM aggregation) consume this as the single
-// source of truth for fill-side classification.
+// the open / mutate / close lifecycle methods) and x/risk
+// `SimulateRiskAfterTakeover` (which inspects the post-state for
+// IM/MM/CM aggregation) consume this as the single source of truth
+// for fill-side classification.
 func (p AccountPosition) ApplyFill(delta math.Int, price uint32) FillResult {
 	curSize := p.BaseSize
 	curEntryQuote := p.EntryQuote

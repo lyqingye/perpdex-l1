@@ -36,9 +36,10 @@ import (
 )
 
 type stubAccount struct {
-	accounts map[uint64]*accounttypes.Account
-	pos      map[[2]uint64]*accounttypes.AccountPosition
-	assets   map[[2]uint64]*accounttypes.AccountAsset
+	accounts  map[uint64]*accounttypes.Account
+	pos       map[[2]uint64]*accounttypes.AccountPosition
+	assets    map[[2]uint64]*accounttypes.AccountAsset
+	nextPosID uint64
 }
 
 func newStubAccount() *stubAccount {
@@ -90,10 +91,38 @@ func (s *stubAccount) SetPosition(_ context.Context, p accounttypes.AccountPosit
 	return nil
 }
 
-// UpdatePosition mirrors the real keeper's RMW closure surface so
-// the trade keeper (which now drives every position write through
-// accountKeeper.UpdatePosition) can run against the stub.
-func (s *stubAccount) UpdatePosition(
+// OpenPosition / MutatePosition / ClosePosition mirror the real
+// keeper's position lifecycle API (issue #91). The stub keeps the
+// pre/post invariants loose — production-level lifecycle enforcement
+// lives in the real keeper — but threads enough state through so the
+// trade engine's open / mutate / close / flip dispatch can run
+// end-to-end against the fixture.
+func (s *stubAccount) OpenPosition(
+	ctx context.Context,
+	accIdx uint64,
+	marketIdx uint32,
+	mut func(*accounttypes.AccountPosition) error,
+) (accounttypes.AccountPosition, error) {
+	pos, err := s.GetPosition(ctx, accIdx, marketIdx)
+	if err != nil {
+		return accounttypes.AccountPosition{}, err
+	}
+	pos.AccountIndex = accIdx
+	pos.MarketIndex = marketIdx
+	if err := mut(&pos); err != nil {
+		return accounttypes.AccountPosition{}, err
+	}
+	// Fixture-grade id allocation: enough to keep tests that assert on
+	// position_id stability happy.
+	s.nextPosID++
+	pos.PositionId = s.nextPosID
+	if err := s.SetPosition(ctx, pos); err != nil {
+		return accounttypes.AccountPosition{}, err
+	}
+	return pos, nil
+}
+
+func (s *stubAccount) MutatePosition(
 	ctx context.Context,
 	accIdx uint64,
 	marketIdx uint32,
@@ -112,6 +141,38 @@ func (s *stubAccount) UpdatePosition(
 		return accounttypes.AccountPosition{}, err
 	}
 	return pos, nil
+}
+
+func (s *stubAccount) ClosePosition(
+	ctx context.Context,
+	accIdx uint64,
+	marketIdx uint32,
+) (accounttypes.AccountPosition, error) {
+	pre, err := s.GetPosition(ctx, accIdx, marketIdx)
+	if err != nil {
+		return accounttypes.AccountPosition{}, err
+	}
+	// Retain MarginMode / IMF as a leverage-only row when non-default
+	// (matches the production policy); otherwise wipe the entry so
+	// subsequent GetPosition returns the auto-vivified default.
+	if pre.MarginMode != perptypes.CrossMargin || pre.InitialMarginFraction != 0 {
+		leverage := accounttypes.AccountPosition{
+			AccountIndex:             accIdx,
+			MarketIndex:              marketIdx,
+			BaseSize:                 math.ZeroInt(),
+			EntryQuote:               math.ZeroInt(),
+			LastFundingRatePrefixSum: math.ZeroInt(),
+			AllocatedMargin:          math.ZeroInt(),
+			MarginMode:               pre.MarginMode,
+			InitialMarginFraction:    pre.InitialMarginFraction,
+		}
+		if err := s.SetPosition(ctx, leverage); err != nil {
+			return accounttypes.AccountPosition{}, err
+		}
+	} else {
+		delete(s.pos, posKey(accIdx, marketIdx))
+	}
+	return pre, nil
 }
 
 func (s *stubAccount) AddCollateral(_ context.Context, idx uint64, delta math.Int) error {

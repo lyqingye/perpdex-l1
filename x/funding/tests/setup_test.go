@@ -122,9 +122,11 @@ func (s stubOracle) GetPrice(_ context.Context, marketIdx uint32) (oracletypes.O
 }
 
 // stubAccount is a stateless AccountKeeper stub: every GetPosition
-// returns a fresh zero-valued AccountPosition and UpdatePosition runs
-// the mutator without persisting anything. Tests that need to observe
-// position writes should use `statefulAccount` instead.
+// returns a fresh zero-valued AccountPosition. The funding keeper's
+// SettlePositionFunding short-circuits on BaseSize == 0 so this stub
+// is sufficient for the prefix-sum / mark-price tests that don't care
+// about persisted writes; use `statefulAccount` for tests that need
+// to observe MutatePosition output.
 type stubAccount struct{}
 
 func (stubAccount) GetPosition(_ context.Context, acc uint64, mkt uint32) (accounttypes.AccountPosition, error) {
@@ -135,12 +137,11 @@ func (stubAccount) GetPosition(_ context.Context, acc uint64, mkt uint32) (accou
 	}, nil
 }
 
-// UpdatePosition is a no-op closure runner; the funding keeper's
-// SettlePositionFunding now dispatches every write through this
-// surface, but the stub doesn't persist anything (the suite cares
-// only about the prefix-sum / mark-price computations on the market
-// side).
-func (s stubAccount) UpdatePosition(
+// MutatePosition is wired only for parity with the AccountKeeper
+// interface in x/funding/types — SettlePositionFunding never reaches
+// this on a stateless stub (GetPosition returns BaseSize=0 which
+// short-circuits the settlement).
+func (s stubAccount) MutatePosition(
 	ctx context.Context,
 	accIdx uint64,
 	marketIdx uint32,
@@ -190,9 +191,9 @@ func (s *statefulAccount) SetPosition(_ context.Context, p accounttypes.AccountP
 	return nil
 }
 
-// UpdatePosition mirrors the real keeper's RMW closure surface so
+// MutatePosition mirrors the real keeper's same-side RMW so
 // SettlePositionFunding's funding-payment write hits this stub.
-func (s *statefulAccount) UpdatePosition(
+func (s *statefulAccount) MutatePosition(
 	ctx context.Context,
 	accIdx uint64,
 	marketIdx uint32,
