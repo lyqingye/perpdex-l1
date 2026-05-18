@@ -39,5 +39,17 @@ var (
 	ErrInvalidDepositorIndex = errors.Register(ModuleName, 45, "invalid depositor index")
 
 	// Position lifecycle errors (issue #91).
+	//
+	// ErrPositionLifecycleViolation signals a buggy caller of the
+	// package-private open / mutate / close primitives or of one of
+	// the cohesive public methods (ApplyFill, AdjustAllocatedMargin,
+	// ApplyFundingPayment, SetPositionLeverage) that violates the
+	// per-method pre/post invariants documented on each method.
 	ErrPositionLifecycleViolation = errors.Register(ModuleName, 46, "position lifecycle violation")
+	// ErrPositionOutOfBounds signals that the post-fill |BaseSize|
+	// or |EntryQuote| would overflow the per-market position bounds
+	// (perptypes.MaxPositionSize / perptypes.MaxEntryQuote). Surfaced
+	// by Keeper.ApplyFill; the trade engine wraps it into
+	// Maker/Taker InvalidPosition for the matching loop.
+	ErrPositionOutOfBounds = errors.Register(ModuleName, 47, "post-trade position out of bounds")
 )

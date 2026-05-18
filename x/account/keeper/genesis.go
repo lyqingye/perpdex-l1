@@ -28,7 +28,7 @@ func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 	// Position rows are restored verbatim through the package-private
 	// setPosition primitive so the genesis-supplied PositionId values
 	// (and leverage-only config rows) are preserved bit-for-bit. The
-	// lifecycle methods (OpenPosition / MutatePosition /
+	// lifecycle methods (openPosition / mutatePosition /
 	// ClosePosition) are intentionally bypassed here — genesis is a
 	// restore, not a lifecycle transition, so it MUST NOT emit
 	// position events and MUST NOT consume a fresh position_id from

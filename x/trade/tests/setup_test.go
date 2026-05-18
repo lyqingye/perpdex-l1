@@ -91,88 +91,135 @@ func (s *stubAccount) SetPosition(_ context.Context, p accounttypes.AccountPosit
 	return nil
 }
 
-// OpenPosition / MutatePosition / ClosePosition mirror the real
-// keeper's position lifecycle API (issue #91). The stub keeps the
-// pre/post invariants loose — production-level lifecycle enforcement
-// lives in the real keeper — but threads enough state through so the
-// trade engine's open / mutate / close / flip dispatch can run
-// end-to-end against the fixture.
-func (s *stubAccount) OpenPosition(
+// ApplyFill mirrors the production cohesive entry-point on
+// x/account.Keeper (issue #91): classifies the transition from
+// fill math (`AccountPosition.ApplyFill`) and persists with
+// position_id allocation on open / flip. Production-level lifecycle
+// enforcement (Open/Mutate/Close invariants, bounds check, event
+// emission) lives on the real keeper; the stub keeps the maths
+// faithful enough for the engine integration tests to assert
+// position state + cross / isolated reconciliation end-to-end.
+func (s *stubAccount) ApplyFill(
 	ctx context.Context,
 	accIdx uint64,
 	marketIdx uint32,
-	mut func(*accounttypes.AccountPosition) error,
-) (accounttypes.AccountPosition, error) {
-	pos, err := s.GetPosition(ctx, accIdx, marketIdx)
-	if err != nil {
-		return accounttypes.AccountPosition{}, err
-	}
-	pos.AccountIndex = accIdx
-	pos.MarketIndex = marketIdx
-	if err := mut(&pos); err != nil {
-		return accounttypes.AccountPosition{}, err
-	}
-	// Fixture-grade id allocation: enough to keep tests that assert on
-	// position_id stability happy.
-	s.nextPosID++
-	pos.PositionId = s.nextPosID
-	if err := s.SetPosition(ctx, pos); err != nil {
-		return accounttypes.AccountPosition{}, err
-	}
-	return pos, nil
-}
-
-func (s *stubAccount) MutatePosition(
-	ctx context.Context,
-	accIdx uint64,
-	marketIdx uint32,
-	mut func(*accounttypes.AccountPosition) error,
-) (accounttypes.AccountPosition, error) {
-	pos, err := s.GetPosition(ctx, accIdx, marketIdx)
-	if err != nil {
-		return accounttypes.AccountPosition{}, err
-	}
-	pos.AccountIndex = accIdx
-	pos.MarketIndex = marketIdx
-	if err := mut(&pos); err != nil {
-		return accounttypes.AccountPosition{}, err
-	}
-	if err := s.SetPosition(ctx, pos); err != nil {
-		return accounttypes.AccountPosition{}, err
-	}
-	return pos, nil
-}
-
-func (s *stubAccount) ClosePosition(
-	ctx context.Context,
-	accIdx uint64,
-	marketIdx uint32,
-) (accounttypes.AccountPosition, error) {
+	price uint32,
+	baseAmount uint64,
+	sign int64,
+	fundingRatePrefixSum math.Int,
+) (accounttypes.FillApplyResult, error) {
 	pre, err := s.GetPosition(ctx, accIdx, marketIdx)
 	if err != nil {
+		return accounttypes.FillApplyResult{}, err
+	}
+	delta := math.NewIntFromUint64(baseAmount).MulRaw(sign)
+	fill := pre.ApplyFill(delta, price)
+
+	maxPos := math.NewIntFromUint64(perptypes.MaxPositionSize)
+	maxEntryQuote := math.NewIntFromUint64(perptypes.MaxEntryQuote)
+	if fill.Position.BaseSize.Abs().GT(maxPos) || fill.Position.EntryQuote.Abs().GT(maxEntryQuote) {
+		return accounttypes.FillApplyResult{}, accounttypes.ErrPositionOutOfBounds.Wrapf(
+			"account %d market %d", accIdx, marketIdx)
+	}
+
+	res := accounttypes.FillApplyResult{
+		Old:         pre,
+		RealizedPnL: fill.RealizedPnL,
+		SideFlipped: fill.SideFlipped,
+		OIDelta:     fill.Position.BaseSize.Abs().Sub(pre.BaseSize.Abs()).Int64(),
+	}
+
+	switch {
+	case pre.BaseSize.IsZero():
+		// Open
+		s.nextPosID++
+		post := pre
+		post.AccountIndex = accIdx
+		post.MarketIndex = marketIdx
+		post.BaseSize = fill.Position.BaseSize
+		post.EntryQuote = fill.Position.EntryQuote
+		post.PositionId = s.nextPosID
+		if err := s.SetPosition(ctx, post); err != nil {
+			return accounttypes.FillApplyResult{}, err
+		}
+		res.New = post
+		return res, nil
+
+	case fill.Position.BaseSize.IsZero():
+		// Close — return pre-close snapshot, drop the row (or retain
+		// leverage-only when non-default leverage).
+		if pre.MarginMode != perptypes.CrossMargin || pre.InitialMarginFraction != 0 {
+			leverage := accounttypes.AccountPosition{
+				AccountIndex:             accIdx,
+				MarketIndex:              marketIdx,
+				BaseSize:                 math.ZeroInt(),
+				EntryQuote:               math.ZeroInt(),
+				LastFundingRatePrefixSum: math.ZeroInt(),
+				AllocatedMargin:          math.ZeroInt(),
+				MarginMode:               pre.MarginMode,
+				InitialMarginFraction:    pre.InitialMarginFraction,
+			}
+			if err := s.SetPosition(ctx, leverage); err != nil {
+				return accounttypes.FillApplyResult{}, err
+			}
+		} else {
+			delete(s.pos, posKey(accIdx, marketIdx))
+		}
+		res.New = pre
+		res.Closed = true
+		return res, nil
+
+	case fill.SideFlipped:
+		// Flip = close old + open new, carry AllocatedMargin /
+		// LastFundingRatePrefixSum onto the residual leg.
+		closed := pre
+		delete(s.pos, posKey(accIdx, marketIdx))
+		s.nextPosID++
+		post := closed
+		post.BaseSize = fill.Position.BaseSize
+		post.EntryQuote = fill.Position.EntryQuote
+		post.PositionId = s.nextPosID
+		if err := s.SetPosition(ctx, post); err != nil {
+			return accounttypes.FillApplyResult{}, err
+		}
+		res.New = post
+		return res, nil
+
+	default:
+		// Same-side update
+		post := pre
+		post.BaseSize = fill.Position.BaseSize
+		post.EntryQuote = fill.Position.EntryQuote
+		if err := s.SetPosition(ctx, post); err != nil {
+			return accounttypes.FillApplyResult{}, err
+		}
+		res.New = post
+		return res, nil
+	}
+}
+
+// AdjustAllocatedMargin mirrors the cohesive isolated-margin RMW on
+// x/account.Keeper. Used by the trade engine's isolated reconciliation
+// (PnL/fee credit, improvement-fee debit, position_requirement
+// rebalance) and by msg_server UpdateMargin.
+func (s *stubAccount) AdjustAllocatedMargin(
+	ctx context.Context,
+	accIdx uint64,
+	marketIdx uint32,
+	delta math.Int,
+) (accounttypes.AccountPosition, error) {
+	pos, err := s.GetPosition(ctx, accIdx, marketIdx)
+	if err != nil {
 		return accounttypes.AccountPosition{}, err
 	}
-	// Retain MarginMode / IMF as a leverage-only row when non-default
-	// (matches the production policy); otherwise wipe the entry so
-	// subsequent GetPosition returns the auto-vivified default.
-	if pre.MarginMode != perptypes.CrossMargin || pre.InitialMarginFraction != 0 {
-		leverage := accounttypes.AccountPosition{
-			AccountIndex:             accIdx,
-			MarketIndex:              marketIdx,
-			BaseSize:                 math.ZeroInt(),
-			EntryQuote:               math.ZeroInt(),
-			LastFundingRatePrefixSum: math.ZeroInt(),
-			AllocatedMargin:          math.ZeroInt(),
-			MarginMode:               pre.MarginMode,
-			InitialMarginFraction:    pre.InitialMarginFraction,
-		}
-		if err := s.SetPosition(ctx, leverage); err != nil {
-			return accounttypes.AccountPosition{}, err
-		}
-	} else {
-		delete(s.pos, posKey(accIdx, marketIdx))
+	if delta.IsNil() || delta.IsZero() {
+		return pos, nil
 	}
-	return pre, nil
+	pos.AllocatedMargin = pos.AllocatedMargin.Add(delta)
+	if err := s.SetPosition(ctx, pos); err != nil {
+		return accounttypes.AccountPosition{}, err
+	}
+	return pos, nil
 }
 
 func (s *stubAccount) AddCollateral(_ context.Context, idx uint64, delta math.Int) error {

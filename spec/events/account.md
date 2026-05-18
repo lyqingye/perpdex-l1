@@ -14,20 +14,27 @@
 
 历史实现里 `x/account.Keeper.UpdatePosition` 是一个万能的 RMW 入口，同时承担
 **开仓 / 加仓 / 减仓 / 平仓 / 反向开仓 / 杠杆设置** 多种语义，并统一发射一条
-`EventPositionUpdated`。这种"一招吃遍天"的 API 形态既让 caller 的意图变得不
-显式，也让 indexer 必须对比新旧 `base_size` 才能判断仓位边界。具体痛点：
+`EventPositionUpdated`。这种"一招吃遍天"的 API 形态既让 caller 的意图变得不显
+式，也让 indexer 必须对比新旧 `base_size` 才能判断仓位边界。
 
-1. **API 边界模糊**：caller 是开仓、加减仓、平仓还是只调杠杆，从签名上看不出来；
-   一个 closure 内的逻辑错误（例如不小心把 base_size 写成 0）会被"宽容"地走完
-   close 分支，而不是显式失败。
-2. **缺乏唯一 `position_id`**：indexer 无法把 fills / funding / 调仓事件 join 回
-   "这是一段独立的仓位生命周期"。
-3. **完全平仓后存储不释放**：`AccountPosition` 行被保留为零仓位行，长期占用 KV
-   存储空间，与"被取消的订单也应该从 store 移除"的理念不一致。
+第一轮重构曾尝试把它拆成 `OpenPosition` / `MutatePosition` / `ClosePosition` 三个
+显式方法，但仍然以 `func(*Position) error` mutator 闭包的形式暴露给外部 caller —
+这种 API 形态与原来的 `UpdatePosition` 没有本质区别：外部 caller 仍然在直接操控
+仓位的字段，`x/account` 实际上只承担了一个"持久化 + 发事件"的薄壳。
 
-新设计 (issue #91) 把 `UpdatePosition` **完全移除**，替换为三个语义窄、前后置
-不变量明确的 keeper 方法 —— `OpenPosition` / `MutatePosition` /
-`ClosePosition` —— 配合一个 `position_id` 主键与自动回收存储一起落地。
+**最终设计** 把 `applyPositionChange` 的全部分支判断（open / mutate / close / flip）
+都搬到 `x/account.Keeper.ApplyFill` 里：
+
+1. **API 边界清晰**：外部 caller 只调"应用一笔 fill"，不知道、也不需要知道仓位
+   生命周期到底走了哪条分支。"写一个 closure 改字段"的口子彻底关闭。
+2. **内聚性**：仓位字段的所有变更逻辑（fill apply、funding settle、isolated margin
+   调仓、leverage 配置、flip 编排）都内聚在 `x/account` 内部；package-private 的
+   `openPosition` / `mutatePosition` / `closePosition` 只是 `ApplyFill` 的实现细
+   节，对外部不可见。
+3. **唯一 `position_id`**：每段仓位生命周期都分配一个全局唯一 id，可以作为 fills
+   / funding / 调仓事件的 join key。
+4. **完全平仓后存储回收**：`AccountPosition` 行在默认杠杆时直接从 KV 移除，与
+   "被取消的订单也应该从 store 移除"的理念一致。
 
 ---
 
@@ -58,15 +65,14 @@ import 的 round-trip。Genesis Validate 强制
 
 ### 存储回收语义
 
-完全平仓时（`base_size: !=0 → 0`），生命周期 dispatcher 按"杠杆是否为默认"决定
-是否回收 KV 行：
+完全平仓时（`base_size: !=0 → 0`），`ApplyFill` / `ClosePosition` 内部按"杠杆是
+否为默认"决定是否回收 KV 行：
 
 - **默认杠杆**（`margin_mode == Cross && initial_margin_fraction == 0`）：直接
   `AccountPositions.Remove(...)`，释放 KV 空间，事件 `deleted = true`。
 - **非默认杠杆**：保留行但把 `base_size` / `entry_quote` /
-  `last_funding_rate_prefix_sum` / `allocated_margin` / `position_id` /
-  `total_position_tied_order_count` / `created_at` 全部重置为零，仅保留
-  `margin_mode` / `initial_margin_fraction`，事件 `deleted = false`。
+  `last_funding_rate_prefix_sum` / `allocated_margin` / `position_id` 全部重置
+  为零，仅保留 `margin_mode` / `initial_margin_fraction`，事件 `deleted = false`。
 
 这样用户配置过的杠杆偏好能跨"平仓 → 再开仓"周期存活，同时绝大多数交叉默认杠
 杆的用户依然享受存储自动回收。
@@ -75,49 +81,61 @@ import 的 round-trip。Genesis Validate 强制
 
 ## Keeper API
 
-`x/account.Keeper` 暴露 **三个显式的仓位生命周期方法**，每个方法只对应一种状态
-转移，并强制前后置不变量；任何违反不变量的 caller 都会以
-`ErrPositionLifecycleViolation` 失败：
-
-| 方法 | 前置 (`pre`) | 后置 (`post`) | 副作用 |
-|------|--------------|--------------|--------|
-| `OpenPosition(acc, mkt, mut)` | `pre.BaseSize == 0` | `post.BaseSize != 0` | 分配 `position_id`、stamp `CreatedAt`、发射 `EventPositionOpened` |
-| `MutatePosition(acc, mkt, mut)` | `pre.BaseSize != 0` | `post.BaseSize != 0` 且 `sign(post) == sign(pre)` | 保留 `position_id`、发射 `EventPositionUpdated` |
-| `ClosePosition(acc, mkt)` | `pre.BaseSize != 0` | — | 删除 KV 行（或保留为 leverage-only 配置行），发射 `EventPositionClosed`；**返回 pre-close 快照**给 caller 用作下游 reconciliation |
-
-外加一个用于杠杆配置的方法（不属于生命周期，但同样会发事件给 indexer）：
+`x/account.Keeper` 暴露 **若干语义内聚的公开方法**，每个方法只负责一种业务级
+任务，并强制相应的前后置不变量；任何违反不变量的 caller 都会以
+`ErrPositionLifecycleViolation` 早失败。**外部 caller 不再需要传 `func(*Position)
+error` 闭包** —— 所有字段级写入都封装在 `x/account` 内部：
 
 | 方法 | 用途 | 事件 |
 |------|------|------|
+| `ApplyFill(acc, mkt, price, baseAmount, sign, fundingRatePrefixSum)` | x/trade 的撮合主入口：根据 fill 计算 `pre.ApplyFill(delta, price)`，按 transition 自动 dispatch open / mutate / close / flip，并完成所有 KV 写入 | `EventPositionOpened` / `EventPositionUpdated` / `EventPositionClosed`（flip 时同笔 tx 内先 Closed 再 Opened） |
+| `AdjustAllocatedMargin(acc, mkt, delta)` | 调整 isolated margin pool 的 `AllocatedMargin += delta`，用于 isolated 三步对账（PnL/fee 折入、liqFee 抵扣、position requirement rebalance）以及 `MsgUpdateMargin` | `EventPositionUpdated`（要求 `pre.BaseSize != 0`） |
+| `ApplyFundingPayment(acc, mkt, newPrefixSum)` | 把累积 funding 折入 `EntryQuote` 并 snapshot 新的 prefix sum；空仓位 / 零 delta no-op | `EventPositionUpdated`（仅当真的写了） |
 | `SetPositionLeverage(acc, mkt, mode, imf)` | 写一个 `BaseSize == 0, position_id == 0` 的 leverage-only 配置行 | `EventPositionUpdated`（`position_id == 0`） |
+| `ClosePosition(acc, mkt)` | 强制平仓入口（清算 / market expiry / IF / ADL 接管），返回 pre-close 快照供 caller 走下游对账 | `EventPositionClosed` |
 
-### Flip 由 caller 显式编排
+包私有（外部不可调用）的三个生命周期 primitive：
 
-`x/trade.applyPositionChange` 在 `ApplyFill` 计算出 fill 越过零点（`fill.SideFlipped`）后，**显式** 地先 `ClosePosition` 再 `OpenPosition`，并把
-`ClosePosition` 返回的 pre-close `AllocatedMargin` / `LastFundingRatePrefixSum`
-通过 OpenPosition 的 mut 闭包搬到新仓位上，保留 issue #91 之前 isolated margin
-flip 路径的 re-margin 语义。Indexer 看到的序列就是：
+| primitive | 责任 |
+|------|------|
+| `openPosition(post)` | 分配 `position_id`、stamp `CreatedAt`、`setPosition`、emit `EventPositionOpened` |
+| `mutatePosition(pre, post)` | 保留 `position_id`、`setPosition`、emit `EventPositionUpdated` |
+| `closePosition(pre)` | 按杠杆决定 remove 还是保留为 leverage-only、emit `EventPositionClosed`、返回 pre-close 快照 |
 
-```
-EventPositionClosed { position_id = OLD }
-EventPositionOpened { position_id = NEW }
-```
+`ApplyFill` 即在内部按 transition 调度这三个 primitive；外部 caller **无法**
+直接绕过 `ApplyFill` 写仓位字段。
 
-两条事件落在同一笔交易里、有严格顺序。
+### Flip 由 `ApplyFill` 内部完成
 
-### Caller cheat-sheet
+若 fill 越过零点（`fill.SideFlipped == true`），`ApplyFill` 在同一笔 tx 内：
 
-| 场景 | 调用顺序 |
+1. 调 `closePosition` —— 关闭旧仓位（emit `EventPositionClosed`，旧 `position_id`）。
+2. 把 `AllocatedMargin` / `LastFundingRatePrefixSum` 搬到 residual leg 上。
+3. 调 `openPosition` —— 用残量开新仓位（emit `EventPositionOpened`，新
+   `position_id`）。
+
+Indexer 看到的序列是严格有序的 `EventPositionClosed`（旧 id）→
+`EventPositionOpened`（新 id），不需要自己根据 fill 数学判断。
+
+### Caller 责任分配
+
+| 场景 | 调用方 → x/account |
 |------|----------|
-| 普通开仓 | `OpenPosition` |
-| 同向加减仓 | `MutatePosition`（mut 只改 `BaseSize` / `EntryQuote` / `AllocatedMargin` / `LastFundingRatePrefixSum`） |
-| 资金费率结算（已开仓） | `MutatePosition`（折入 `EntryQuote` + 更新快照） |
-| 资金费率结算（未开仓） | 直接 short-circuit，不写入；下次 `OpenPosition` 从市场当前 prefix 重新 seed |
-| Isolated margin 调仓 | `MutatePosition`（调 `AllocatedMargin`） |
-| 完全平仓 | `ClosePosition`；isolated caller 自行把 `pre.AllocatedMargin + PnL - fee` 加回 cross collateral |
-| Flip | `ClosePosition` + `OpenPosition`（caller 串联） |
-| 改杠杆 | `SetPositionLeverage`（仅 `BaseSize == 0` 时可用） |
+| 普通开仓 / 同向加减仓 / 完全平仓 / flip | `x/trade.Engine.Apply` → `ApplyFill` |
+| 资金费率结算 | `x/funding.Keeper.SettlePositionFunding` → `ApplyFundingPayment` |
+| Isolated margin 调仓（PnL/fee 折入、liqFee 抵扣、position_requirement rebalance） | `x/trade.Engine.applyIsolatedAccount` / `rebalanceIsolatedMargin` → `AdjustAllocatedMargin` |
+| `MsgUpdateMargin` 加减保证金 | `x/account.msgServer.UpdateMargin` → `AdjustAllocatedMargin` |
+| `MsgUpdateLeverage` 调杠杆 | `x/account.msgServer.UpdateLeverage` → `SetPositionLeverage`（仅当 `BaseSize == 0`） |
 | Genesis 恢复 | `setPosition`（package-private，跳过事件与 ID 分配） |
+
+### `fundingRatePrefixSum` 为什么作为参数传入
+
+`ApplyFill` 的 open / flip 分支需要把市场当前的 `FundingRatePrefixSum` 写入
+`LastFundingRatePrefixSum`（开仓边界），但 `x/account` 本模块**不**直接持有
+`marketKeeper`：Cosmos 的 late-bound keeper 在 `x/trade` 持有的 `accountKeeper`
+interface 副本上不可见。所以由 `x/trade` 在调用 `ApplyFill` 之前先
+`marketKeeper.GetMarketDetails` 拿到 prefix sum，然后作为参数传入；
+`x/account` 仅在 open / flip 时真正使用，pure-close / same-side 分支会忽略。
 
 ---
 
@@ -125,8 +143,8 @@ EventPositionOpened { position_id = NEW }
 
 ### EventPositionOpened
 
-由 `Keeper.OpenPosition` 在写完新仓位行之后发射。携带 **刚分配的 `position_id`**
-与开仓后的完整快照。
+由 `ApplyFill` 在 open 与 flip-residual 两种 transition 内调 `openPosition` 时发
+射，携带 **刚分配的 `position_id`** 与开仓后的完整快照。
 
 ```proto
 message EventPositionOpened {
@@ -136,18 +154,18 @@ message EventPositionOpened {
 
 **触发场景**
 
-- 普通开仓：用户通过 `MsgCreateOrder` 撮合产生 fill，`x/trade.applyPositionChange`
-  把 `base_size` 从 0 推到非零。
-- Flip 的 open 半幕：原仓位反向 fill 越过零点（先发 `EventPositionClosed`
-  再发 `EventPositionOpened`）。
-- Liquidation / ADL 接管方（LLP / IF / 高杠杆账户）首次承接仓位。
+- 普通开仓：用户通过 `MsgCreateOrder` 撮合产生 fill，`pre.BaseSize == 0`
+  被 `ApplyFill` 路由到 open 分支。
+- Flip 的 open 半幕：`fill.SideFlipped == true`，`ApplyFill` 在同一笔 tx 内先发
+  `EventPositionClosed`、再发 `EventPositionOpened`。
+- Liquidation / ADL 接管方（LLP / IF / 高杠杆账户）首次承接仓位 —— 仍走撮合
+  路径，最终落到 `ApplyFill` 的 open 分支。
 
 **Invariants**
 
 - `position.position_id != 0`，且全网历史 ID 唯一。
 - `position.base_size != 0`。
-- `position.created_at` 等于该事件所在块的 `BlockTime` 毫秒（除非 caller 显式预
-  填）。
+- `position.created_at` 等于该事件所在块的 `BlockTime` 毫秒。
 - 紧邻这条事件的 `EventOrderFilled` 中相应一侧的 `*_position_id` 等于
   `position.position_id`（taker 与 maker 各自独立判断）。
 
@@ -155,12 +173,13 @@ message EventPositionOpened {
 
 ### EventPositionUpdated
 
-由两个方法发射：
+由多个 cohesive 方法发射，覆盖 "已开仓行的字段级更新"：
 
-- `Keeper.MutatePosition`（同向加减仓 / funding 折入 / isolated margin 调
-  整 / `UpdateMargin`）—— 携带稳定的非零 `position_id`。
-- `Keeper.SetPositionLeverage` —— 携带 `position_id == 0`，标识这是一个
-  leverage-only 配置写入而非真实仓位更新。
+- `ApplyFill` 的 **same-side change** 分支（同向加仓 / 同向减仓但未归零）。
+- `AdjustAllocatedMargin`（isolated 三步对账 / `MsgUpdateMargin`）。
+- `ApplyFundingPayment`（funding 折入；空仓位 / 零 delta 不发事件）。
+- `SetPositionLeverage`（leverage-only 配置写入，携带
+  `position_id == 0` 以区别于真实仓位更新）。
 
 ```proto
 message EventPositionUpdated {
@@ -168,33 +187,22 @@ message EventPositionUpdated {
 }
 ```
 
-**触发场景**
-
-- 同向加仓 / 同向减仓但未平仓（`base_size` 同号且未归零）。
-- `x/funding.SettlePositionFunding` 把累积资金费率折入 `entry_quote`（仅在
-  仓位已开仓时；空仓位会被 short-circuit）。
-- `x/account` 的 `MsgUpdateMargin`（隔离仓位增减保证金，要求 `base_size != 0`）。
-- `x/trade` isolated margin 的 `applyIsolatedAccount` /
-  `rebalanceIsolatedMargin` 调整 `allocated_margin`（仅在仓位仍开仓的非
-  close 分支；close 分支直接 `AddCollateral`，不发 Updated）。
-- `x/account.SetPositionLeverage` 写入 leverage-only 配置行（`MsgUpdateLeverage`
-  / `MsgUpdateMargin` 的 margin-mode 调整路径，要求 `base_size == 0`）。
-
 **Invariants**
 
-- 真实仓位更新（`MutatePosition`）：`position.position_id` 等于上一次该
+- 真实仓位更新（前 4 类来源的前 3 项）：`position.position_id` 等于上一次该
   `(account, market)` 的 `EventPositionOpened.position.position_id`，
   `position.base_size` 与上一次同号且不为零。
 - 杠杆配置写入（`SetPositionLeverage`）：`position.position_id == 0` 且
   `position.base_size == 0`，至少一个 `margin_mode` /
   `initial_margin_fraction` 字段非默认。
-- side flip **不会** 发 Updated；它走 `ClosePosition + OpenPosition` 两条事件。
+- side flip **不会** 发 Updated；它走 `closePosition + openPosition` 两条事件。
 
 ---
 
 ### EventPositionClosed
 
-由 `Keeper.ClosePosition` 发射。携带 **被关闭的 `position_id`** 与平仓后的快照
+由 `ApplyFill` 的 pure-close / flip-old-leg 分支以及强制平仓入口
+`ClosePosition` 发射。携带 **被关闭的 `position_id`** 与平仓后的快照
 （`base_size = 0, entry_quote = 0`），并通过 `deleted` 标记底层 KV 行是否真的
 被删除。
 
@@ -209,12 +217,10 @@ message EventPositionClosed {
 
 **触发场景**
 
-- 普通完全平仓：`x/trade.applyPositionChange` 检测到 `fill.Position.BaseSize == 0`，
-  调用 `ClosePosition`。
-- Flip 的 close 半幕：`fill.SideFlipped == true`，caller 先 `ClosePosition` 再
-  `OpenPosition`。
-- 清算 / ADL 把仓位整体吃掉（沿用与普通平仓相同的 trade engine 路径）。
-- Market expiry exit / IF 强制平仓。
+- 普通完全平仓：`fill.Position.BaseSize == 0`，`ApplyFill` 路由到 close 分支。
+- Flip 的 close 半幕：`fill.SideFlipped == true`，`ApplyFill` 先发 Closed 再发
+  Opened。
+- Market expiry / IF / ADL 强制平仓 —— 通过 `ClosePosition` 入口直接平仓。
 
 **Invariants**
 
@@ -229,16 +235,18 @@ message EventPositionClosed {
 
 **Caller 侧的注意事项**
 
-`Keeper.ClosePosition` 返回 **pre-close 快照**（`BaseSize`、`AllocatedMargin`
-等仍为 close 之前的值），用途是让 caller 自行处理下游 reconciliation：
+`Keeper.ClosePosition` 与 `ApplyFill` 的 close 分支返回 `FillApplyResult.New`
+都是 **pre-close 快照**（`BaseSize` / `AllocatedMargin` / `EntryQuote` 等仍为
+close 之前的值，但事件 payload 已经把 `BaseSize` / `EntryQuote` zeroed），用
+途是让 caller 自行处理下游 reconciliation：
 
-- Cross margin：直接走 `applyCrossAccount`，把 `realized_pnl - fee` 加到 cross
+- Cross margin：`applyCrossAccount` 把 `realized_pnl - fee` 加到 cross
   collateral 即可，不需要碰 pre-close 字段。
-- Isolated margin：`applyIsolatedAccount` 在 close 分支不再走
-  `MutatePosition`（仓位已不存在），而是把
-  `pre.AllocatedMargin + realized_pnl - fee - liq_fee` 一次性 `AddCollateral` 回
-  cross collateral，等价于旧版本"add → rebalance → drain"三步串联，但少了两次
-  写入和两条 Updated 事件。
+- Isolated margin：`applyIsolatedAccount` 在 close 分支不调
+  `AdjustAllocatedMargin`（仓位已不存在），而是把
+  `pre.AllocatedMargin + realized_pnl - fee - liq_fee` 一次性 `AddCollateral`
+  回 cross collateral，等价于旧版本"add → rebalance → drain"三步串联，但少
+  了两次写入和两条 Updated 事件。
 
 ---
 
@@ -254,21 +262,22 @@ message EventPositionClosed {
                                   └──────────┬──────────────┘
         │                                    │
         │  SetPositionLeverage               │  SetPositionLeverage
-        │  (写非默认杠杆)                     │  (默认值 -> 删行 / 不写)
+        │  (写非默认杠杆)                     │  (默认值 -> 不写)
         │                                    │
-        │  OpenPosition                      │  OpenPosition (mut 读到 leverage
-        │  (Opened, new id)                  │   字段并 stamp 到新 row 上)
+        │  ApplyFill (open 分支)             │  ApplyFill (open 分支，从既存
+        │  (Opened, new id)                  │   leverage 行继承 mode / imf)
         ▼                                    ▼
     ┌─────────────────────────┐           ┌─────────────────────────┐
     │   Open                  │           │   Open                  │
-    │   base_size != 0        │  Mutate   │   base_size != 0        │
+    │   base_size != 0        │ same-side │   base_size != 0        │
     │   position_id = N       │ ────────▶ │   position_id = N       │
-    │                         │  Updated  │   (同向 size 变 / funding /
-    │                         │           │    isolated margin 调整) │
+    │                         │  Updated  │   (ApplyFill 同向加减 /  │
+    │                         │           │    AdjustAllocatedMargin │
+    │                         │           │    / ApplyFundingPayment)│
     └────────┬────────┬───────┘           └─────────────────────────┘
              │        │
-             │ Close  │  Flip = ClosePosition + OpenPosition
-             │        │  (Closed old id + Opened new id)
+             │ close  │  Flip (ApplyFill 内部完成：close old + open new)
+             │        │  (Closed old id + Opened new id 同笔 tx 内)
              ▼        ▼
    ┌──────────────────────────────┐
    │   row 被 Remove（deleted=true）│
@@ -298,14 +307,15 @@ message EventPositionClosed {
 
 ## 兼容性 / 迁移说明
 
-- **`UpdatePosition` 不再存在**。所有外部 caller（`x/trade` /
-  `x/funding` / `x/account` msg_server）已全量迁移到
-  `OpenPosition` / `MutatePosition` / `ClosePosition` / `SetPositionLeverage`。
-  下游 module 若新增 caller，请直接走显式方法；任何"写入意图不确定"的逻辑
-  bug 都会以 `ErrPositionLifecycleViolation` 早失败而非静默走完一个错误分支。
-- `EventPositionUpdated` 仍然存在，但语义收窄到"`MutatePosition` 对已开仓行的
-  就地更新 + `SetPositionLeverage` 杠杆配置写入"。升级前依赖该事件区分开仓 /
-  平仓的 indexer 实现需要切换到新事件。
+- **`UpdatePosition` / `OpenPosition` / `MutatePosition` / `ClosePosition`（带
+  mut 闭包的版本）已经全部移除**。所有外部 caller（`x/trade` / `x/funding` /
+  `x/account` msg_server）已迁移到 cohesive 方法 `ApplyFill` /
+  `AdjustAllocatedMargin` / `ApplyFundingPayment` / `SetPositionLeverage` /
+  `ClosePosition`。下游模块若新增 caller，请直接走对应的 cohesive 方法；任何
+  "写入意图不确定"的逻辑 bug 都会以 `ErrPositionLifecycleViolation` 早失败而
+  非静默走完一个错误分支。
+- `EventPositionUpdated` 仍然存在，但语义收窄到"已开仓行的字段级更新"。升级
+  前依赖该事件区分开仓 / 平仓的 indexer 实现需要切换到三种新事件。
 - 新增的 `position_id` 字段不会出现在升级前的 fills / 仓位事件里；indexer 建议
   以 `position_id != 0` 作为 "采用新协议" 的判定。
 - Genesis 字段 `Counters.next_position_index` 是新增的，升级前的快照默认值 0，
@@ -314,9 +324,7 @@ message EventPositionClosed {
 - `AccountPosition` 行的物理回收对 `IterateAccountPositions` 的调用方透明：仍
   然只会迭代已存在的行，调用方依然应当用 `pos.BaseSize.IsZero()` 跳过 leverage-
   only 配置行（与升级前同语义）。
-- `SettlePositionFunding` 不再在空仓位上 snapshot prefix-sum。代替它，
-  `x/trade.applyPositionChange` 的 open 分支在调用 `OpenPosition` 时通过 mut
-  闭包从 `MarketDetails.FundingRatePrefixSum` 直接 seed
+- `SettlePositionFunding` 不再在空仓位上 snapshot prefix-sum；改由 `ApplyFill`
+  的 open 分支接收 `fundingRatePrefixSum` 参数直接 seed
   `LastFundingRatePrefixSum`，保证开仓后首次 funding settlement 只对开仓后累积
-  的部分计费。Test fixture 直接写 `ak.positions[key]` 的也要自行 seed
-  prefix-sum（参考 `x/funding/tests/settle_position_test.go`）。
+  的部分计费。

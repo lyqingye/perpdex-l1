@@ -3,6 +3,8 @@ package types
 import (
 	"context"
 
+	"cosmossdk.io/math"
+
 	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
 	markettypes "github.com/perpdex/perpdex-l1/x/market/types"
 	oracletypes "github.com/perpdex/perpdex-l1/x/oracle/types"
@@ -30,15 +32,16 @@ type OrderbookKeeper interface {
 
 type AccountKeeper interface {
 	GetPosition(ctx context.Context, accIdx uint64, marketIdx uint32) (accounttypes.AccountPosition, error)
-	// MutatePosition is the same-side RMW entrypoint. Funding
-	// settlement only fires for OPEN positions (BaseSize != 0);
-	// closed / leverage-only positions have no funding obligation,
-	// so the funding keeper short-circuits before reaching this
-	// method. See spec/events/account.md for the full lifecycle.
-	MutatePosition(
+	// ApplyFundingPayment is the cohesive funding-settlement RMW
+	// (issue #91). Folds the per-position payment into EntryQuote
+	// and snapshots the new prefix sum, in one keeper call. No-op on
+	// empty rows (closed / never-opened positions have no funding
+	// obligation; the next ApplyFill re-seeds the snapshot from the
+	// market's current value).
+	ApplyFundingPayment(
 		ctx context.Context,
 		accIdx uint64,
 		marketIdx uint32,
-		mut func(*accounttypes.AccountPosition) error,
+		newPrefixSum math.Int,
 	) (accounttypes.AccountPosition, error)
 }
