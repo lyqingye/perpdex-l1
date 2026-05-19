@@ -25,8 +25,7 @@ type AccountKeeper interface {
 		accIdx uint64,
 		marketIdx uint32,
 		price uint32,
-		baseAmount uint64,
-		sign int64,
+		baseDelta math.Int,
 		fundingRatePrefixSum math.Int,
 	) (accounttypes.FillApplyResult, error)
 	// AdjustAllocatedMargin folds `delta` (signed) into the isolated

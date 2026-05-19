@@ -138,7 +138,7 @@ func TestPositionLifecycle_ApplyFill_OpenUpdateClose(t *testing.T) {
 
 	// 1) Open: pre.BaseSize == 0, fill of +5 @ price 100 → BaseSize=5.
 	resetEvents(env)
-	opened, err := env.ak.ApplyFill(env.ctx, 7001, 0, 100, 5, +1, math.ZeroInt())
+	opened, err := env.ak.ApplyFill(env.ctx, 7001, 0, 100, math.NewInt(5), math.ZeroInt())
 	require.NoError(t, err)
 	require.Equal(t, 1, countEvents(env, &types.EventPositionOpened{}),
 		"ApplyFill on a fresh row must emit a single EventPositionOpened")
@@ -152,7 +152,7 @@ func TestPositionLifecycle_ApplyFill_OpenUpdateClose(t *testing.T) {
 
 	// 2) Same-side increase: pre=5, fill of +3 → BaseSize=8.
 	resetEvents(env)
-	updated, err := env.ak.ApplyFill(env.ctx, 7001, 0, 100, 3, +1, math.ZeroInt())
+	updated, err := env.ak.ApplyFill(env.ctx, 7001, 0, 100, math.NewInt(3), math.ZeroInt())
 	require.NoError(t, err)
 	require.Equal(t, 1, countEvents(env, &types.EventPositionUpdated{}),
 		"ApplyFill same-side increase must emit a single EventPositionUpdated")
@@ -164,7 +164,7 @@ func TestPositionLifecycle_ApplyFill_OpenUpdateClose(t *testing.T) {
 
 	// 3) Pure close: pre=8, fill of -8 → BaseSize=0.
 	resetEvents(env)
-	closed, err := env.ak.ApplyFill(env.ctx, 7001, 0, 100, 8, -1, math.ZeroInt())
+	closed, err := env.ak.ApplyFill(env.ctx, 7001, 0, 100, math.NewInt(-8), math.ZeroInt())
 	require.NoError(t, err)
 	require.Equal(t, 1, countEvents(env, &types.EventPositionClosed{}),
 		"ApplyFill pure close must emit a single EventPositionClosed")
@@ -187,12 +187,12 @@ func TestPositionLifecycle_ApplyFill_Flip(t *testing.T) {
 	env := initTestEnv(t)
 
 	// Open a long of 10.
-	opened, err := env.ak.ApplyFill(env.ctx, 7100, 1, 100, 10, +1, math.ZeroInt())
+	opened, err := env.ak.ApplyFill(env.ctx, 7100, 1, 100, math.NewInt(10), math.ZeroInt())
 	require.NoError(t, err)
 
 	// Flip via a single ApplyFill: -15 against +10 → close +10, open -5.
 	resetEvents(env)
-	flipped, err := env.ak.ApplyFill(env.ctx, 7100, 1, 100, 15, -1, math.ZeroInt())
+	flipped, err := env.ak.ApplyFill(env.ctx, 7100, 1, 100, math.NewInt(-15), math.ZeroInt())
 	require.NoError(t, err)
 	require.True(t, flipped.SideFlipped, "ApplyFill must mark side flipped")
 	require.False(t, flipped.Closed, "flip is not a Closed-only transition")
@@ -211,7 +211,7 @@ func TestPositionLifecycle_ApplyFill_Flip(t *testing.T) {
 func TestPositionLifecycle_AdjustAllocatedMargin_Emits_Updated(t *testing.T) {
 	env := initTestEnv(t)
 
-	_, err := env.ak.ApplyFill(env.ctx, 7400, 0, 100, 5, +1, math.ZeroInt())
+	_, err := env.ak.ApplyFill(env.ctx, 7400, 0, 100, math.NewInt(5), math.ZeroInt())
 	require.NoError(t, err)
 
 	resetEvents(env)
@@ -243,7 +243,7 @@ func TestPositionLifecycle_ApplyFundingPayment_Emits_Updated(t *testing.T) {
 	env := initTestEnv(t)
 
 	// Open with current FundingRatePrefixSum == 0 (fakeMarket default).
-	_, err := env.ak.ApplyFill(env.ctx, 7500, 0, 100, 10, +1, math.ZeroInt())
+	_, err := env.ak.ApplyFill(env.ctx, 7500, 0, 100, math.NewInt(10), math.ZeroInt())
 	require.NoError(t, err)
 
 	resetEvents(env)
@@ -284,7 +284,7 @@ func TestPositionLifecycle_SetLeverage_Violations(t *testing.T) {
 		"default leverage on an empty row must be a no-op")
 
 	// Open a position, then SetPositionLeverage must fail loudly.
-	_, err := env.ak.ApplyFill(env.ctx, 7600, 1, 100, 1, +1, math.ZeroInt())
+	_, err := env.ak.ApplyFill(env.ctx, 7600, 1, 100, math.NewInt(1), math.ZeroInt())
 	require.NoError(t, err)
 	err = env.ak.SetPositionLeverage(env.ctx, 7600, 1, perptypes.IsolatedMargin, 500)
 	require.ErrorIs(t, err, types.ErrPositionLifecycleViolation,
@@ -314,7 +314,7 @@ func TestPositionLifecycle_OutOfBounds(t *testing.T) {
 	// Drive BaseSize past MaxPositionSize: a single fill larger than
 	// the bound is enough.
 	overflowBase := perptypes.MaxPositionSize + 1
-	_, err := env.ak.ApplyFill(env.ctx, 7700, 0, 1, overflowBase, +1, math.ZeroInt())
+	_, err := env.ak.ApplyFill(env.ctx, 7700, 0, 1, math.NewIntFromUint64(overflowBase), math.ZeroInt())
 	require.ErrorIs(t, err, types.ErrPositionOutOfBounds,
 		"ApplyFill must reject out-of-bounds post-trade BaseSize")
 }
@@ -327,12 +327,12 @@ func TestPositionId_UniqueAcrossLifecycles(t *testing.T) {
 	env := initTestEnv(t)
 
 	open := func(acc uint64, mkt uint32) uint64 {
-		r, err := env.ak.ApplyFill(env.ctx, acc, mkt, 100, 1, +1, math.ZeroInt())
+		r, err := env.ak.ApplyFill(env.ctx, acc, mkt, 100, math.NewInt(1), math.ZeroInt())
 		require.NoError(t, err)
 		return r.New.PositionId
 	}
 	closeFn := func(acc uint64, mkt uint32) {
-		r, err := env.ak.ApplyFill(env.ctx, acc, mkt, 100, 1, -1, math.ZeroInt())
+		r, err := env.ak.ApplyFill(env.ctx, acc, mkt, 100, math.NewInt(-1), math.ZeroInt())
 		require.NoError(t, err)
 		require.True(t, r.Closed)
 	}
@@ -386,11 +386,11 @@ func TestStateChangeEvents_Position_CloseRetainsLeverage(t *testing.T) {
 
 	// Seed the user's leverage preference, then open via ApplyFill.
 	require.NoError(t, env.ak.SetPositionLeverage(env.ctx, 7300, 3, perptypes.IsolatedMargin, 500))
-	_, err := env.ak.ApplyFill(env.ctx, 7300, 3, 100, 7, +1, math.ZeroInt())
+	_, err := env.ak.ApplyFill(env.ctx, 7300, 3, 100, math.NewInt(7), math.ZeroInt())
 	require.NoError(t, err)
 
 	resetEvents(env)
-	_, err = env.ak.ApplyFill(env.ctx, 7300, 3, 100, 7, -1, math.ZeroInt())
+	_, err = env.ak.ApplyFill(env.ctx, 7300, 3, 100, math.NewInt(-7), math.ZeroInt())
 	require.NoError(t, err)
 	require.Equal(t, 1, countEvents(env, &types.EventPositionClosed{}),
 		"ApplyFill close must emit EventPositionClosed even when row is retained")

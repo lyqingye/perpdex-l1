@@ -104,16 +104,14 @@ func (s *stubAccount) ApplyFill(
 	accIdx uint64,
 	marketIdx uint32,
 	price uint32,
-	baseAmount uint64,
-	sign int64,
+	baseDelta math.Int,
 	fundingRatePrefixSum math.Int,
 ) (accounttypes.FillApplyResult, error) {
 	pre, err := s.GetPosition(ctx, accIdx, marketIdx)
 	if err != nil {
 		return accounttypes.FillApplyResult{}, err
 	}
-	delta := math.NewIntFromUint64(baseAmount).MulRaw(sign)
-	fill := pre.ApplyFill(delta, price)
+	fill := pre.ApplyFill(baseDelta, price)
 
 	maxPos := math.NewIntFromUint64(perptypes.MaxPositionSize)
 	maxEntryQuote := math.NewIntFromUint64(perptypes.MaxEntryQuote)

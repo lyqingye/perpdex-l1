@@ -132,7 +132,7 @@ func (s *spotAccount) GetPosition(_ context.Context, acc uint64, mkt uint32) (ac
 // are stubbed out to satisfy the interface.
 func (s *spotAccount) ApplyFill(
 	ctx context.Context, accIdx uint64, marketIdx uint32,
-	_ uint32, _ uint64, _ int64, _ math.Int,
+	_ uint32, _ math.Int, _ math.Int,
 ) (accounttypes.FillApplyResult, error) {
 	pos, _ := s.GetPosition(ctx, accIdx, marketIdx)
 	return accounttypes.FillApplyResult{Old: pos, New: pos, RealizedPnL: math.ZeroInt()}, nil

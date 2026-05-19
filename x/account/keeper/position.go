@@ -276,7 +276,7 @@ func (k Keeper) closePosition(ctx context.Context, pre types.AccountPosition) (t
 // trade engine. Owns the entire pipeline for one side of one fill:
 //
 //  1. Load `pre` via GetPosition.
-//  2. Compute `fill = pre.ApplyFill(delta, price)` (pure math).
+//  2. Compute `fill = pre.ApplyFill(baseDelta, price)` (pure math).
 //  3. Bounds-check |post.BaseSize| / |post.EntryQuote| (returns
 //     ErrPositionOutOfBounds; engine wraps to Maker/TakerInvalidPosition).
 //  4. Classify the transition against `pre.BaseSize` /
@@ -299,6 +299,15 @@ func (k Keeper) closePosition(ctx context.Context, pre types.AccountPosition) (t
 //       - same-side change               → mutatePosition (Updated;
 //                                          position_id preserved)
 //
+// `baseDelta` is the SIGNED base amount this side trades — positive
+// when this account buys base (long-leaning fill), negative when it
+// sells. The trade engine derives it from the fill's BaseAmount +
+// IsTakerAsk; ApplyFill itself only reads the value and its sign.
+// Passing a signed delta (vs the old `baseAmount uint64 + sign int64`
+// pair) keeps the API consistent with the rest of the position keeper
+// surface (AdjustAllocatedMargin / ApplyFundingPayment also take
+// signed math.Int deltas) and removes the magic ±1 sign argument.
+//
 // `fundingRatePrefixSum` is the market's current
 // `MarketDetails.FundingRatePrefixSum`, passed in by the trade engine
 // to avoid an x/account ↔ x/market dependency in this hot path
@@ -315,16 +324,14 @@ func (k Keeper) ApplyFill(
 	accIdx uint64,
 	marketIdx uint32,
 	price uint32,
-	baseAmount uint64,
-	sign int64,
+	baseDelta math.Int,
 	fundingRatePrefixSum math.Int,
 ) (types.FillApplyResult, error) {
 	pre, err := k.GetPosition(ctx, accIdx, marketIdx)
 	if err != nil {
 		return types.FillApplyResult{}, err
 	}
-	delta := math.NewIntFromUint64(baseAmount).MulRaw(sign)
-	fill := pre.ApplyFill(delta, price)
+	fill := pre.ApplyFill(baseDelta, price)
 
 	if !withinPositionBounds(fill.Position.BaseSize, fill.Position.EntryQuote) {
 		return types.FillApplyResult{}, types.ErrPositionOutOfBounds.Wrapf(

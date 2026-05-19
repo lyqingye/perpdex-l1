@@ -129,11 +129,15 @@ func (e Engine) Apply(ctx context.Context, f Fill) error {
 		}
 	}
 
-	makerSign := int64(1)
+	// Derive the per-side signed base delta from the fill direction.
+	// IsTakerAsk == true means the taker is on the ask (selling base),
+	// so the maker buys base (+) and the taker sells (-); the inverse
+	// holds when the taker is bidding.
+	makerDelta := math.NewIntFromUint64(f.BaseAmount)
 	if !f.IsTakerAsk {
-		makerSign = -1
+		makerDelta = makerDelta.Neg()
 	}
-	takerSign := -makerSign
+	takerDelta := makerDelta.Neg()
 
 	// Snapshot the market's current FundingRatePrefixSum once and
 	// thread it into both ApplyFill calls so x/account doesn't need
@@ -155,7 +159,7 @@ func (e Engine) Apply(ctx context.Context, f Fill) error {
 	// pipeline below keys off. Out-of-bounds positions surface as
 	// ErrPositionOutOfBounds — wrapped per-side so the matching loop
 	// can evict a bad maker / stop a bad taker.
-	makerRes, err := e.accountKeeper.ApplyFill(ctx, f.MakerAccountIndex, f.MarketIndex, f.Price, f.BaseAmount, makerSign, fundingPrefix)
+	makerRes, err := e.accountKeeper.ApplyFill(ctx, f.MakerAccountIndex, f.MarketIndex, f.Price, makerDelta, fundingPrefix)
 	if err != nil {
 		if errors.Is(err, accounttypes.ErrPositionOutOfBounds) {
 			return sdkerrors.Wrapf(types.ErrMakerInvalidPosition,
@@ -163,7 +167,7 @@ func (e Engine) Apply(ctx context.Context, f Fill) error {
 		}
 		return err
 	}
-	takerRes, err := e.accountKeeper.ApplyFill(ctx, f.TakerAccountIndex, f.MarketIndex, f.Price, f.BaseAmount, takerSign, fundingPrefix)
+	takerRes, err := e.accountKeeper.ApplyFill(ctx, f.TakerAccountIndex, f.MarketIndex, f.Price, takerDelta, fundingPrefix)
 	if err != nil {
 		if errors.Is(err, accounttypes.ErrPositionOutOfBounds) {
 			return sdkerrors.Wrapf(types.ErrTakerInvalidPosition,
