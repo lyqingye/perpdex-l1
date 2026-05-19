@@ -375,6 +375,32 @@ func TestStateChangeEvents_Position_LeverageOnly(t *testing.T) {
 	require.Equal(t, uint32(500), p.InitialMarginFraction)
 }
 
+// TestPositionLifecycle_SetLeverage_ClearToDefault pins the storage-
+// reclaim branch: when a user flips their preferred leverage back to
+// the default (Cross + IMF == 0) on a row that previously carried
+// non-default state, the keeper REMOVES the underlying KV row instead
+// of writing a "default leverage-only" row that would still occupy
+// storage (and be indistinguishable from no row at all). The event
+// still fires so the indexer sees the configuration change.
+func TestPositionLifecycle_SetLeverage_ClearToDefault(t *testing.T) {
+	env := initTestEnv(t)
+
+	require.NoError(t,
+		env.ak.SetPositionLeverage(env.ctx, 7800, 0, perptypes.IsolatedMargin, 500))
+	_, err := env.ak.AccountPositions.Get(env.ctx, collections.Join(uint64(7800), uint32(0)))
+	require.NoError(t, err, "non-default leverage row must be persisted")
+
+	resetEvents(env)
+	require.NoError(t,
+		env.ak.SetPositionLeverage(env.ctx, 7800, 0, perptypes.CrossMargin, 0))
+	require.Equal(t, 1, countEvents(env, &types.EventPositionUpdated{}),
+		"clearing leverage back to default must still emit EventPositionUpdated")
+
+	_, err = env.ak.AccountPositions.Get(env.ctx, collections.Join(uint64(7800), uint32(0)))
+	require.ErrorIs(t, err, collections.ErrNotFound,
+		"row must be removed when leverage is cleared back to default")
+}
+
 // TestStateChangeEvents_Position_CloseRetainsLeverage proves the
 // "leverage-only retention" branch: closing a row that carries
 // non-default leverage (via ApplyFill's close path) RETAINS the row

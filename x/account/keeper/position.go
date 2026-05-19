@@ -13,144 +13,84 @@ import (
 	"github.com/perpdex/perpdex-l1/x/account/types"
 )
 
-// Position keeper surface (issue #91). x/account owns every
-// AccountPosition write; external callers (x/trade, x/funding, the
-// x/account msg_server) ONLY talk to it through cohesive,
-// single-purpose methods — never a generic RMW closure.
-//
-// Cohesive public API:
-//
-//   ApplyFill(acc, mkt, price, baseAmount, sign) → FillApplyResult
-//       The canonical entry-point for the trade engine. Computes the
-//       fill math (AccountPosition.ApplyFill), classifies the
-//       transition (open / mutate / close / flip), persists through
-//       the matching package-private primitive, emits exactly one
-//       (or, for flip, two) lifecycle events, and returns the
-//       pre/post snapshots + realized PnL + OI delta the engine needs.
-//
-//   AdjustAllocatedMargin(acc, mkt, delta) → AccountPosition
-//       Cohesive RMW for the isolated-margin pool. Used by the trade
-//       engine's three-step isolated reconciliation (PnL/fee credit,
-//       improvement-fee debit, position_requirement rebalance) and by
-//       the msg_server UpdateMargin path. Asserts the row is open
-//       (BaseSize != 0); emits EventPositionUpdated.
-//
-//   ApplyFundingPayment(acc, mkt, newPrefixSum) → AccountPosition
-//       Cohesive RMW for funding settlement. Folds the per-position
-//       payment into EntryQuote and snapshots the prefix sum.
-//       No-op on empty rows (closed positions have no funding
-//       obligation; OpenPosition re-seeds the snapshot from the
-//       market's current value).
-//
-//   SetPositionLeverage(acc, mkt, mode, imf)
-//       Writes a leverage-only configuration row (BaseSize == 0,
-//       position_id == 0). Asserts no open position. Emits
-//       EventPositionUpdated so indexers see the config change.
-//
-//   ClosePosition(acc, mkt) → AccountPosition
-//       Cohesive force-close (e.g. for liquidation paths that bypass
-//       ApplyFill, market expiry, IF/ADL absorbers). Used internally
-//       by ApplyFill and re-exported for callers that need to retire
-//       a position outside the fill pipeline.
-//
-// Package-private primitives (open / mutate / close, all lowercase)
-// implement the three lifecycle transitions but are NOT part of the
-// public surface — they exist purely so the cohesive methods above
-// can share the persistence + event-emission plumbing.
+// Position keeper surface (issue #91). x/account is the sole owner of
+// AccountPosition writes; external callers go through the cohesive
+// public methods below — never a mut closure. The three package-
+// private lifecycle primitives (openPosition / mutatePosition /
+// closePosition) only exist so the cohesive methods can share the
+// persistence + event-emission plumbing. See spec/events/account.md
+// for the full lifecycle invariants and event contract.
 
-// setPosition is the package-private write primitive used by genesis
-// restore and by the lifecycle primitives below. It does NOT emit any
-// event — emission is the lifecycle primitive's job.
-func (k Keeper) setPosition(ctx context.Context, p types.AccountPosition) error {
-	return k.AccountPositions.Set(ctx, collections.Join(p.AccountIndex, p.MarketIndex), p)
-}
-
-// removePosition is the package-private delete primitive. Used by
-// closePosition's "default-leverage" branch to release KV storage.
-func (k Keeper) removePosition(ctx context.Context, accIdx uint64, marketIdx uint32) error {
-	return k.AccountPositions.Remove(ctx, collections.Join(accIdx, marketIdx))
-}
-
-func (k Keeper) emitPositionOpened(ctx context.Context, p types.AccountPosition) error {
-	return sdk.UnwrapSDKContext(ctx).EventManager().EmitTypedEvent(&types.EventPositionOpened{
-		Position: p,
-	})
-}
-
-func (k Keeper) emitPositionUpdated(ctx context.Context, p types.AccountPosition) error {
-	return sdk.UnwrapSDKContext(ctx).EventManager().EmitTypedEvent(&types.EventPositionUpdated{
-		Position: p,
-	})
-}
-
-func (k Keeper) emitPositionClosed(ctx context.Context, p types.AccountPosition, deleted bool) error {
-	return sdk.UnwrapSDKContext(ctx).EventManager().EmitTypedEvent(&types.EventPositionClosed{
-		Position: p,
-		Deleted:  deleted,
-	})
+// emptyPosition is the canonical "no open position" record for
+// (accIdx, marketIdx): the auto-vivified zero used by GetPosition and
+// the base shape for a leverage-only row in closePosition.
+func emptyPosition(accIdx uint64, marketIdx uint32) types.AccountPosition {
+	return types.AccountPosition{
+		AccountIndex:             accIdx,
+		MarketIndex:              marketIdx,
+		BaseSize:                 math.ZeroInt(),
+		EntryQuote:               math.ZeroInt(),
+		LastFundingRatePrefixSum: math.ZeroInt(),
+		AllocatedMargin:          math.ZeroInt(),
+		MarginMode:               perptypes.CrossMargin,
+	}
 }
 
 // hasNonDefaultLeverage reports whether the row carries user-configured
-// leverage state that must survive a close → reopen cycle. The
-// "default" baseline matches GetPosition's auto-vivified zero record:
-// Cross margin and IMF == 0 (i.e. fall back to the market default).
+// leverage state worth surviving a close → reopen cycle. "Default" is
+// Cross + IMF == 0 (fall back to the market default).
 func hasNonDefaultLeverage(p types.AccountPosition) bool {
 	return p.MarginMode != perptypes.CrossMargin || p.InitialMarginFraction != 0
 }
 
-// withinPositionBounds enforces |position| < 2^POSITION_SIZE_BITS and
-// |entry_quote| < 2^ENTRY_QUOTE_BITS. Used by ApplyFill to reject a
-// post-trade state that overflows the per-market wire encoding.
+// withinPositionBounds enforces |position| ≤ MaxPositionSize and
+// |entry_quote| ≤ MaxEntryQuote (the per-market wire encoding caps).
 func withinPositionBounds(position, entryQuote math.Int) bool {
-	maxPos := math.NewIntFromUint64(perptypes.MaxPositionSize)
-	maxEntryQuote := math.NewIntFromUint64(perptypes.MaxEntryQuote)
-	if position.Abs().GT(maxPos) {
-		return false
-	}
-	if entryQuote.Abs().GT(maxEntryQuote) {
-		return false
-	}
-	return true
+	return position.Abs().LTE(math.NewIntFromUint64(perptypes.MaxPositionSize)) &&
+		entryQuote.Abs().LTE(math.NewIntFromUint64(perptypes.MaxEntryQuote))
 }
 
-// GetPosition returns the position; an empty zero-valued one if absent.
-// An empty zero-valued response carries `BaseSize == 0` and is used by
-// callers as the "no open position" sentinel; the auto-vivified record
-// is NOT persisted unless the caller subsequently routes through a
-// cohesive write method.
+func (k Keeper) setPosition(ctx context.Context, p types.AccountPosition) error {
+	return k.AccountPositions.Set(ctx, collections.Join(p.AccountIndex, p.MarketIndex), p)
+}
+
+func (k Keeper) removePosition(ctx context.Context, accIdx uint64, marketIdx uint32) error {
+	return k.AccountPositions.Remove(ctx, collections.Join(accIdx, marketIdx))
+}
+
+func (k Keeper) emitOpened(ctx context.Context, p types.AccountPosition) error {
+	return sdk.UnwrapSDKContext(ctx).EventManager().EmitTypedEvent(&types.EventPositionOpened{Position: p})
+}
+
+func (k Keeper) emitUpdated(ctx context.Context, p types.AccountPosition) error {
+	return sdk.UnwrapSDKContext(ctx).EventManager().EmitTypedEvent(&types.EventPositionUpdated{Position: p})
+}
+
+func (k Keeper) emitClosed(ctx context.Context, p types.AccountPosition, deleted bool) error {
+	return sdk.UnwrapSDKContext(ctx).EventManager().EmitTypedEvent(&types.EventPositionClosed{Position: p, Deleted: deleted})
+}
+
+// GetPosition returns the position; an empty zero record (BaseSize ==
+// 0, NOT persisted) if absent. Callers use BaseSize.IsZero() as the
+// "no open position" sentinel and also to skip leverage-only config
+// rows when iterating.
 func (k Keeper) GetPosition(ctx context.Context, accIdx uint64, marketIdx uint32) (types.AccountPosition, error) {
 	p, err := k.AccountPositions.Get(ctx, collections.Join(accIdx, marketIdx))
+	if errors.Is(err, collections.ErrNotFound) {
+		return emptyPosition(accIdx, marketIdx), nil
+	}
 	if err != nil {
-		if errors.Is(err, collections.ErrNotFound) {
-			return types.AccountPosition{
-				AccountIndex:             accIdx,
-				MarketIndex:              marketIdx,
-				BaseSize:                 math.ZeroInt(),
-				EntryQuote:               math.ZeroInt(),
-				LastFundingRatePrefixSum: math.ZeroInt(),
-				AllocatedMargin:          math.ZeroInt(),
-				MarginMode:               perptypes.CrossMargin,
-			}, nil
-		}
 		return types.AccountPosition{}, err
 	}
 	p.NormalizeIntFields()
 	return p, nil
 }
 
-// IterateAccountPositions walks every persisted AccountPosition row
-// owned by `accountIdx`. The callback returns `true` to stop early.
-//
-// Per-account driver for risk / liquidation / funding loops
-// (ComputeCrossRisk, IsValidRiskChangeFrom, SnapshotRisk,
-// IterateIsolatedPositions, processAccount, rankVictimPositionsByUPnL,
-// settleAllPositionFunding) so they touch only persisted rows instead
-// of scanning the full MaxPerpsMarketIndex range.
-//
-// Closed positions are removed from storage (or, when leverage was
-// non-default, retained with BaseSize == 0); callers that want only
-// open positions should keep their existing `pos.BaseSize.IsZero()`
-// short-circuit to also skip the leverage-only config rows.
+// IterateAccountPositions walks every persisted row owned by
+// `accountIdx`. The callback returns `true` to stop early. Per-account
+// driver for risk / liquidation / funding loops; callers that want
+// only open positions should keep their `pos.BaseSize.IsZero()`
+// short-circuit to also skip leverage-only config rows.
 func (k Keeper) IterateAccountPositions(
 	ctx context.Context,
 	accountIdx uint64,
@@ -175,21 +115,10 @@ func (k Keeper) IterateAccountPositions(
 	return nil
 }
 
-// --------------------------------------------------------------------
-//                           lifecycle primitives
-// --------------------------------------------------------------------
-//
-// The three package-private lifecycle primitives below are the ONLY
-// callers of setPosition / removePosition that emit a lifecycle event.
-// They are deliberately unexported: external callers always go through
-// a cohesive public method (ApplyFill / AdjustAllocatedMargin /
-// ApplyFundingPayment / SetPositionLeverage / ClosePosition).
-
 // openPosition persists `post` as a freshly opened position. Caller
-// MUST guarantee `pre.BaseSize == 0` and `post.BaseSize != 0`; this
-// primitive does not re-check (the cohesive caller already classified
-// the transition). Allocates position_id, stamps CreatedAt, persists,
-// and emits EventPositionOpened.
+// MUST guarantee pre.BaseSize == 0 and post.BaseSize != 0; this
+// primitive does not re-check. Allocates position_id, stamps
+// CreatedAt, emits EventPositionOpened.
 func (k Keeper) openPosition(ctx context.Context, post types.AccountPosition) (types.AccountPosition, error) {
 	id, err := k.NextPositionIndex.Next(ctx)
 	if err != nil {
@@ -201,16 +130,16 @@ func (k Keeper) openPosition(ctx context.Context, post types.AccountPosition) (t
 	if err := k.setPosition(ctx, post); err != nil {
 		return types.AccountPosition{}, err
 	}
-	if err := k.emitPositionOpened(ctx, post); err != nil {
+	if err := k.emitOpened(ctx, post); err != nil {
 		return types.AccountPosition{}, err
 	}
 	return post, nil
 }
 
 // mutatePosition persists `post` as a same-side, in-place update of
-// an open position. Caller MUST guarantee `pre.BaseSize != 0`,
-// `post.BaseSize != 0`, and `sign(pre) == sign(post)`. Preserves
-// position_id, persists, and emits EventPositionUpdated.
+// an open position. Caller MUST guarantee pre and post are both open
+// with the same sign. Preserves position_id, emits
+// EventPositionUpdated.
 func (k Keeper) mutatePosition(ctx context.Context, pre, post types.AccountPosition) (types.AccountPosition, error) {
 	post.PositionId = pre.PositionId
 	if post.CreatedAt == 0 {
@@ -220,105 +149,57 @@ func (k Keeper) mutatePosition(ctx context.Context, pre, post types.AccountPosit
 	if err := k.setPosition(ctx, post); err != nil {
 		return types.AccountPosition{}, err
 	}
-	if err := k.emitPositionUpdated(ctx, post); err != nil {
+	if err := k.emitUpdated(ctx, post); err != nil {
 		return types.AccountPosition{}, err
 	}
 	return post, nil
 }
 
-// closePosition retires the row. Storage policy: the row is REMOVED
-// from KV iff the user's leverage state is at the default (Cross +
-// IMF == 0); otherwise the row is RETAINED as a leverage-only config
-// row with BaseSize == 0 / position_id == 0, preserving
-// {MarginMode, InitialMarginFraction} so the user's preference
-// survives a close → reopen cycle.
-//
-// Emits EventPositionClosed with a post-close payload (BaseSize / EQ
-// zeroed, position_id RETAINED on the event payload so the indexer
-// can finalise the lifeline). Returns the **pre-close snapshot**
-// unchanged so the cohesive caller can drain residual fields
-// (allocated_margin etc.).
+// closePosition retires `pre`. Storage policy: REMOVE on default
+// leverage, RETAIN as a leverage-only row otherwise (preserves the
+// user's preferred margin_mode / IMF across close → reopen). Emits
+// EventPositionClosed; returns the unchanged pre-close snapshot so
+// callers can drain residual fields (allocated_margin etc.).
 func (k Keeper) closePosition(ctx context.Context, pre types.AccountPosition) (types.AccountPosition, error) {
 	retain := hasNonDefaultLeverage(pre)
 	if retain {
-		leverageOnly := types.AccountPosition{
-			AccountIndex:             pre.AccountIndex,
-			MarketIndex:              pre.MarketIndex,
-			BaseSize:                 math.ZeroInt(),
-			EntryQuote:               math.ZeroInt(),
-			LastFundingRatePrefixSum: math.ZeroInt(),
-			AllocatedMargin:          math.ZeroInt(),
-			MarginMode:               pre.MarginMode,
-			InitialMarginFraction:    pre.InitialMarginFraction,
-		}
-		if err := k.setPosition(ctx, leverageOnly); err != nil {
+		row := emptyPosition(pre.AccountIndex, pre.MarketIndex)
+		row.MarginMode = pre.MarginMode
+		row.InitialMarginFraction = pre.InitialMarginFraction
+		if err := k.setPosition(ctx, row); err != nil {
 			return types.AccountPosition{}, err
 		}
-	} else {
-		if err := k.removePosition(ctx, pre.AccountIndex, pre.MarketIndex); err != nil {
-			return types.AccountPosition{}, err
-		}
+	} else if err := k.removePosition(ctx, pre.AccountIndex, pre.MarketIndex); err != nil {
+		return types.AccountPosition{}, err
 	}
-	closedEvent := pre
-	closedEvent.BaseSize = math.ZeroInt()
-	closedEvent.EntryQuote = math.ZeroInt()
-	if err := k.emitPositionClosed(ctx, closedEvent, !retain); err != nil {
+	payload := pre
+	payload.BaseSize, payload.EntryQuote = math.ZeroInt(), math.ZeroInt()
+	if err := k.emitClosed(ctx, payload, !retain); err != nil {
 		return types.AccountPosition{}, err
 	}
 	return pre, nil
 }
 
-// --------------------------------------------------------------------
-//                       cohesive public API
-// --------------------------------------------------------------------
-
-// ApplyFill is the cohesive fill-application entry-point used by the
-// trade engine. Owns the entire pipeline for one side of one fill:
+// ApplyFill is the cohesive fill-application entry-point. Computes
+// fill math, classifies the transition (open / mutate / close / flip),
+// persists through the matching lifecycle primitive, emits exactly
+// one (or two, for flip) lifecycle event(s), and returns the
+// pre/post snapshots + realized PnL + OI delta the trade engine
+// keys downstream behaviour off.
 //
-//  1. Load `pre` via GetPosition.
-//  2. Compute `fill = pre.ApplyFill(baseDelta, price)` (pure math).
-//  3. Bounds-check |post.BaseSize| / |post.EntryQuote| (returns
-//     ErrPositionOutOfBounds; engine wraps to Maker/TakerInvalidPosition).
-//  4. Classify the transition against `pre.BaseSize` /
-//     `fill.Position.BaseSize` / `fill.SideFlipped` and dispatch:
-//
-//       - pre == 0, post != 0           → openPosition (new id, seeded
-//                                          LastFundingRatePrefixSum =
-//                                          fundingRatePrefixSum)
-//       - pre != 0, post == 0           → closePosition (storage
-//                                          reclaim + Closed event;
-//                                          pre-close snapshot returned)
-//       - SideFlipped                    → closePosition + openPosition
-//                                          (Closed old id + Opened new
-//                                          id; carries AllocatedMargin
-//                                          / LastFundingRatePrefixSum
-//                                          onto the residual leg so
-//                                          isolated re-margin stays
-//                                          arithmetically equivalent
-//                                          to the pre-#91 codepath)
-//       - same-side change               → mutatePosition (Updated;
-//                                          position_id preserved)
-//
-// `baseDelta` is the SIGNED base amount this side trades — positive
-// when this account buys base (long-leaning fill), negative when it
-// sells. The trade engine derives it from the fill's BaseAmount +
-// IsTakerAsk; ApplyFill itself only reads the value and its sign.
-// Passing a signed delta (vs the old `baseAmount uint64 + sign int64`
-// pair) keeps the API consistent with the rest of the position keeper
-// surface (AdjustAllocatedMargin / ApplyFundingPayment also take
-// signed math.Int deltas) and removes the magic ±1 sign argument.
+// `baseDelta` is the SIGNED base amount this side trades (positive =
+// buys base, negative = sells); the trade engine derives it from the
+// fill's BaseAmount + IsTakerAsk.
 //
 // `fundingRatePrefixSum` is the market's current
-// `MarketDetails.FundingRatePrefixSum`, passed in by the trade engine
-// to avoid an x/account ↔ x/market dependency in this hot path
-// (Cosmos late-bound keepers aren't visible to the trade engine's
-// `accountKeeper` interface copy). Used only on the OPEN and FLIP
-// transitions to seed the first post-open funding boundary; ignored
-// on pure-close / same-side transitions.
+// `MarketDetails.FundingRatePrefixSum`, threaded in by the caller
+// because x/account doesn't hold a marketKeeper handle visible to
+// the trade engine's accountKeeper interface copy. Used only on the
+// open / flip transitions to seed the new lifeline's first funding
+// boundary.
 //
-// Returns a FillApplyResult populated for every transition; the
-// engine keys downstream behaviour (isolated reconciliation, OI delta,
-// risk check) off the result fields without re-reading position state.
+// Out-of-bounds post-trade state surfaces as ErrPositionOutOfBounds,
+// which the trade engine wraps into Maker/TakerInvalidPosition.
 func (k Keeper) ApplyFill(
 	ctx context.Context,
 	accIdx uint64,
@@ -332,13 +213,11 @@ func (k Keeper) ApplyFill(
 		return types.FillApplyResult{}, err
 	}
 	fill := pre.ApplyFill(baseDelta, price)
-
 	if !withinPositionBounds(fill.Position.BaseSize, fill.Position.EntryQuote) {
 		return types.FillApplyResult{}, types.ErrPositionOutOfBounds.Wrapf(
 			"account %d market %d post-trade base=%s entry_quote=%s",
-			accIdx, marketIdx, fill.Position.BaseSize.String(), fill.Position.EntryQuote.String())
+			accIdx, marketIdx, fill.Position.BaseSize, fill.Position.EntryQuote)
 	}
-
 	if fundingRatePrefixSum.IsNil() {
 		fundingRatePrefixSum = math.ZeroInt()
 	}
@@ -350,93 +229,62 @@ func (k Keeper) ApplyFill(
 		OIDelta:     fill.Position.BaseSize.Abs().Sub(pre.BaseSize.Abs()).Int64(),
 	}
 
-	switch {
-	case pre.BaseSize.IsZero():
-		// Pure open. Seed LastFundingRatePrefixSum from the market's
-		// current value (passed in by the engine) so the first
-		// post-open SettlePositionFunding only charges from the open
-		// boundary forward; pre-#91 the snapshot was kept up-to-date
-		// on empty rows by the funding keeper, but with storage
-		// reclamation that responsibility moved here.
-		post := pre
+	// openAt opens a new lifeline by inheriting MarginMode / IMF /
+	// AllocatedMargin from `source` and stamping in the post-fill
+	// BaseSize / EntryQuote + the new funding boundary. openPosition
+	// itself overwrites PositionId and CreatedAt, so we don't bother
+	// zeroing them here.
+	openAt := func(source types.AccountPosition) (types.AccountPosition, error) {
+		post := source
 		post.AccountIndex = accIdx
 		post.MarketIndex = marketIdx
 		post.BaseSize = fill.Position.BaseSize
 		post.EntryQuote = fill.Position.EntryQuote
 		post.LastFundingRatePrefixSum = fundingRatePrefixSum
-		opened, err := k.openPosition(ctx, post)
-		if err != nil {
-			return types.FillApplyResult{}, err
-		}
-		res.New = opened
-		return res, nil
+		return k.openPosition(ctx, post)
+	}
+
+	switch {
+	case pre.BaseSize.IsZero():
+		res.New, err = openAt(pre)
 
 	case fill.Position.BaseSize.IsZero():
 		// Pure close. closePosition returns the pre-close snapshot;
-		// the engine's isolated branch uses it to drain residual
-		// allocated_margin back to cross collateral.
-		closed, err := k.closePosition(ctx, pre)
-		if err != nil {
-			return types.FillApplyResult{}, err
-		}
-		res.New = closed
+		// the engine's isolated branch drains residual allocated_margin
+		// from it straight to cross collateral.
+		res.New, err = k.closePosition(ctx, pre)
 		res.Closed = true
-		return res, nil
 
 	case fill.SideFlipped:
-		// Flip = close old + open new. The new lifeline carries the
-		// user's pre-close AllocatedMargin and LastFundingRatePrefixSum
-		// onto the residual leg so the isolated re-margin math
-		// (`delta = posReq - (allocated + uPnL_new)`) has the same
-		// starting allocated as the pre-#91 codepath; cross-mode just
-		// inherits the snapshot which has no functional effect.
-		closed, err := k.closePosition(ctx, pre)
-		if err != nil {
+		// Flip = close old + open new. The new leg inherits pre's
+		// MarginMode / IMF / AllocatedMargin (via openAt's source) so
+		// isolated re-margin math stays arithmetically equivalent to
+		// the pre-#91 codepath.
+		if _, err = k.closePosition(ctx, pre); err != nil {
 			return types.FillApplyResult{}, err
 		}
-		residual := closed
-		residual.AccountIndex = accIdx
-		residual.MarketIndex = marketIdx
-		residual.BaseSize = fill.Position.BaseSize
-		residual.EntryQuote = fill.Position.EntryQuote
-		residual.AllocatedMargin = closed.AllocatedMargin
-		residual.LastFundingRatePrefixSum = closed.LastFundingRatePrefixSum
-		// CreatedAt is re-stamped inside openPosition.
-		residual.PositionId = 0
-		residual.CreatedAt = 0
-		opened, err := k.openPosition(ctx, residual)
-		if err != nil {
-			return types.FillApplyResult{}, err
-		}
-		res.New = opened
-		return res, nil
+		res.New, err = openAt(pre)
 
 	default:
-		// Same-side increase / decrease.
+		// Same-side change.
 		post := pre
 		post.BaseSize = fill.Position.BaseSize
 		post.EntryQuote = fill.Position.EntryQuote
-		updated, err := k.mutatePosition(ctx, pre, post)
-		if err != nil {
-			return types.FillApplyResult{}, err
-		}
-		res.New = updated
-		return res, nil
+		res.New, err = k.mutatePosition(ctx, pre, post)
 	}
+	if err != nil {
+		return types.FillApplyResult{}, err
+	}
+	return res, nil
 }
 
 // AdjustAllocatedMargin folds `delta` (signed) into the position's
-// allocated_margin pool and emits EventPositionUpdated. The
-// **canonical isolated-margin RMW** — replaces three separate
-// mut-closure call sites (PnL/fee credit, improvement-fee debit,
-// position_requirement rebalance) in the pre-#91 trade engine plus
-// the AccountKeeper msg_server.UpdateMargin path.
-//
-// Asserts pre.BaseSize != 0: adjusting allocated_margin on a closed /
-// leverage-only row would create a phantom balance with no position
-// to back it, and is always a caller-side bug (the isolated close
-// branch in the trade engine routes refunds straight to cross
-// collateral instead of touching the position row).
+// allocated_margin pool and emits EventPositionUpdated. Canonical RMW
+// for the isolated-margin pool: used by the trade engine's three-step
+// isolated reconciliation (PnL/fee credit, improvement-fee debit,
+// position_requirement rebalance) and by the msg_server UpdateMargin
+// path. Asserts pre.BaseSize != 0 — adjusting allocated_margin on a
+// closed row would create a phantom balance with no position to back it.
 func (k Keeper) AdjustAllocatedMargin(
 	ctx context.Context,
 	accIdx uint64,
@@ -460,17 +308,12 @@ func (k Keeper) AdjustAllocatedMargin(
 }
 
 // ApplyFundingPayment is the cohesive funding-settlement RMW. Folds
-// the per-position payment (`pos.BaseSize * (newPrefixSum -
-// pos.LastFundingRatePrefixSum) / FundingRateTick`) into EntryQuote
-// and snapshots the prefix sum. Emits EventPositionUpdated on a real
-// write; short-circuits with no event on empty rows or zero-delta
-// rounds.
-//
-// Closed / never-opened accounts have no funding obligation: x/trade's
-// ApplyFill seeds LastFundingRatePrefixSum from the market's current
-// value at open time, so this method is a no-op for BaseSize == 0
-// rows and the funding keeper does NOT need to keep a snapshot in
-// sync on empty rows (issue #91 storage reclamation).
+// `pay = BaseSize * (newPrefixSum - LastFundingRatePrefixSum) /
+// FundingRateTick` into EntryQuote and snapshots the new prefix sum;
+// emits EventPositionUpdated on a real write. No-op (no event) on
+// empty rows, nil prefix sums, or zero-delta rounds — closed accounts
+// have no funding obligation, and the next ApplyFill re-seeds the
+// snapshot from the market's current value.
 func (k Keeper) ApplyFundingPayment(
 	ctx context.Context,
 	accIdx uint64,
@@ -481,10 +324,7 @@ func (k Keeper) ApplyFundingPayment(
 	if err != nil {
 		return types.AccountPosition{}, err
 	}
-	if pre.BaseSize.IsZero() {
-		return pre, nil
-	}
-	if newPrefixSum.IsNil() {
+	if pre.BaseSize.IsZero() || newPrefixSum.IsNil() {
 		return pre, nil
 	}
 	deltaPrefix := newPrefixSum.Sub(pre.LastFundingRatePrefixSum)
@@ -498,20 +338,18 @@ func (k Keeper) ApplyFundingPayment(
 	return k.mutatePosition(ctx, pre, post)
 }
 
-// SetPositionLeverage writes the leverage-only config row used to
-// remember the user's preferred margin mode / IMF for the next open.
-// Asserts there is no open position (`pre.BaseSize == 0`); the caller
-// (msg_server UpdateLeverage) already enforces this from the user
-// side, so a violation here would indicate a programming bug.
+// SetPositionLeverage writes (or clears) the leverage-only config row
+// remembering the user's preferred margin mode / IMF for the next
+// open. Asserts there is no open position. Emits EventPositionUpdated
+// with position_id == 0 so indexers can tell a config update apart
+// from an open-position update.
 //
-// Persists directly via `setPosition` (bypassing the lifecycle
-// primitives — this is a configuration write, not a lifecycle
-// transition) and emits EventPositionUpdated with `position_id == 0`
-// so the indexer can distinguish it from open-position updates.
+// Storage policy:
 //
-// No-op when both `pre` and the new (mode, imf) reduce to the default
-// leverage state and no row was previously persisted; avoids creating
-// empty default rows that would still occupy KV space.
+//   - default → default : no-op (nothing to persist).
+//   - non-default → default: REMOVE the row (release KV space; the
+//     auto-vivified GetPosition response already covers the default).
+//   - * → non-default : write / update the leverage-only row.
 func (k Keeper) SetPositionLeverage(
 	ctx context.Context,
 	accIdx uint64,
@@ -526,34 +364,33 @@ func (k Keeper) SetPositionLeverage(
 	if !pre.BaseSize.IsZero() {
 		return types.ErrPositionLifecycleViolation.Wrapf(
 			"SetPositionLeverage: account %d market %d has an open position (base_size=%s)",
-			accIdx, marketIdx, pre.BaseSize.String())
+			accIdx, marketIdx, pre.BaseSize)
 	}
-	post := pre
-	post.AccountIndex = accIdx
-	post.MarketIndex = marketIdx
+	post := emptyPosition(accIdx, marketIdx)
 	post.MarginMode = marginMode
 	post.InitialMarginFraction = imf
-	post.PositionId = 0
-	post.NormalizeIntFields()
 
-	if !hasNonDefaultLeverage(post) && !hasNonDefaultLeverage(pre) {
+	preDefault := !hasNonDefaultLeverage(pre)
+	postDefault := !hasNonDefaultLeverage(post)
+	switch {
+	case preDefault && postDefault:
 		return nil
+	case !preDefault && postDefault:
+		if err := k.removePosition(ctx, accIdx, marketIdx); err != nil {
+			return err
+		}
+	default:
+		if err := k.setPosition(ctx, post); err != nil {
+			return err
+		}
 	}
-	if err := k.setPosition(ctx, post); err != nil {
-		return err
-	}
-	return k.emitPositionUpdated(ctx, post)
+	return k.emitUpdated(ctx, post)
 }
 
 // ClosePosition is the cohesive force-close entry-point: closes an
-// open position outside the fill pipeline (e.g. for liquidation that
-// bypasses ApplyFill, market expiry, IF / ADL absorbers). Asserts
-// pre.BaseSize != 0 and routes through the same storage-reclamation
-// + event-emission path as ApplyFill's close branch.
-//
-// Returns the **pre-close snapshot** (BaseSize still reflects the
-// pre-close value; AllocatedMargin / EntryQuote / position_id are
-// pre-close as well) so callers can drain residual fields.
+// open position outside the fill pipeline (liquidation paths that
+// bypass ApplyFill, market expiry, IF / ADL absorbers). Returns the
+// pre-close snapshot so callers can drain residual fields.
 func (k Keeper) ClosePosition(
 	ctx context.Context,
 	accIdx uint64,
