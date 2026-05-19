@@ -1,11 +1,12 @@
 // Package keepertest provides write helpers for fixture setup in
 // tests. Production code MUST NOT import this package — it bypasses
-// the cohesive mutator API on x/account.Keeper (UpdateAccountTradingMode,
-// UpdatePublicPoolInfo, UpdatePosition, TransferAccountAssetBalance,
-// etc.) and writes the underlying collections directly. The helpers
-// only exist so existing keeper / e2e suites can keep their
-// table-driven fixture style without re-implementing the storage
-// schema.
+// the cohesive mutator API on x/account.Keeper
+// (UpdateAccountTradingMode, UpdatePublicPoolInfo, ApplyFill /
+// AdjustAllocatedMargin / ApplyFundingPayment / SetPositionLeverage /
+// ClosePosition, TransferAccountAssetBalance, etc.) and writes the
+// underlying collections directly. The helpers only exist so existing
+// keeper / e2e suites can keep their table-driven fixture style
+// without re-implementing the storage schema.
 //
 // New tests should prefer the cohesive mutator API or scenario-level
 // flows (Deposit, MintShares, etc.) for state setup; reach for these

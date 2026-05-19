@@ -33,10 +33,58 @@ message EventAccountAssetUpdated {
   AccountAsset account_asset = 1 [(gogoproto.nullable) = false];
 }
 
-// EventPositionUpdated is emitted every time an AccountPosition row is
-// written — covers fill apply (x/trade), funding settlement
-// (x/funding), liquidation / ADL adjustments (x/liquidation) and
-// leverage flips (SetPositionLeverage).
+// Position lifecycle events: every AccountPosition mutation funnels
+// into exactly one of EventPositionOpened / EventPositionUpdated /
+// EventPositionClosed so indexers can rebuild the per-position
+// lifeline (open → N updates → close) keyed by `position_id`.
+//
+// Issue #91: the x/account keeper exposes **cohesive** public methods
+// (no generic mut closure); each one funnels into exactly one of the
+// three events, and a side flip emits a Closed-then-Opened pair atomically.
+//
+//   - Keeper.ApplyFill             → Opened | Updated | Closed | (Closed+Opened on flip)
+//   - Keeper.AdjustAllocatedMargin → Updated
+//   - Keeper.ApplyFundingPayment   → Updated
+//   - Keeper.SetPositionLeverage   → Updated (position_id == 0)
+//   - Keeper.ClosePosition         → Closed (force-close path)
+//
+// A side flip (e.g. a reverse fill that crosses zero) is handled
+// **inside** ApplyFill: the keeper emits a Closed event for the OLD
+// position_id and an Opened event for a freshly allocated id, in that
+// order, in the same tx, so indexers see the lifeline boundaries
+// unambiguously without parsing fill math themselves.
+
+// EventPositionOpened is emitted by Keeper.ApplyFill on the open and
+// flip-residual transitions. `position` carries the freshly persisted
+// row, including the new chain-allocated `position_id` (>= 1) and the
+// stamped `created_at`.
+message EventPositionOpened {
+  AccountPosition position = 1 [(gogoproto.nullable) = false];
+}
+
+// EventPositionUpdated is emitted on every same-side mutation of an
+// open position: ApplyFill's same-side change branch, every
+// AdjustAllocatedMargin (isolated PnL/fee credit, improvement-fee
+// debit, position_requirement rebalance, msg_server UpdateMargin),
+// every non-no-op ApplyFundingPayment, and SetPositionLeverage on a
+// leverage-only config row. position_id is stable across all
+// Updated events for the same lifeline; SetPositionLeverage emits
+// with position_id == 0 so indexers can tell a config update apart
+// from an open-position update.
 message EventPositionUpdated {
   AccountPosition position = 1 [(gogoproto.nullable) = false];
+}
+
+// EventPositionClosed is emitted by Keeper.ApplyFill on the pure-close
+// and flip-old-leg transitions, and by Keeper.ClosePosition (force-
+// close). `position` carries the final post-close snapshot
+// (`base_size` and `entry_quote` zeroed; the **pre-close**
+// `position_id` retained so indexers can finalise the lifeline).
+// `deleted` reports the storage outcome: `true` when the underlying
+// KV row was removed (default leverage); `false` when the row was
+// retained as a leverage-only config row (non-default `margin_mode` /
+// `initial_margin_fraction`).
+message EventPositionClosed {
+  AccountPosition position = 1 [(gogoproto.nullable) = false];
+  bool deleted = 2;
 }

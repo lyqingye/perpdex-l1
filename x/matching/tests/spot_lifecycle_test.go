@@ -125,15 +125,23 @@ func (s *spotAccount) GetPosition(_ context.Context, acc uint64, mkt uint32) (ac
 	}, nil
 }
 
-func (s *spotAccount) UpdatePosition(
+// ApplyFill / AdjustAllocatedMargin implement the perp-position
+// surface of the AccountKeeper interface in x/trade/types. The
+// spot-matching test only drives spot fills so the trade engine's
+// perp position path is never reached against this stub; the helpers
+// are stubbed out to satisfy the interface.
+func (s *spotAccount) ApplyFill(
 	ctx context.Context, accIdx uint64, marketIdx uint32,
-	mut func(*accounttypes.AccountPosition) error,
-) (accounttypes.AccountPosition, error) {
+	_ uint32, _ math.Int, _ math.Int,
+) (accounttypes.FillApplyResult, error) {
 	pos, _ := s.GetPosition(ctx, accIdx, marketIdx)
-	if err := mut(&pos); err != nil {
-		return accounttypes.AccountPosition{}, err
-	}
-	return pos, nil
+	return accounttypes.FillApplyResult{Old: pos, New: pos, RealizedPnL: math.ZeroInt()}, nil
+}
+
+func (s *spotAccount) AdjustAllocatedMargin(
+	ctx context.Context, accIdx uint64, marketIdx uint32, _ math.Int,
+) (accounttypes.AccountPosition, error) {
+	return s.GetPosition(ctx, accIdx, marketIdx)
 }
 
 func (s *spotAccount) IsAuthorized(_ context.Context, _ string, _ uint64) (bool, error) {

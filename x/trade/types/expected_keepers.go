@@ -13,13 +13,30 @@ import (
 type AccountKeeper interface {
 	GetAccount(ctx context.Context, idx uint64) (accounttypes.Account, error)
 	GetPosition(ctx context.Context, accIdx uint64, marketIdx uint32) (accounttypes.AccountPosition, error)
-	// UpdatePosition is the canonical RMW entrypoint for position
-	// state; post-state invariants live on the account side.
-	UpdatePosition(
+	// ApplyFill is the cohesive fill-application entry-point (issue
+	// #91). It owns the full open / mutate / close / flip dispatch,
+	// persistence and lifecycle event emission for one side of one
+	// fill; the trade engine consumes the returned FillApplyResult
+	// for downstream fee / isolated-reconciliation / OI / risk-check
+	// pipelines without issuing any position-keeper RMW closure of
+	// its own.
+	ApplyFill(
 		ctx context.Context,
 		accIdx uint64,
 		marketIdx uint32,
-		mut func(*accounttypes.AccountPosition) error,
+		price uint32,
+		baseDelta math.Int,
+		fundingRatePrefixSum math.Int,
+	) (accounttypes.FillApplyResult, error)
+	// AdjustAllocatedMargin folds `delta` (signed) into the isolated
+	// allocated_margin pool. Used by the engine's three-step isolated
+	// reconciliation (PnL/fee credit, improvement-fee debit,
+	// position_requirement rebalance). Asserts the position is open.
+	AdjustAllocatedMargin(
+		ctx context.Context,
+		accIdx uint64,
+		marketIdx uint32,
+		delta math.Int,
 	) (accounttypes.AccountPosition, error)
 	AddCollateral(ctx context.Context, idx uint64, delta math.Int) error
 	GetAccountAsset(ctx context.Context, accIdx uint64, assetIdx uint32) (accounttypes.AccountAsset, error)

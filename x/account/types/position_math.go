@@ -129,12 +129,65 @@ func (p AccountPosition) MarketValue(markPrice uint32) math.Int {
 //   - SideFlipped is true iff the position crossed zero and reversed
 //     direction, signalling callers to re-evaluate IM on the residual leg.
 //
-// Persistence (SetPosition / UpdatePosition) and bounds checks
-// (POSITION_SIZE_BITS / ENTRY_QUOTE_BITS) remain the caller's responsibility.
+// FillResult is the **math layer** output (pure value, no I/O). The
+// **keeper layer** wraps this with persistence + event emission +
+// position_id allocation into FillApplyResult (returned by
+// Keeper.ApplyFill); external callers (x/trade) consume
+// FillApplyResult exclusively and never need to touch the math layer
+// or the package-private lifecycle primitives directly. Persistence
+// and bounds checks (POSITION_SIZE_BITS / ENTRY_QUOTE_BITS) live on
+// the keeper layer.
 type FillResult struct {
 	Position    AccountPosition
 	RealizedPnL math.Int
 	SideFlipped bool
+}
+
+// FillApplyResult is the keeper-level output of Keeper.ApplyFill: the
+// **cohesive** fill-application entrypoint that owns the entire
+// transition (open / mutate / close / flip), persistence, and event
+// emission for one side of one fill. Callers (x/trade.Engine.Apply)
+// receive the post-state needed for downstream pipelines (fee charge,
+// isolated reconciliation, OI delta, post-trade risk check) without
+// ever issuing a position-keeper RMW closure of their own.
+//
+// Field semantics:
+//
+//   - Old: the position snapshot **before** the fill. Used by
+//     downstream isolated rebalance (`calculate_isolated_margin_change`)
+//     which needs both the old and new uPnL.
+//
+//   - New: the position snapshot **after** the fill. On Closed, this
+//     carries the **pre-close** values (BaseSize / AllocatedMargin /
+//     EntryQuote etc. as they were the moment before the close) so
+//     the isolated close branch can drain residual fields back to
+//     cross collateral; `New.BaseSize.IsZero()` is NOT a reliable
+//     closed indicator — use the explicit Closed bool instead.
+//
+//   - RealizedPnL: the PnL realised by this fill (decrease / close /
+//     flip closing leg). Routed by the engine into the right margin
+//     pool (cross collateral or isolated allocated_margin).
+//
+//   - SideFlipped: pre/post BaseSize have opposite signs (the fill
+//     crossed zero). The keeper emits Closed (old id) + Opened (new
+//     id) atomically; the engine uses this to know the new lifeline
+//     started with a fresh position_id even though the BaseSize stayed
+//     non-zero throughout.
+//
+//   - Closed: pre.BaseSize != 0 AND post.BaseSize == 0 (fully closed,
+//     not a flip). The engine's close branch keys on this to skip
+//     allocated_margin writes (the row may be gone) and route refunds
+//     straight to cross collateral.
+//
+//   - OIDelta: |new.BaseSize| - |old.BaseSize|. Sum across maker /
+//     taker divided by 2 yields the per-fill open-interest delta.
+type FillApplyResult struct {
+	Old         AccountPosition
+	New         AccountPosition
+	RealizedPnL math.Int
+	SideFlipped bool
+	Closed      bool
+	OIDelta     int64
 }
 
 // ApplyFill projects the post-trade state of this position after a single
@@ -157,10 +210,11 @@ type FillResult struct {
 //     ⇒ realized_pnl realizes the closing leg, entry_quote reset to
 //     residual leg's notional, side_flipped = true.
 //
-// Both x/trade `applyPositionChange` (which persists the result via
-// UpdatePosition) and x/risk `SimulateRiskAfterTakeover` (which inspects
-// the post-state for IM/MM/CM aggregation) consume this as the single
-// source of truth for fill-side classification.
+// Both x/account `Keeper.ApplyFill` (which persists the result via
+// the package-private open / mutate / close lifecycle primitives) and
+// x/risk `SimulateRiskAfterTakeover` (which inspects the post-state
+// for IM/MM/CM aggregation) consume this as the single source of
+// truth for fill-side classification.
 func (p AccountPosition) ApplyFill(delta math.Int, price uint32) FillResult {
 	curSize := p.BaseSize
 	curEntryQuote := p.EntryQuote

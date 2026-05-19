@@ -32,6 +32,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	moduletestutil "github.com/cosmos/cosmos-sdk/types/module/testutil"
 
+	perptypes "github.com/perpdex/perpdex-l1/types"
 	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
 	fundingkeeper "github.com/perpdex/perpdex-l1/x/funding/keeper"
 	fundingtypes "github.com/perpdex/perpdex-l1/x/funding/types"
@@ -122,9 +123,11 @@ func (s stubOracle) GetPrice(_ context.Context, marketIdx uint32) (oracletypes.O
 }
 
 // stubAccount is a stateless AccountKeeper stub: every GetPosition
-// returns a fresh zero-valued AccountPosition and UpdatePosition runs
-// the mutator without persisting anything. Tests that need to observe
-// position writes should use `statefulAccount` instead.
+// returns a fresh zero-valued AccountPosition. The funding keeper's
+// SettlePositionFunding short-circuits on BaseSize == 0 so this stub
+// is sufficient for the prefix-sum / mark-price tests that don't care
+// about persisted writes; use `statefulAccount` for tests that need
+// to observe ApplyFundingPayment output.
 type stubAccount struct{}
 
 func (stubAccount) GetPosition(_ context.Context, acc uint64, mkt uint32) (accounttypes.AccountPosition, error) {
@@ -135,27 +138,18 @@ func (stubAccount) GetPosition(_ context.Context, acc uint64, mkt uint32) (accou
 	}, nil
 }
 
-// UpdatePosition is a no-op closure runner; the funding keeper's
-// SettlePositionFunding now dispatches every write through this
-// surface, but the stub doesn't persist anything (the suite cares
-// only about the prefix-sum / mark-price computations on the market
-// side).
-func (s stubAccount) UpdatePosition(
+// ApplyFundingPayment is the cohesive funding-settlement RMW on the
+// real keeper. The stateless stub returns BaseSize == 0 from
+// GetPosition, so this is exercised only for interface parity — the
+// production short-circuit in ApplyFundingPayment matches the same
+// behaviour (no-op on empty rows).
+func (s stubAccount) ApplyFundingPayment(
 	ctx context.Context,
 	accIdx uint64,
 	marketIdx uint32,
-	mut func(*accounttypes.AccountPosition) error,
+	_ math.Int,
 ) (accounttypes.AccountPosition, error) {
-	pos, err := s.GetPosition(ctx, accIdx, marketIdx)
-	if err != nil {
-		return accounttypes.AccountPosition{}, err
-	}
-	pos.AccountIndex = accIdx
-	pos.MarketIndex = marketIdx
-	if err := mut(&pos); err != nil {
-		return accounttypes.AccountPosition{}, err
-	}
-	return pos, nil
+	return s.GetPosition(ctx, accIdx, marketIdx)
 }
 
 // statefulAccount is a map-backed AccountKeeper stub used by tests
@@ -190,23 +184,30 @@ func (s *statefulAccount) SetPosition(_ context.Context, p accounttypes.AccountP
 	return nil
 }
 
-// UpdatePosition mirrors the real keeper's RMW closure surface so
-// SettlePositionFunding's funding-payment write hits this stub.
-func (s *statefulAccount) UpdatePosition(
+// ApplyFundingPayment mirrors the cohesive funding-settlement RMW so
+// SettlePositionFunding hits this stub. Folds the payment into
+// EntryQuote and snapshots the prefix sum, matching the production
+// math (`pay = BaseSize * (newPrefix - lastPrefix) / FundingRateTick`).
+func (s *statefulAccount) ApplyFundingPayment(
 	ctx context.Context,
 	accIdx uint64,
 	marketIdx uint32,
-	mut func(*accounttypes.AccountPosition) error,
+	newPrefixSum math.Int,
 ) (accounttypes.AccountPosition, error) {
 	pos, err := s.GetPosition(ctx, accIdx, marketIdx)
 	if err != nil {
 		return accounttypes.AccountPosition{}, err
 	}
-	pos.AccountIndex = accIdx
-	pos.MarketIndex = marketIdx
-	if err := mut(&pos); err != nil {
-		return accounttypes.AccountPosition{}, err
+	if pos.BaseSize.IsZero() || newPrefixSum.IsNil() {
+		return pos, nil
 	}
+	delta := newPrefixSum.Sub(pos.LastFundingRatePrefixSum)
+	if delta.IsZero() {
+		return pos, nil
+	}
+	pay := pos.BaseSize.Mul(delta).Quo(math.NewInt(perptypes.FundingRateTick))
+	pos.EntryQuote = pos.EntryQuote.Add(pay)
+	pos.LastFundingRatePrefixSum = newPrefixSum
 	if err := s.SetPosition(ctx, pos); err != nil {
 		return accounttypes.AccountPosition{}, err
 	}

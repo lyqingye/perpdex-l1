@@ -8,6 +8,7 @@ import (
 	"cosmossdk.io/math"
 
 	perptypes "github.com/perpdex/perpdex-l1/types"
+	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
 	risktypes "github.com/perpdex/perpdex-l1/x/risk/types"
 	"github.com/perpdex/perpdex-l1/x/trade/types"
 )
@@ -128,23 +129,47 @@ func (e Engine) Apply(ctx context.Context, f Fill) error {
 		}
 	}
 
-	makerSign := int64(1)
+	// Derive the per-side signed base delta from the fill direction.
+	// IsTakerAsk == true means the taker is on the ask (selling base),
+	// so the maker buys base (+) and the taker sells (-); the inverse
+	// holds when the taker is bidding.
+	makerDelta := math.NewIntFromUint64(f.BaseAmount)
 	if !f.IsTakerAsk {
-		makerSign = -1
+		makerDelta = makerDelta.Neg()
 	}
-	takerSign := -makerSign
+	takerDelta := makerDelta.Neg()
 
-	makerRes, err := e.applyPositionChange(ctx, f.MakerAccountIndex, f.MarketIndex, f.Price, f.BaseAmount, makerSign)
+	// Snapshot the market's current FundingRatePrefixSum once and
+	// thread it into both ApplyFill calls so x/account doesn't need
+	// its own marketKeeper handle in this hot path (Cosmos late-bound
+	// keepers aren't visible to the trade engine's accountKeeper
+	// interface copy). ApplyFill uses it only on the OPEN / FLIP
+	// transitions to seed the first post-open funding boundary.
+	md, err := e.marketKeeper.GetMarketDetails(ctx, f.MarketIndex)
 	if err != nil {
-		if errors.Is(err, errPositionOutOfBounds) {
+		return err
+	}
+	fundingPrefix := md.FundingRatePrefixSum
+
+	// ApplyFill is the cohesive entry-point on x/account.Keeper (issue
+	// #91): it classifies the transition (open / mutate / close /
+	// flip), persists through the matching package-private primitive,
+	// emits exactly one (or two, for flip) lifecycle event(s) and
+	// returns the pre/post snapshots + realized PnL + OI delta the
+	// pipeline below keys off. Out-of-bounds positions surface as
+	// ErrPositionOutOfBounds — wrapped per-side so the matching loop
+	// can evict a bad maker / stop a bad taker.
+	makerRes, err := e.accountKeeper.ApplyFill(ctx, f.MakerAccountIndex, f.MarketIndex, f.Price, makerDelta, fundingPrefix)
+	if err != nil {
+		if errors.Is(err, accounttypes.ErrPositionOutOfBounds) {
 			return sdkerrors.Wrapf(types.ErrMakerInvalidPosition,
 				"account %d market %d", f.MakerAccountIndex, f.MarketIndex)
 		}
 		return err
 	}
-	takerRes, err := e.applyPositionChange(ctx, f.TakerAccountIndex, f.MarketIndex, f.Price, f.BaseAmount, takerSign)
+	takerRes, err := e.accountKeeper.ApplyFill(ctx, f.TakerAccountIndex, f.MarketIndex, f.Price, takerDelta, fundingPrefix)
 	if err != nil {
-		if errors.Is(err, errPositionOutOfBounds) {
+		if errors.Is(err, accounttypes.ErrPositionOutOfBounds) {
 			return sdkerrors.Wrapf(types.ErrTakerInvalidPosition,
 				"account %d market %d", f.TakerAccountIndex, f.MarketIndex)
 		}
@@ -254,7 +279,7 @@ func (e Engine) Apply(ctx context.Context, f Fill) error {
 // keys on res.Old.MarginMode — a freshly opened position has
 // Old.MarginMode == 0 (default cross), matching the
 // `is_*_position_isolated` short-circuit.
-func (e Engine) applyAccount(ctx context.Context, res *positionChangeResult, fee math.Int, isMaker bool, liqFee math.Int, f Fill) error {
+func (e Engine) applyAccount(ctx context.Context, res *accounttypes.FillApplyResult, fee math.Int, isMaker bool, liqFee math.Int, f Fill) error {
 	switch res.Old.MarginMode {
 	case perptypes.IsolatedMargin:
 		return e.applyIsolatedAccount(ctx, res, fee, isMaker, liqFee, f)

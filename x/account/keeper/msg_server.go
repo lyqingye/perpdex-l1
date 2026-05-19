@@ -398,17 +398,26 @@ func (m msgServer) UpdateMargin(ctx context.Context, msg *types.MsgUpdateMargin)
 	if pos.MarginMode != perptypes.IsolatedMargin {
 		return nil, types.ErrPositionNotIsolated
 	}
+	// UpdateMargin only applies to an open position: adding margin to
+	// (or pulling margin from) a leverage-only config row that has no
+	// BaseSize would create a phantom allocated_margin balance with
+	// no position to back it. Reject early so the lifecycle invariant
+	// surfaces from a user-facing error rather than from a deeper
+	// AdjustAllocatedMargin lifecycle violation.
+	if pos.BaseSize.IsZero() {
+		return nil, types.ErrPositionLifecycleViolation.Wrap(
+			"UpdateMargin requires an open position (base_size != 0)")
+	}
 	amount := msg.Amount
 
-	// AllocatedMargin is already normalised to ZeroInt() by
-	// GetPosition / UpdatePosition's auto-vivified default, so the
-	// inline IsNil-guards used to live here are redundant.
+	// UpdateMargin is only valid on OPEN isolated positions (the
+	// pre-check above already enforced BaseSize != 0 + IsolatedMargin
+	// + AllocatedMargin >= amount on remove); the cohesive
+	// AdjustAllocatedMargin (issue #91) handles the AllocatedMargin
+	// fold + EventPositionUpdated emission in one keeper call.
 	switch msg.Action {
 	case perptypes.AddMargin:
-		if _, err := m.UpdatePosition(ctx, msg.AccountIndex, msg.MarketIndex, func(p *types.AccountPosition) error {
-			p.AllocatedMargin = p.AllocatedMargin.Add(amount)
-			return nil
-		}); err != nil {
+		if _, err := m.AdjustAllocatedMargin(ctx, msg.AccountIndex, msg.MarketIndex, amount); err != nil {
 			return nil, err
 		}
 		if err := m.AddCollateral(ctx, msg.AccountIndex, amount.Neg()); err != nil {
@@ -418,10 +427,7 @@ func (m msgServer) UpdateMargin(ctx context.Context, msg *types.MsgUpdateMargin)
 		if pos.AllocatedMargin.LT(amount) {
 			return nil, types.ErrInsufficientFunds
 		}
-		if _, err := m.UpdatePosition(ctx, msg.AccountIndex, msg.MarketIndex, func(p *types.AccountPosition) error {
-			p.AllocatedMargin = p.AllocatedMargin.Sub(amount)
-			return nil
-		}); err != nil {
+		if _, err := m.AdjustAllocatedMargin(ctx, msg.AccountIndex, msg.MarketIndex, amount.Neg()); err != nil {
 			return nil, err
 		}
 		if err := m.AddCollateral(ctx, msg.AccountIndex, amount); err != nil {

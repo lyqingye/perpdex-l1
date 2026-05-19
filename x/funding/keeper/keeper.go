@@ -6,12 +6,9 @@ import (
 
 	"cosmossdk.io/collections"
 	"cosmossdk.io/core/store"
-	"cosmossdk.io/math"
 
 	"github.com/cosmos/cosmos-sdk/codec"
 
-	perptypes "github.com/perpdex/perpdex-l1/types"
-	accounttypes "github.com/perpdex/perpdex-l1/x/account/types"
 	"github.com/perpdex/perpdex-l1/x/funding/types"
 )
 
@@ -75,27 +72,22 @@ func (k Keeper) Authority() string { return k.authority }
 //   - short with positive funding rate: `pay < 0`, `EntryQuote` falls and
 //     `uPnL` rises by exactly the funding the short received.
 //
-// Returns nil on success and snapshots the new prefix sum on the position so
-// the next settlement only charges newly accumulated rounds.
+// Returns nil on success; the math (pay = BaseSize * prefixDelta /
+// FundingRateTick) and the persistence both live on the x/account
+// side via the cohesive `ApplyFundingPayment` method (issue #91), so
+// this entry-point is now a thin marketKeeper-aware adapter:
+//
+//  1. fetch FundingRatePrefixSum from the market,
+//  2. delegate the per-position fold + snapshot to x/account.
+//
+// x/account short-circuits on empty rows so closed / never-opened
+// accounts have no funding obligation; the next ApplyFill re-seeds
+// `LastFundingRatePrefixSum` from the market's current value.
 func (k Keeper) SettlePositionFunding(ctx context.Context, accountIndex uint64, marketIndex uint32) error {
 	d, err := k.marketKeeper.GetMarketDetails(ctx, marketIndex)
 	if err != nil {
 		return err
 	}
-	_, err = k.accountKeeper.UpdatePosition(ctx, accountIndex, marketIndex, func(pos *accounttypes.AccountPosition) error {
-		if pos.BaseSize.IsZero() {
-			pos.LastFundingRatePrefixSum = d.FundingRatePrefixSum
-			return nil
-		}
-		delta := d.FundingRatePrefixSum.Sub(pos.LastFundingRatePrefixSum)
-		if delta.IsZero() {
-			pos.LastFundingRatePrefixSum = d.FundingRatePrefixSum
-			return nil
-		}
-		pay := pos.BaseSize.Mul(delta).Quo(math.NewInt(perptypes.FundingRateTick))
-		pos.EntryQuote = pos.EntryQuote.Add(pay)
-		pos.LastFundingRatePrefixSum = d.FundingRatePrefixSum
-		return nil
-	})
+	_, err = k.accountKeeper.ApplyFundingPayment(ctx, accountIndex, marketIndex, d.FundingRatePrefixSum)
 	return err
 }

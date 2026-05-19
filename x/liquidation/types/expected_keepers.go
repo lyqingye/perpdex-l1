@@ -14,16 +14,6 @@ import (
 type AccountKeeper interface {
 	GetAccount(ctx context.Context, idx uint64) (accounttypes.Account, error)
 	GetPosition(ctx context.Context, accIdx uint64, marketIdx uint32) (accounttypes.AccountPosition, error)
-	// UpdatePosition is the canonical RMW entrypoint. Liquidation
-	// does not write positions today; kept for parity with x/trade
-	// and x/funding so any future mutator flows through this choke
-	// point.
-	UpdatePosition(
-		ctx context.Context,
-		accIdx uint64,
-		marketIdx uint32,
-		mut func(*accounttypes.AccountPosition) error,
-	) (accounttypes.AccountPosition, error)
 	AddCollateral(ctx context.Context, idx uint64, delta math.Int) error
 	IterateAccounts(ctx context.Context, cb func(accounttypes.Account) bool) error
 	// IterateAccountPositions walks every persisted position row of
